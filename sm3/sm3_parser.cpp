@@ -1,0 +1,678 @@
+#include "sm3_parser.h"
+
+#include "../util/util_log.h"
+
+namespace dxbc_spv::sm3 {
+
+/* If the number of operands differs between shading models, use the one of the lowest SM.
+ * The layout is also used to determine the number of tokens on SM1 which is encoded into
+ * the first token in SM2+. */
+static const std::array<InstructionLayout, 100> g_instructionLayouts = {{
+  /* Nop */
+  { },
+  /* Mov */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eUnknown },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Add */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Sub */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+ /* Mad */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Mul */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Rcp */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Rsq */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Dp3 */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Dp4 */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Min */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Max */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Slt */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Sge */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Exp */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Log */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Lit */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Dst */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Lrp */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Frc */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* M4x4 */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* M4x3 */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* M3x4 */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* M3x3 */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* M3x2 */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Call */
+  { {{
+    { OperandKind::eSrcReg, ir::ScalarType::eUnknown },
+  }} },
+  /* CallNz */
+  { {{
+    { OperandKind::eSrcReg, ir::ScalarType::eUnknown },
+    { OperandKind::eSrcReg, ir::ScalarType::eBool },
+  }} },
+  /* Loop */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eI32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eI32 },
+  }} },
+  /* Ret */
+{ },
+  /* EndLoop */
+{ },
+  /* Label */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eUnknown },
+  }} },
+  /* Dcl */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eUnknown },
+  }} },
+  /* Pow */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Crs */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Sgn */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Abs */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Nrm */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* SinCos */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 }, // Only on SM2
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 }, // Only on SM2
+  }} },
+  /* Rep */
+  { {{
+    { OperandKind::eSrcReg, ir::ScalarType::eI32 },
+  }} },
+  /* EndRep */
+{ },
+  /* If */
+{ {{
+  { OperandKind::eSrcReg, ir::ScalarType::eBool },
+  }} },
+  /* IfC */
+  { {{
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Else */
+  { },
+  /* EndIf */
+  { },
+  /* Break */
+  { },
+  /* BreakC */
+  { {{
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Mova */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eI32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eUnknown },
+  }} },
+  /* DefB */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eBool },
+    { OperandKind::eImm32, ir::ScalarType::eBool },
+  }} },
+  /* DefI */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eI32 },
+    { OperandKind::eImm32, ir::ScalarType::eI32 },
+  }} },
+
+  /* TexCoord */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eSampler }, // Only on SM1.4
+  }} },
+  /* TexKill */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+  }} },
+  /* Tex */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eSampler }, // Only on SM1.4
+  }} },
+  /* TexBem */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexBemL */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexReg2Ar */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexReg2Gb */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexM3x2Pad */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexM3x2Tex */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexM3x3Pad */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexM3x3Tex */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Reserved0 */
+{ },
+  /* TexM3x3Spec */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexM3x3VSpec */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* ExpP */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* LogP */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Cnd */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Def */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eImm32, ir::ScalarType::eF32 },
+    { OperandKind::eImm32, ir::ScalarType::eF32 },
+    { OperandKind::eImm32, ir::ScalarType::eF32 },
+    { OperandKind::eImm32, ir::ScalarType::eF32 },
+  }} },
+  /* TexReg2Rgb */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexDp3Tex */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexM3x2Depth */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexDp3 */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexM3x3 */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexDepth */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Cmp */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eBool },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Bem */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* Dp2Add */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* DsX */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* DsY */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexLdd */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* SetP */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eBool },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* TexLdl */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
+  }} },
+  /* BreakP */
+  { {{
+    { OperandKind::eDstReg, ir::ScalarType::eBool },
+  }} },
+  /* Phase */
+  { },
+  /* Comment */
+  { },
+  /* End */
+  { }
+}};
+
+
+const InstructionLayout* getInstructionLayout(OpCode op) {
+  auto index = uint32_t(op);
+
+  if (index >= uint32_t(OpCode::ePhase)) {
+    index -= uint32_t(OpCode::ePhase);
+    index += uint32_t(OpCode::eBreakP) + 1u;
+  }
+  if (index >= uint32_t(OpCode::eTexCoord)) {
+    index -= uint32_t(OpCode::eTexCoord);
+    index += uint32_t(OpCode::eDefI) + 1u;
+  }
+
+  return index < g_instructionLayouts.size()
+    ? &g_instructionLayouts[index]
+    : nullptr;
+}
+
+
+ShaderInfo::ShaderInfo(util::ByteReader& reader) {
+  if (!reader.read(m_token))
+    resetOnError();
+}
+
+
+bool ShaderInfo::write(util::ByteWriter& writer) const {
+  return writer.write(m_token);
+}
+
+
+void ShaderInfo::resetOnError() {
+  *this = ShaderInfo();
+}
+
+
+
+Operand::Operand(util::ByteReader& reader, const OperandInfo& info, Instruction& op, const ShaderInfo& shaderInfo) {
+  if (!reader.read(m_token)) {
+    Logger::err("Failed to read operand token");
+    resetOnError();
+    return;
+  }
+
+  if (hasRelativeIndexing()) {
+    dxbc_spv_assert(info.kind == OperandKind::eDstReg || info.kind == OperandKind::eSrcReg);
+
+    OperandInfo indexInfo = { };
+    indexInfo.kind = OperandKind::eRelAddr;
+    Operand relAddrOperand;
+    if (hasExtraRelativeIndexingToken(info.kind, shaderInfo)) {
+      // VS SM3 supports using the following registers as indices:
+      // - a0 the dedicated address register, integer
+      // - aL: the loop counter register, integer
+      // - cN: one of the float contant registers, float
+      // - oN: one of the output registers, float
+      // Everything else only supports a subset of this.
+      indexInfo.type = ir::ScalarType::eUnknown;
+      relAddrOperand = Operand(reader, indexInfo, op, shaderInfo);
+      dxbc_spv_assert(!relAddrOperand.hasRelativeIndexing());
+      dxbc_spv_assert(relAddrOperand.getModifier() == Modifier::None);
+    } else {
+      // Always use a0
+      indexInfo.type = ir::ScalarType::eU32;
+      relAddrOperand = Operand(info, RegisterType::eAddr);
+    }
+
+    if (!relAddrOperand) {
+      Logger::err("Failed to read relative addressing token");
+      resetOnError();
+      return;
+    }
+
+    m_relAddr = op.addOperand(relAddrOperand);
+  }
+}
+
+
+void Operand::resetOnError() {
+  m_token = DefaultInvalidToken;
+}
+
+
+
+Instruction::Instruction(util::ByteReader& reader, const ShaderInfo& info) {
+  if (!reader.read(m_token))
+    return;
+
+  /* Determine operand layout based on the shader
+   * model and opcode, and parse the operands. */
+  auto layout = getLayout(info);
+
+  /* Determine operand layout based on the shader
+   * model and opcode, and parse the operands. */
+  uint32_t tokenCount = getOperandTokenCount(info, layout);
+
+  /* Get reader sub-range for the exact number of tokens required */
+  auto byteSize = tokenCount * sizeof(uint32_t);
+  auto tokenReader = reader.getRangeRelative(0u, byteSize);
+
+  /* Advance base reader to the next instruction. */
+  reader.skip(byteSize);
+
+  for (uint32_t i = 0u; i < layout.operands.size(); i++) {
+    const auto& operandInfo = layout.operands[i];
+    Operand operand(tokenReader, operandInfo, *this, info);
+
+    if (!operand) {
+      resetOnError();
+      return;
+    }
+
+    addOperand(operand);
+
+    if (i == 0u && isPredicated()) {
+      OperandInfo predInfo = { };
+      predInfo.kind = OperandKind::ePred;
+      predInfo.type = ir::ScalarType::eBool;
+
+      Operand predOperand(tokenReader, predInfo, *this, info);
+
+      if (!predOperand) {
+        Logger::err("Failed to read predicate token");
+        resetOnError();
+        return;
+      }
+
+      addOperand(predOperand);
+    }
+  }
+
+  dxbc_spv_assert(tokenReader.getRemaining() == 0);
+}
+
+
+uint32_t Instruction::addOperand(const Operand& operand) {
+  uint8_t index = uint8_t(m_operands.size());
+  m_operands.push_back(operand);
+
+  switch (operand.getInfo().kind) {
+    case OperandKind::eSrcReg:  m_srcOperands.push_back(index); break;
+    case OperandKind::eDstReg:
+      dxbc_spv_assert(!m_dstOperand.has_value());
+      m_dstOperand = index;
+      break;
+    case OperandKind::eImm32:   m_immOperands.push_back(index); break;
+    case OperandKind::eNone:    dxbc_spv_unreachable();
+    case OperandKind::ePred:
+      dxbc_spv_assert(!m_predOperand.has_value());
+      m_predOperand = index;
+      break;
+    case OperandKind::eRelAddr: break;
+  }
+
+  return index;
+}
+
+uint32_t Instruction::getOperandTokenCount(const ShaderInfo& info, const InstructionLayout& layout) const {
+  OpCode opcode = getOpCode();
+
+  if (opcode == OpCode::eComment)
+    return util::bextract(m_token, 16, 15);
+
+  if (opcode == OpCode::eEnd)
+    return 0;
+
+  // SM2.0 and above has the length of the op in instruction count baked into it.
+  // SM1.4 and below have fixed lengths and run off expectation.
+  // Phase does not respect the following rules.
+  if (opcode != OpCode::ePhase) {
+    if (info.getVersion().first >= 2) {
+      return util::bextract(m_token, 24, 4);
+    } else {
+      // SM1.4 barely supports relative addressing and when relative addressing is used,
+      // it always uses the single RelAddr register anyway without further specifying it.
+      return layout.operands.size();
+    }
+  }
+  return 0;
+}
+
+
+InstructionLayout Instruction::getLayout(const ShaderInfo& info) const {
+  auto layout = getInstructionLayout(getOpCode());
+
+  if (!layout) {
+    Logger::err("No layout known for opcode: ", getOpCode());
+    return InstructionLayout();
+  }
+
+  /* Adjust operand counts for resource declarations */
+  auto result = *layout;
+  auto [major, minor] = info.getVersion();
+
+  if (getOpCode() == OpCode::eSinCos && major >= 3u) {
+    // Shader Model 2 SinCos has two additional src registers
+    // that need to have the value of specific constants
+    // for some reason.
+    result.operands.pop_back();
+    result.operands.pop_back();
+  }
+
+  if ((getOpCode() == OpCode::eTex
+    || getOpCode() == OpCode::eTexCoord) && minor < 4u) {
+    // Tex/TexLd (same opcode) are only available in SM1.
+    // TexLd (SM 1.4) has separate dst/src registers.
+    // Tex (SM <1.4) only has the dst register.
+    result.operands.pop_back();
+  }
+
+  if (getOpCode() == OpCode::eMov && major >= 3) {
+    // Shader Model >=2 has the mova instruction to move
+    // a value to the address register. So the destination
+    // is always a float.
+    result.operands[0].type = ir::ScalarType::eF32;
+  }
+
+  return result;
+}
+
+
+
+void Instruction::resetOnError() {
+  m_token = DefaultInvalidToken;
+}
+
+
+
+Parser::Parser(util::ByteReader reader) {
+  m_info   = ShaderInfo(reader);
+  m_reader = util::ByteReader(reader);
+}
+
+
+Instruction Parser::parseInstruction() {
+  return Instruction(m_reader, m_info);
+}
+
+}

@@ -15,6 +15,11 @@ dxbc_spv_files = files([
   'dxbc/dxbc_signature.cpp',
   'dxbc/dxbc_types.cpp',
 
+  'sm3/sm3_api.cpp',
+  'sm3/sm3_converter.cpp',
+  'sm3/sm3_parser.cpp',
+  'sm3/sm3_disasm.cpp',
+
   'ir/ir.cpp',
   'ir/ir_builder.cpp',
   'ir/ir_disasm.cpp',
