@@ -581,7 +581,7 @@ Instruction::Instruction(util::ByteReader& reader, const ShaderInfo& info) {
     }
   }
 
-  //dxbc_spv_assert(getOpCode() == OpCode::eComment || tokenReader.getRemaining() == 0);
+  dxbc_spv_assert(getOpCode() == OpCode::eComment || tokenReader.getRemaining() == 0);
 }
 
 
