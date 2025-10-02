@@ -12,5 +12,4 @@ std::optional<ir::Builder> compileShaderToIr(const void *data, const CompileOpti
   return std::optional<ir::Builder>();
 }
 
-
 }

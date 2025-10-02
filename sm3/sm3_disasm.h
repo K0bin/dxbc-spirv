@@ -59,8 +59,6 @@ private:
 
   static bool opEndsNestedBlock(const Instruction& op);
 
-
-
 };
 
 }

@@ -284,15 +284,6 @@ public:
     return result;
   }
 
-  /** Sets immediate value for a given component. */
-  template<typename T, std::enable_if_t<(std::is_arithmetic_v<T>), bool> = true>
-  Operand& setImmediate(uint32_t idx, T value) {
-    util::uint_type_t<T> data;
-    std::memcpy(&data, &value, sizeof(data));
-    m_imm[idx] = data;
-    return *this;
-  }
-
   /** Checks operand info is valid. A default token of 0 is
    *  nonsensical since it refers to a 0-component temp. */
   explicit operator bool () const {
