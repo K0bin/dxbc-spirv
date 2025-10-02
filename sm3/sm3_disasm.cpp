@@ -1,6 +1,7 @@
 #include "sm3_disasm.h"
 
 #include <iostream>
+#include <iomanip>
 #include <sstream>
 
 #include "sm3_parser.h"
@@ -41,8 +42,7 @@ void Disassembler::disassembleOp(std::ostream& stream, const Instruction& op, co
 
       case OperandKind::eImm32:
         if ((inBounds = (nImm < op.getImmCount()))) {
-          if (!disassembleEnumOperand(stream, op, nImm))
-            disassembleOperand(stream, op, op.getImm(nImm), info);
+          disassembleOperand(stream, op, op.getImm(nImm), info);
 
           nImm++;
         }
@@ -51,6 +51,9 @@ void Disassembler::disassembleOp(std::ostream& stream, const Instruction& op, co
       case OperandKind::ePred:
         if ((inBounds = op.hasPred()))
           disassembleOperand(stream, op, op.getPred(), info);
+      break;
+
+      default:
         break;
     }
 
@@ -226,6 +229,150 @@ void Disassembler::disassembleRegisterType(std::ostream& stream, RegisterType re
       stream << "(unhandled register type " << uint32_t(registerType) << ")";
       break;
   }
+}
+
+
+
+
+
+void Disassembler::disassembleImmediate(std::ostream& stream, const Operand& arg) const {
+  /* Determine number of components based on the operand token */
+  uint32_t componentCount = arg.getComponentCount(m_info) == ComponentCount::e1Component ? 1u : 4u;
+
+  if (componentCount > 1u)
+    stream << '(';
+
+  for (uint32_t i = 0u; i < componentCount; i++) {
+    auto type = arg.getInfo().type;
+
+    if (i)
+      stream << ", ";
+
+    /* Resolve ambiguous types based on context */
+    if (type == ir::ScalarType::eUnknown) {
+      auto kind = std::fpclassify(arg.getImmediate<float>(i));
+
+      type = (kind == FP_INFINITE || kind == FP_NORMAL)
+        ? ir::ScalarType::eF32
+        : ir::ScalarType::eI32;
+    }
+
+    switch (type) {
+      case ir::ScalarType::eBool:
+      case ir::ScalarType::eI32: {
+        auto si = arg.getImmediate<int32_t>(i);
+
+        if (std::abs(si) >= 0x100000)
+          stream << "0x" << std::hex << std::setw(8u) << std::setfill('0') << uint32_t(si);
+        else
+          stream << si;
+      } break;
+
+      case ir::ScalarType::eI64: {
+        auto si = arg.getImmediate<int64_t>(i);
+
+        if (std::abs(si) >= 0x100000)
+          stream << "0x" << std::hex << std::setw(16u) << std::setfill('0') << uint64_t(si);
+        else
+          stream << si;
+      } break;
+
+      case ir::ScalarType::eU32: {
+        auto ui = arg.getImmediate<uint32_t>(i);
+
+        if (ui >= 0x100000u)
+          stream << "0x" << std::hex << std::setw(8u) << std::setfill('0') << ui;
+        else
+          stream << ui;
+      } break;
+
+      case ir::ScalarType::eU64: {
+        auto ui = arg.getImmediate<uint64_t>(i);
+
+        if (ui >= 0x100000u)
+          stream << "0x" << std::hex << std::setw(16u) << std::setfill('0') << ui;
+        else
+          stream << ui;
+      } break;
+
+      case ir::ScalarType::eF32: {
+        auto f = arg.getImmediate<float>(i);
+
+        if (std::isnan(f))
+          stream << "0x" << std::hex << arg.getImmediate<uint32_t>(i);
+        else
+          stream << std::fixed << std::setw(8u) << f << "f";
+      } break;
+
+      case ir::ScalarType::eF64: {
+        auto f = arg.getImmediate<double>(i);
+
+        if (std::isnan(f))
+          stream << "0x" << std::hex << arg.getImmediate<uint64_t>(i) << std::dec;
+        else
+          stream << std::fixed << std::setw(8u) << f;
+      } break;
+
+      default:
+        stream << "(unhandled scalar type " << type << ") " << arg.getImmediate<uint32_t>(i);
+        break;
+    }
+
+    /* Apparently there is no way to reset everything */
+    stream << std::setfill(' ') << std::setw(0u) << std::dec;
+  }
+
+  if (componentCount > 1u)
+    stream << ')';
+}
+
+
+void Disassembler::emitLineNumber(std::ostream& stream) {
+  if (!m_options.lineNumbers)
+    return;
+
+  stream << std::setw(6u) << std::setfill(' ') << (++m_lineNumber) << ": "
+         << std::setw(0u);
+}
+
+
+void Disassembler::emitIndentation(std::ostream& stream) const {
+  if (!m_options.indent)
+    return;
+
+  for (uint32_t i = 0u; i < 2u * m_indentDepth; i++)
+    stream << ' ';
+}
+
+
+void Disassembler::incrementIndentation() {
+  m_indentDepth++;
+}
+
+
+void Disassembler::decrementIndentation() {
+  if (m_indentDepth)
+    m_indentDepth--;
+}
+
+
+  bool Disassembler::opBeginsNestedBlock(const Instruction& op) {
+  auto opCode = op.getOpCode();
+
+  return opCode == OpCode::eIf ||
+         opCode == OpCode::eElse ||
+         opCode == OpCode::eLoop ||
+         opCode == OpCode::eRep;
+}
+
+
+  bool Disassembler::opEndsNestedBlock(const Instruction& op) {
+  auto opCode = op.getOpCode();
+
+  return opCode == OpCode::eElse ||
+         opCode == OpCode::eEndIf ||
+         opCode == OpCode::eEndLoop ||
+         opCode == OpCode::eEndRep;
 }
 
 }

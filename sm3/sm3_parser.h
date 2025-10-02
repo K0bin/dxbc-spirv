@@ -2,11 +2,12 @@
 
 #include <optional>
 
-#include "util/util_byte_stream.h"
+#include "../util/util_byte_stream.h"
+#include "../util/util_bit.h"
+
+#include "../ir/ir.h"
 
 #include "sm3_types.h"
-#include "ir/ir.h"
-#include "util/util_bit.h"
 
 namespace dxbc_spv::sm3 {
 
@@ -14,8 +15,8 @@ class Instruction;
 
 /** Program type */
 enum class ShaderType : uint32_t {
-  ePixel    = 0u,
-  eVertex   = 1u,
+  eVertex   = 0u,
+  ePixel    = 1u,
 };
 
 /** Shader code header */
@@ -28,7 +29,7 @@ public:
   /** Constructs shader info. Note that the dword count must include
    *  the two dwords consumed by the info structure itself. */
   ShaderInfo(ShaderType type, uint32_t major, uint32_t minor)
-  : m_token((uint32_t(type) << 16) | ((major & 0xff) << 8u) | (minor & 0xff)) { }
+  : m_token(((~0u & uint32_t(type)) << 16) | ((major & 0xff) << 8u) | (minor & 0xff)) { }
 
   /** Parses shader info */
   explicit ShaderInfo(util::ByteReader& reader);
@@ -47,11 +48,16 @@ public:
 
   /** Checks whether shader header is valid */
   explicit operator bool () const {
-    return util::bextract(m_token, 17u, 15u) == 0xfff;
+    return util::bextract(m_token, 17u, 15u) == 0x7fff;
   }
 
   /** Writes code header to binary blob. */
   bool write(util::ByteWriter& writer) const;
+
+  uint32_t getToken() const
+  {
+    return m_token;
+  }
 
 private:
 
@@ -80,6 +86,14 @@ enum class SelectionMode : uint32_t {
   eMask       = 0u,
   eSwizzle    = 1u,
   eSelect1    = 2u,
+};
+
+
+
+/** Component selection */
+enum class ComponentCount : uint32_t {
+  e1Component = 1u,
+  e4Component = 2u,
 };
 
 
@@ -132,8 +146,8 @@ public:
   /** Creates operand and sets up the operand type.
    * Other properties need to be set manually. */
   Operand(OperandInfo info, RegisterType type)
-  : m_token(((uint32_t(type) & 0b11000) << 11u) | (uint32_t(type) & 0b111) << 28u),
-    m_info(info) { }
+    : m_token(((uint32_t(type) & 0b11000) << 11u) | (uint32_t(type) & 0b111) << 28u),
+      m_info(info) { }
 
   /** Recursively parses operand in byte stream, index operands. */
   Operand(util::ByteReader& reader, const OperandInfo& info, Instruction& op, const ShaderInfo& shaderInfo);
@@ -142,6 +156,20 @@ public:
    *  when processing operands depending on the instruction layout. */
   OperandInfo getInfo() const {
     return m_info;
+  }
+
+  /** Queries component count */
+  ComponentCount getComponentCount(const ShaderInfo& shaderInfo) const {
+    return (getRegisterType() == RegisterType::eLoop
+             || getRegisterType() == RegisterType::eConstBool
+             || getRegisterType() == RegisterType::ePredicate
+             || (getRegisterType() == RegisterType::eRasterizerOut && getIndex() == uint32_t(RasterizerOutIndex::eRasterOutFog))
+             || (getRegisterType() == RegisterType::eRasterizerOut && getIndex() == uint32_t(RasterizerOutIndex::eRasterOutPointSize))
+             || (getRegisterType() == RegisterType::eMiscType && getIndex() == uint32_t(MiscTypeIndex::eMiscTypeFace))
+             || (getRegisterType() == RegisterType::eAddr && shaderInfo.getVersion().first == 1)
+             || getRegisterType() == RegisterType::eDepthOut)
+             ? ComponentCount::e1Component
+             : ComponentCount::e4Component;
   }
 
   /** Queries component selection mode. Determines the existence
@@ -161,16 +189,16 @@ public:
   /** Queries component swizzle. Only useful for source operands. */
   Swizzle getSwizzle() const {
     return m_info.kind == OperandKind::eSrcReg
-      ? Swizzle(util::bextract(m_token, 16u, 8u))
-      : Swizzle::identity();
+             ? Swizzle(util::bextract(m_token, 16u, 8u))
+             : Swizzle::identity();
   }
 
   /** Queries component write mask. Only useful for destination
    *  operands. */
   WriteMask getWriteMask() const {
     return m_info.kind == OperandKind::eDstReg
-      ? WriteMask(util::bextract(m_token, 16u, 4u))
-      : WriteMask(0b1111);
+             ? WriteMask(util::bextract(m_token, 16u, 4u))
+             : WriteMask(0b1111);
   }
 
   bool isSaturated() const {
@@ -179,8 +207,8 @@ public:
 
   int8_t getShift() const {
     return m_info.kind == OperandKind::eDstReg
-      ? int8_t((util::bextract(m_token, 24u, 4u) & 0b111) - (util::bextract(m_token, 24, 4) & 0b1000))
-      : 0;
+             ? int8_t((util::bextract(m_token, 24u, 4u) & 0b111) - (util::bextract(m_token, 24, 4) & 0b1000))
+             : 0;
   }
 
   bool isCentroid() const {
@@ -216,6 +244,31 @@ public:
   }
 
 
+  /** Queries immediate value for a given component. */
+  template<typename T, std::enable_if_t<std::is_arithmetic_v<T>, bool> = true>
+  T getImmediate(uint32_t idx) const {
+    auto type = getRegisterType();
+    dxbc_spv_assert(type == RegisterType::eConstBool);
+    util::uint_type_t<T> data;
+    data = m_imm[idx];
+    T result;
+    std::memcpy(&result, &data, sizeof(result));
+    return result;
+  }
+
+
+  /** Sets immediate value for a given component. */
+  template<typename T, std::enable_if_t<(std::is_arithmetic_v<T>), bool> = true>
+  Operand& setImmediate(uint32_t idx, T value) {
+    auto type = getRegisterType();
+    dxbc_spv_assert(type == RegisterType::eConstBool);
+    util::uint_type_t<T> data;
+    std::memcpy(&data, &value, sizeof(data));
+    m_imm[idx] = data;
+    return *this;
+  }
+
+
   /** Checks operand info is valid. A default token of 0 is
    *  nonsensical since it refers to a 0-component temp. */
   explicit operator bool () const {
@@ -228,6 +281,7 @@ private:
   constexpr static uint32_t DefaultInvalidToken = 33u << 11u;
 
   uint32_t                  m_token = DefaultInvalidToken;
+  std::array<uint32_t, 4u>  m_imm   = { };
 
   OperandInfo               m_info = { };
 
@@ -236,7 +290,6 @@ private:
   void resetOnError();
 
 };
-
 
 /** Instruction layout. Stores the number of operands, and
  *  whether each operand is a source or destination register
@@ -382,7 +435,7 @@ public:
   /** Checks whether any more instructions are
    *  available to be parsed. */
   explicit operator bool () const {
-    return true;
+    return !m_isPastEnd;
   }
 
 private:
@@ -391,8 +444,11 @@ private:
 
   ShaderInfo m_info = { };
 
+  bool m_isPastEnd = false;
+
 };
 
 std::ostream& operator << (std::ostream& os, ShaderType type);
+std::ostream& operator << (std::ostream& os, const ShaderInfo& shaderInfo);
 
 }

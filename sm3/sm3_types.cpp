@@ -129,9 +129,9 @@ namespace dxbc_spv::sm3 {
 
   std::ostream& operator << (std::ostream& os, RasterizerOutIndex outIndex) {
     switch (outIndex) {
-      case eRasterOutPosition:  return os << "RasterizerOutPosition";
-      case eRasterOutFog:       return os << "RasterizerOutFog";
-      case eRasterOutPointSize: return os << "RasterizerOutPointSize";
+      case RasterizerOutIndex::eRasterOutPosition:  return os << "RasterizerOutPosition";
+      case RasterizerOutIndex::eRasterOutFog:       return os << "RasterizerOutFog";
+      case RasterizerOutIndex::eRasterOutPointSize: return os << "RasterizerOutPointSize";
     }
 
     return os << "RasterizerOutIndex(" << uint32_t(outIndex) << ")";
@@ -139,8 +139,8 @@ namespace dxbc_spv::sm3 {
 
   std::ostream& operator << (std::ostream& os, MiscTypeIndex miscTypeIndex) {
     switch (miscTypeIndex) {
-      case eMiscTypePosition: return os << "MiscTypePosition";
-      case eMiscTypeFace:     return os << "MiscTypeFace";
+      case MiscTypeIndex::eMiscTypePosition: return os << "MiscTypePosition";
+      case MiscTypeIndex::eMiscTypeFace:     return os << "MiscTypeFace";
     }
 
     return os << "MiscTypeIndex(" << uint32_t(miscTypeIndex) << ")";

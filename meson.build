@@ -16,6 +16,7 @@ dxbc_spv_files = files([
   'dxbc/dxbc_types.cpp',
 
   'sm3/sm3_api.cpp',
+  'sm3/sm3_types.cpp',
   'sm3/sm3_converter.cpp',
   'sm3/sm3_parser.cpp',
   'sm3/sm3_disasm.cpp',

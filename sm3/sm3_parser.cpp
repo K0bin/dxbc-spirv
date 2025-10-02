@@ -4,7 +4,8 @@
 
 namespace dxbc_spv::sm3 {
 
-/* If the number of operands differs between shading models, use the one of the lowest SM.
+/* If the number of operands differs between shading models, use the one with the most operands.
+ * and modify the instruction layout as necessary when retrieving it.
  * The layout is also used to determine the number of tokens on SM1 which is encoded into
  * the first token in SM2+. */
 static const std::array<InstructionLayout, 100> g_instructionLayouts = {{
@@ -342,9 +343,6 @@ static const std::array<InstructionLayout, 100> g_instructionLayouts = {{
   { {{
     { OperandKind::eDstReg, ir::ScalarType::eF32 },
     { OperandKind::eImm32, ir::ScalarType::eF32 },
-    { OperandKind::eImm32, ir::ScalarType::eF32 },
-    { OperandKind::eImm32, ir::ScalarType::eF32 },
-    { OperandKind::eImm32, ir::ScalarType::eF32 },
   }} },
   /* TexReg2Rgb */
   { {{
@@ -474,14 +472,39 @@ void ShaderInfo::resetOnError() {
 
 
 
-Operand::Operand(util::ByteReader& reader, const OperandInfo& info, Instruction& op, const ShaderInfo& shaderInfo) {
+Operand::Operand(util::ByteReader& reader, const OperandInfo& info, Instruction& op, const ShaderInfo& shaderInfo)
+: Operand(info, RegisterType::eConst) {
   if (!reader.read(m_token)) {
     Logger::err("Failed to read operand token");
     resetOnError();
     return;
   }
 
+  /* Read immediate value or index tokens, depending on the operand type */
+  auto type = getRegisterType();
+
+  std::cout << "Operand kind: " << uint32_t(info.kind) << std::endl;
+  std::cout << "Operand type: " << info.type << std::endl;
+  std::cout << "Register type: " << uint32_t(type) << std::endl;
+
+  if (info.kind == OperandKind::eImm32
+     && (type == RegisterType::eConst
+    || type == RegisterType::eConst2
+    || type == RegisterType::eConst3
+    || type == RegisterType::eConst4
+    || type == RegisterType::eConstInt
+    || type == RegisterType::eConstBool)) {
+    dxbc_spv_assert(!hasRelativeIndexing());
+
+    ComponentCount dwordCount = getComponentCount(shaderInfo);
+    std::cout << "Component count: " << uint32_t(dwordCount) << std::endl;
+    for (uint32_t i = 0; i < uint32_t(dwordCount); i++) {
+      m_imm[i] = reader.read(dwordCount);
+    }
+  }
+
   if (hasRelativeIndexing()) {
+    std::cout << "Relative indexing" << std::endl;
     dxbc_spv_assert(info.kind == OperandKind::eDstReg || info.kind == OperandKind::eSrcReg);
 
     OperandInfo indexInfo = { };
@@ -540,6 +563,10 @@ Instruction::Instruction(util::ByteReader& reader, const ShaderInfo& info) {
   /* Advance base reader to the next instruction. */
   reader.skip(byteSize);
 
+  std::cout << "Opcode: " << getOpCode() << std::endl;
+  std::cout << "Expected token count: " << layout.operands.size() << std::endl;
+  std::cout << "Actual token count: " << tokenCount << std::endl;
+
   for (uint32_t i = 0u; i < layout.operands.size(); i++) {
     const auto& operandInfo = layout.operands[i];
     Operand operand(tokenReader, operandInfo, *this, info);
@@ -568,7 +595,7 @@ Instruction::Instruction(util::ByteReader& reader, const ShaderInfo& info) {
     }
   }
 
-  dxbc_spv_assert(tokenReader.getRemaining() == 0);
+  dxbc_spv_assert(getOpCode() == OpCode::eComment || tokenReader.getRemaining() == 0);
 }
 
 
@@ -672,7 +699,29 @@ Parser::Parser(util::ByteReader reader) {
 
 
 Instruction Parser::parseInstruction() {
-  return Instruction(m_reader, m_info);
+  dxbc_spv_assert(!m_isPastEnd);
+  Instruction instruction = Instruction(m_reader, m_info);
+  if (instruction.getOpCode() == OpCode::eEnd) {
+    m_isPastEnd = true;
+  }
+  return instruction;
+}
+
+
+std::ostream& operator << (std::ostream& os, ShaderType type) {
+  switch (type) {
+    case ShaderType::eVertex: os << "Vertex";  break;
+    case ShaderType::ePixel:  os << "Pixel";   break;
+    default:                  os << "Unknown"; break;
+  }
+  return os;
+}
+
+
+std::ostream& operator << (std::ostream& os, const ShaderInfo& shaderInfo) {
+  os << shaderInfo.getType() << '\n';
+  os << "SM" << shaderInfo.getVersion().first << "_" << shaderInfo.getVersion().second << '\n';
+  return os;
 }
 
 }
