@@ -56,7 +56,7 @@ void Disassembler::disassembleOp(std::ostream& stream, const Instruction& op, co
 
       case OperandKind::eImm32:
         if ((inBounds = (nImm < op.getImmCount()))) {
-          disassembleImmediate(stream, op.getImm(nImm));
+          disassembleImmediate(stream, op, op.getImm(nImm));
 
           nImm++;
         }
@@ -90,6 +90,37 @@ std::string Disassembler::disassembleOp(const Instruction& op, const ShaderInfo&
 void Disassembler::disassembleOpcodeToken(std::ostream& stream, const Instruction& op) const {
   stream << op.getOpCode();
 
+  if (op.hasDcl()) {
+    const auto& dst = op.getDst();
+    if (dst.isCentroid()) {
+      stream << "_centroid";
+    }
+
+    if (dst.isPartialPrecision()) {
+      stream << "_pp";
+    }
+
+    if (dst.isSaturated()) {
+      stream << "_sat";
+    }
+  }
+
+  if (op.getOpCode() == OpCode::eIfc
+    || op.getOpCode() == OpCode::eBreakC
+    || op.getOpCode() == OpCode::eSetP) {
+    switch (op.getComparisonMode()) {
+      case ComparisonMode::eNever:        stream << "_false";  break;
+      case ComparisonMode::eGreaterThan:  stream << "_gt";     break;
+      case ComparisonMode::eEqual:        stream << "_eq";     break;
+      case ComparisonMode::eGreaterEqual: stream << "_ge";     break;
+      case ComparisonMode::eLessThan:     stream << "_lt";     break;
+      case ComparisonMode::eNotEqual:     stream << "_ne";     break;
+      case ComparisonMode::eLessEqual:    stream << "_le";     break;
+      case ComparisonMode::eAlways:       stream << "_true";   break;
+      default:                            stream << "unknown"; break;
+    }
+  }
+
   // TODO: Coissue
 }
 
@@ -107,66 +138,66 @@ void Disassembler::disassembleOperand(std::ostream& stream, const Instruction& o
   std::string suffix;
 
   switch (modifier) {
-    case Modifier::Neg:
+    case OperandModifier::Neg:
       stream << "-";
       break;
 
-    case Modifier::Bias:
+    case OperandModifier::Bias:
       stream << "(";
       suffix = " - 0.5";
       break;
 
-    case Modifier::BiasNeg:
+    case OperandModifier::BiasNeg:
       stream << "-(";
       suffix = " - 0.5)";
       break;
 
-    case Modifier::Sign:
+    case OperandModifier::Sign:
       stream << "fma(";
       suffix = ", 2.0f, -1.0f)";
       break;
 
-    case Modifier::SignNeg:
+    case OperandModifier::SignNeg:
       stream << "-fma(";
       suffix = ", 2.0f, -1.0f)";
       break;
 
-    case Modifier::Comp:
+    case OperandModifier::Comp:
       stream << "(1 - ";
       suffix = ")";
       break;
 
-    case Modifier::X2:
+    case OperandModifier::X2:
       stream << "(";
       suffix = " * 2)";
       break;
 
-    case Modifier::X2Neg:
+    case OperandModifier::X2Neg:
       stream << "-(";
       suffix = " * 2)";
       break;
 
-    case Modifier::Dz:
+    case OperandModifier::Dz:
       stream << "(";
       suffix = ".z)";
       break;
 
-    case Modifier::Dw:
+    case OperandModifier::Dw:
       stream << "(";
       suffix = ".w)";
       break;
 
-    case Modifier::Abs:
+    case OperandModifier::Abs:
       stream << "abs(";
       suffix = ")";
       break;
 
-    case Modifier::AbsNeg:
+    case OperandModifier::AbsNeg:
       stream << "-abs(";
       suffix = ")";
       break;
 
-    case Modifier::Not:
+    case OperandModifier::Not:
       stream << "!";
       break;
 
@@ -183,7 +214,7 @@ void Disassembler::disassembleOperand(std::ostream& stream, const Instruction& o
     }
   }
 
-  if (modifier == Modifier::Dz || modifier == Modifier::Dw) {
+  if (modifier == OperandModifier::Dz || modifier == OperandModifier::Dw) {
     stream << " / ";
     disassembleRegisterType(stream, arg.getRegisterType(), info);
     disassembleRegisterAddressing(stream, op, arg, info);
@@ -209,7 +240,7 @@ void Disassembler::disassembleRegisterAddressing(std::ostream& stream, const Ins
       stream << "(unhandled misc register index " << arg.getIndex() << ")";
     }
   } else if (arg.getRegisterType() != RegisterType::eLoop) {
-    if (arg.hasRelativeIndexing()) {
+    if (arg.hasRelativeAddressing()) {
       stream << "[";
       if (arg.getIndex() != 0u) {
         stream << arg.getIndex();
@@ -329,9 +360,9 @@ void Disassembler::disassembleDeclaration(std::ostream& stream, const Instructio
 }
 
 
-void Disassembler::disassembleImmediate(std::ostream& stream, const Operand& arg) const {
+void Disassembler::disassembleImmediate(std::ostream& stream, const Instruction& op, const Operand& arg) const {
   /* Determine number of components based on the operand token */
-  uint32_t componentCount = arg.getComponentCount(m_info) == ComponentCount::e1Component ? 1u : 4u;
+  uint32_t componentCount = op.hasDst() && op.getDst().getComponentCount(m_info) == ComponentCount::e1Component ? 1u : 4u;
 
   if (componentCount > 1u)
     stream << '(';
@@ -447,6 +478,8 @@ void Disassembler::incrementIndentation() {
 void Disassembler::decrementIndentation() {
   if (m_indentDepth)
     m_indentDepth--;
+  else
+    std::cout << "Underflow" << '\n';
 }
 
 
@@ -454,6 +487,7 @@ void Disassembler::decrementIndentation() {
   auto opCode = op.getOpCode();
 
   return opCode == OpCode::eIf ||
+         opCode == OpCode::eIfc ||
          opCode == OpCode::eElse ||
          opCode == OpCode::eLoop ||
          opCode == OpCode::eRep;

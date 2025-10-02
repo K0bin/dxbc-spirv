@@ -104,7 +104,7 @@ enum class ComponentCount : uint32_t {
  * These are applied after loading
  * an operand register.
  */
-enum class Modifier : uint32_t {
+enum class OperandModifier : uint32_t {
   None    = 0u,  // r
   Neg     = 1u,  // -r
   Bias    = 2u,  // r - 0.5
@@ -122,7 +122,10 @@ enum class Modifier : uint32_t {
 };
 
 
-inline bool hasExtraRelativeIndexingToken(OperandKind kind, const ShaderInfo& info) {
+/**
+ * \brif Determines whether the shader uses a separate token to configure relative addressing
+ */
+inline bool hasExtraRelativeAddressingToken(OperandKind kind, const ShaderInfo& info) {
   return (info.getVersion().first >= 2 && kind == OperandKind::eSrcReg)
         || (info.getVersion().first >= 3 && kind == OperandKind::eDstReg);
 }
@@ -202,20 +205,28 @@ public:
              : WriteMask(0b1111);
   }
 
+  /** Queries whether the results of the instruction get saturated (clamped to 0..1) before
+    * writing them to the destination register. Only relevant for destination register operands. */
   bool isSaturated() const {
     return m_info.kind == OperandKind::eDstReg && util::bextract(m_token, 20, 1);
   }
 
+  /** Queries the number of bits by which the results of the instructions get shifted before
+    * writing them to the destination register. Only relevant for destination register operands */
   int8_t getShift() const {
     return m_info.kind == OperandKind::eDstReg
              ? int8_t((util::bextract(m_token, 24u, 4u) & 0b111) - (util::bextract(m_token, 24, 4) & 0b1000))
              : 0;
   }
 
+  /** Queries whether the pixel shader input should be interpolated at the centroid.
+    * Only relevant for shader inputs in destination register operands. */
   bool isCentroid() const {
     return util::bextract(m_token, 22u, 1u);
   }
 
+  /** Queries whether the operation can be performed using reduced precision.
+    * Only relevant for destination operands */
   bool isPartialPrecision() const {
     return util::bextract(m_token, 21, 1);
   }
@@ -236,29 +247,32 @@ public:
     return m_relAddr;
   }
 
-  bool hasRelativeIndexing() const {
+  /** Queries whether the operand uses relative addressing. */
+  bool hasRelativeAddressing() const {
     return util::bextract(m_token, 13u, 1u);
   }
 
-  Modifier getModifier() const {
-    return Modifier(util::bextract(m_token, 24u, 4u));
+  /** Queries operand modifier. */
+  OperandModifier getModifier() const {
+    return OperandModifier(util::bextract(m_token, 24u, 4u));
   }
 
-
+  /** Queries the semantic usage.
+   *  Only useful for declaration operands of shader inputs and outputs. */
   Usage getUsage() const {
     return Usage(util::bextract(m_token, 0u, 4u));
   }
 
-
+  /** Queries the semantic usage index.
+   *  Only useful for declaration operands of shader inputs and outputs. */
   uint32_t getUsageIndex() const {
     return util::bextract(m_token, 16u, 4u);
   }
 
-
+  /** Queries the texture type. Only useful for declaration operands. */
   TextureType getTextureType() const {
     return TextureType(util::bextract(m_token, 27u, 4u));
   }
-
 
   /** Queries immediate value for a given component. */
   template<typename T, std::enable_if_t<std::is_arithmetic_v<T>, bool> = true>
@@ -270,7 +284,6 @@ public:
     return result;
   }
 
-
   /** Sets immediate value for a given component. */
   template<typename T, std::enable_if_t<(std::is_arithmetic_v<T>), bool> = true>
   Operand& setImmediate(uint32_t idx, T value) {
@@ -279,7 +292,6 @@ public:
     m_imm[idx] = data;
     return *this;
   }
-
 
   /** Checks operand info is valid. A default token of 0 is
    *  nonsensical since it refers to a 0-component temp. */
@@ -411,10 +423,19 @@ public:
    *  changes the layout of resource declaration ops. */
   InstructionLayout getLayout(const ShaderInfo& info) const;
 
-
   /** Writes instruction and all its operands to a binary blob. */
   bool write(util::ByteWriter& writer, const ShaderInfo& info) const;
 
+  /** Queries the comparison mode of the instruction.
+    * Only relevant for a few control flow instructions. */
+  ComparisonMode getComparisonMode() const {
+    return ComparisonMode(util::bextract(m_token, 16u, 8u));
+  }
+
+  /** Queries the TexLd mode of the instruction. */
+  TexLdMode getTexLdMode() const {
+    return TexLdMode(util::bextract(m_token, 16u, 8u));
+  }
 
   /** Checks whether instruction is valid */
   explicit operator bool () const {

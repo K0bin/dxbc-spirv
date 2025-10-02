@@ -39,7 +39,7 @@ private:
 
   void disassembleDeclaration(std::ostream& stream, const Instruction& op, const Operand& operand) const;
 
-  void disassembleImmediate(std::ostream& stream, const Operand& arg) const;
+  void disassembleImmediate(std::ostream& stream, const Instruction& op, const Operand& arg) const;
 
   void disassembleOperand(std::ostream& stream, const Instruction& op, const Operand& arg, const ShaderInfo& info) const;
 

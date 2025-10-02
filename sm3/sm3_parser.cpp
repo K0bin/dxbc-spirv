@@ -62,7 +62,6 @@ static const std::array<InstructionLayout, 100> g_instructionLayouts = {{
     { OperandKind::eDstReg, ir::ScalarType::eF32 },
     { OperandKind::eSrcReg, ir::ScalarType::eF32 },
     { OperandKind::eSrcReg, ir::ScalarType::eF32 },
-    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
   }} },
   /* Min */
   { {{
@@ -482,7 +481,7 @@ Operand::Operand(util::ByteReader& reader, const OperandInfo& info, Instruction&
   }
 
   if (info.kind == OperandKind::eImm32) {
-    ComponentCount dwordCount = getComponentCount(shaderInfo);
+    ComponentCount dwordCount = op.getDst().getComponentCount(shaderInfo);
     m_imm[0] = m_token;
     for (uint32_t i = 1; i < uint32_t(dwordCount); i++) {
       if (!reader.read(m_imm[i])) {
@@ -494,13 +493,13 @@ Operand::Operand(util::ByteReader& reader, const OperandInfo& info, Instruction&
     return;
   }
 
-  if ((info.kind == OperandKind::eSrcReg || info.kind == OperandKind::eDstReg) && hasRelativeIndexing()) {
+  if ((info.kind == OperandKind::eSrcReg || info.kind == OperandKind::eDstReg) && hasRelativeAddressing()) {
     dxbc_spv_assert(info.kind == OperandKind::eDstReg || info.kind == OperandKind::eSrcReg);
 
     OperandInfo indexInfo = { };
     indexInfo.kind = OperandKind::eRelAddr;
     Operand relAddrOperand;
-    if (hasExtraRelativeIndexingToken(info.kind, shaderInfo)) {
+    if (hasExtraRelativeAddressingToken(info.kind, shaderInfo)) {
       // VS SM3 supports using the following registers as indices:
       // - a0 the dedicated address register, integer
       // - aL: the loop counter register, integer
@@ -509,8 +508,8 @@ Operand::Operand(util::ByteReader& reader, const OperandInfo& info, Instruction&
       // Everything else only supports a subset of this.
       indexInfo.type = ir::ScalarType::eUnknown;
       relAddrOperand = Operand(reader, indexInfo, op, shaderInfo);
-      dxbc_spv_assert(!relAddrOperand.hasRelativeIndexing());
-      dxbc_spv_assert(relAddrOperand.getModifier() == Modifier::None);
+      dxbc_spv_assert(!relAddrOperand.hasRelativeAddressing());
+      dxbc_spv_assert(relAddrOperand.getModifier() == OperandModifier::None);
     } else {
       // Always use a0
       indexInfo.type = ir::ScalarType::eU32;
@@ -581,7 +580,7 @@ Instruction::Instruction(util::ByteReader& reader, const ShaderInfo& info) {
     }
   }
 
-  dxbc_spv_assert(getOpCode() == OpCode::eComment || tokenReader.getRemaining() == 0);
+  dxbc_spv_assert(getOpCode() == OpCode::eComment || tokenReader.getRemaining() == 0u);
 }
 
 

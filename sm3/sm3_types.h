@@ -168,6 +168,24 @@ enum class MiscTypeIndex : uint32_t {
   eMiscTypeFace,
 };
 
+/* Comparison modes for usage with the ifc instruction */
+enum class ComparisonMode : uint32_t {
+  eNever        = 0u,
+  eGreaterThan  = 1u,
+  eEqual        = 2u,
+  eGreaterEqual = 3u,
+  eLessThan     = 4u,
+  eNotEqual     = 5u,
+  eLessEqual    = 6u,
+  eAlways       = 7u,
+};
+
+enum class TexLdMode : uint32_t {
+  Regular      = 0u,
+  Project      = 1u,
+  Bias         = 2u,
+};
+
 std::ostream& operator << (std::ostream& os, OpCode op);
 std::ostream& operator << (std::ostream& os, Usage usage);
 std::ostream& operator << (std::ostream& os, TextureType textureType);

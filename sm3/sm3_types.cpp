@@ -45,11 +45,11 @@ namespace dxbc_spv::sm3 {
       case OpCode::eRep:          return os << "rep";
       case OpCode::eEndRep:       return os << "endrep";
       case OpCode::eIf:           return os << "if";
-      case OpCode::eIfc:          return os << "if_comp";
+      case OpCode::eIfc:          return os << "if";
       case OpCode::eElse:         return os << "else";
       case OpCode::eEndIf:        return os << "endif";
       case OpCode::eBreak:        return os << "break";
-      case OpCode::eBreakC:       return os << "break_comp";
+      case OpCode::eBreakC:       return os << "break";
       case OpCode::eMova:         return os << "mova";
       case OpCode::eDefB:         return os << "defb";
       case OpCode::eDefI:         return os << "defi";
@@ -84,7 +84,7 @@ namespace dxbc_spv::sm3 {
       case OpCode::eDsX:          return os << "dsX";
       case OpCode::eDsY:          return os << "dsY";
       case OpCode::eTexLdd:       return os << "texldd";
-      case OpCode::eSetP:         return os << "setp_comp";
+      case OpCode::eSetP:         return os << "setp";
       case OpCode::eTexLdl:       return os << "texldl";
       case OpCode::eBreakP:       return os << "break";
 
