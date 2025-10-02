@@ -23,11 +23,20 @@ void Disassembler::disassembleOp(std::ostream& stream, const Instruction& op, co
   uint32_t nImm = 0u;
 
   bool first = true;
+  bool hadDclBefore = false;
 
   for (const auto& operand : layout.operands) {
     bool inBounds = false;
+    bool isFirst = std::exchange(first, false);
+    bool hasDclBefore = std::exchange(hadDclBefore, operand.kind == OperandKind::eDclReg);
 
-    stream << (std::exchange(first, false) ? " " : ", ");
+    if (operand.kind != OperandKind::eDclReg) {
+      if (isFirst || hasDclBefore) {
+        stream << " ";
+      } else {
+        stream << ", ";
+      }
+    }
 
     switch (operand.kind) {
       case OperandKind::eDstReg:
@@ -40,9 +49,14 @@ void Disassembler::disassembleOp(std::ostream& stream, const Instruction& op, co
           disassembleOperand(stream, op, op.getSrc(nSrc++), info);
         break;
 
+      case OperandKind::eDclReg:
+        if ((inBounds = op.hasDcl()))
+          disassembleDeclaration(stream, op, op.getDcl());
+        break;
+
       case OperandKind::eImm32:
         if ((inBounds = (nImm < op.getImmCount()))) {
-          disassembleOperand(stream, op, op.getImm(nImm), info);
+          disassembleImmediate(stream, op.getImm(nImm));
 
           nImm++;
         }
@@ -81,6 +95,12 @@ void Disassembler::disassembleOpcodeToken(std::ostream& stream, const Instructio
 
 
 void Disassembler::disassembleOperand(std::ostream& stream, const Instruction& op, const Operand& arg, const ShaderInfo& info) const {
+  if (op.getOpCode() == OpCode::eDcl) {
+    disassembleRegisterType(stream, arg.getRegisterType(), info);
+    disassembleRegisterAddressing(stream, op, arg, info);
+    return;
+  }
+
   /* Handle modifier */
   auto modifier = arg.getModifier();
 
@@ -155,11 +175,25 @@ void Disassembler::disassembleOperand(std::ostream& stream, const Instruction& o
 
   disassembleRegisterType(stream, arg.getRegisterType(), info);
   disassembleRegisterAddressing(stream, op, arg, info);
+  if (arg.getComponentCount(info) == ComponentCount::e4Component) {
+    switch (arg.getSelectionMode()) {
+      case SelectionMode::eMask:    stream << "." << arg.getWriteMask(); break;
+      case SelectionMode::eSwizzle: stream << "." << arg.getSwizzle(); break;
+      case SelectionMode::eSelect1: stream << "." << arg.getSwizzle().x(); break;
+    }
+  }
 
   if (modifier == Modifier::Dz || modifier == Modifier::Dw) {
     stream << " / ";
     disassembleRegisterType(stream, arg.getRegisterType(), info);
     disassembleRegisterAddressing(stream, op, arg, info);
+    if (arg.getComponentCount(info) == ComponentCount::e4Component) {
+      switch (arg.getSelectionMode()) {
+        case SelectionMode::eMask:    stream << "." << arg.getWriteMask(); break;
+        case SelectionMode::eSwizzle: stream << "." << arg.getSwizzle(); break;
+        case SelectionMode::eSelect1: stream << "." << arg.getSwizzle().x(); break;
+      }
+    }
   }
 
   stream << suffix;
@@ -192,7 +226,7 @@ void Disassembler::disassembleRegisterAddressing(std::ostream& stream, const Ins
 void Disassembler::disassembleRegisterType(std::ostream& stream, RegisterType registerType, const ShaderInfo& info) const {
   switch (registerType) {
     case RegisterType::eTemp:  stream << "r"; break;
-    case RegisterType::eInput: stream << "i"; break;
+    case RegisterType::eInput: stream << "v"; break;
     case RegisterType::eConst: stream << "c"; break;
     case RegisterType::eAddr:
     // case RegisterType::eTexture: Same value
@@ -232,7 +266,67 @@ void Disassembler::disassembleRegisterType(std::ostream& stream, RegisterType re
 }
 
 
+void Disassembler::disassembleDeclaration(std::ostream& stream, const Instruction& op, const Operand& operand) const {
+  if (op.getDst().getRegisterType() == RegisterType::eSampler) {
+    switch (operand.getTextureType()) {
+      case TextureType::eTexture2D:   stream << "_2d";   break;
+      case TextureType::eTextureCube: stream << "_cube"; break;
+      case TextureType::eTexture3D:   stream << "_3d";   break;
+    }
+    return;
+  }
 
+  auto registerType = operand.getRegisterType();
+  if (registerType == RegisterType::eOutput
+    || registerType == RegisterType::eInput) {
+    switch (operand.getUsage()) {
+      case Usage::ePosition:
+        stream << "_position" << operand.getUsageIndex();
+        break;
+      case Usage::eBlendWeight:
+        stream << "_blendweight" << operand.getUsageIndex();
+        break;
+      case Usage::eBlendIndices:
+        stream << "_blendindices" << operand.getUsageIndex();
+        break;
+      case Usage::eNormal:
+        stream << "_normal" << operand.getUsageIndex();
+        break;
+      case Usage::ePointSize:
+        stream << "_pointSize";
+        break;
+      case Usage::eTexCoord:
+        stream << "_texcoord" << operand.getUsageIndex();
+        break;
+      case Usage::eTangent:
+        stream << "_tangent";
+        break;
+      case Usage::eBinormal:
+        stream << "_binormal";
+        break;
+      case Usage::eTessFactor:
+        stream << "_tessfactor";
+        break;
+      case Usage::ePositionT:
+        stream << "_positiont";
+        break;
+      case Usage::eColor:
+        stream << "_color" << operand.getUsageIndex();
+        break;
+      case Usage::eFog:
+        stream << "_fog";
+        break;
+      case Usage::eDepth:
+        stream << "_depth";
+        break;
+      case Usage::eSample:
+        stream << "_sample" << operand.getUsageIndex();
+        break;
+      default:
+        stream << "_unknown" << operand.getUsageIndex();
+    }
+  }
+}
 
 
 void Disassembler::disassembleImmediate(std::ostream& stream, const Operand& arg) const {

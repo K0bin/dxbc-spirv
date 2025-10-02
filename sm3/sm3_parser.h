@@ -75,9 +75,10 @@ enum class OperandKind : uint8_t {
   eNone    = 0u,
   eDstReg  = 1u,
   eSrcReg  = 2u,
-  eImm32   = 3u,
-  eRelAddr = 4u,
-  ePred    = 5u,
+  eDclReg  = 3u,
+  eImm32   = 4u,
+  eRelAddr = 5u,
+  ePred    = 6u,
 };
 
 
@@ -93,7 +94,7 @@ enum class SelectionMode : uint32_t {
 /** Component selection */
 enum class ComponentCount : uint32_t {
   e1Component = 1u,
-  e4Component = 2u,
+  e4Component = 4u,
 };
 
 
@@ -244,11 +245,24 @@ public:
   }
 
 
+  Usage getUsage() const {
+    return Usage(util::bextract(m_token, 0u, 4u));
+  }
+
+
+  uint32_t getUsageIndex() const {
+    return util::bextract(m_token, 16u, 4u);
+  }
+
+
+  TextureType getTextureType() const {
+    return TextureType(util::bextract(m_token, 27u, 4u));
+  }
+
+
   /** Queries immediate value for a given component. */
   template<typename T, std::enable_if_t<std::is_arithmetic_v<T>, bool> = true>
   T getImmediate(uint32_t idx) const {
-    auto type = getRegisterType();
-    dxbc_spv_assert(type == RegisterType::eConstBool);
     util::uint_type_t<T> data;
     data = m_imm[idx];
     T result;
@@ -260,8 +274,6 @@ public:
   /** Sets immediate value for a given component. */
   template<typename T, std::enable_if_t<(std::is_arithmetic_v<T>), bool> = true>
   Operand& setImmediate(uint32_t idx, T value) {
-    auto type = getRegisterType();
-    dxbc_spv_assert(type == RegisterType::eConstBool);
     util::uint_type_t<T> data;
     std::memcpy(&data, &value, sizeof(data));
     m_imm[idx] = data;
@@ -342,6 +354,11 @@ public:
     return m_dstOperand.has_value();
   }
 
+  /** Retrieves whether the instruction has a declaration operand */
+  bool hasDcl() const {
+    return m_dclOperand.has_value();
+  }
+
   /** Retrieves whether the instruction has a predication operand */
   bool hasPred() const {
     return m_predOperand.has_value();
@@ -360,6 +377,11 @@ public:
   /** Queries destination operand. */
   const Operand& getDst() const {
     return getRawOperand(m_dstOperand.value());
+  }
+
+  /** Queries destination operand. */
+  const Operand& getDcl() const {
+    return getRawOperand(m_dclOperand.value());
   }
 
   /** Queries destination operand. */
@@ -405,6 +427,7 @@ private:
   uint32_t m_token = DefaultInvalidToken;
 
   std::optional<uint8_t> m_dstOperand = { };
+  std::optional<uint8_t> m_dclOperand = { };
   std::optional<uint8_t> m_predOperand = { };
   util::small_vector<uint8_t, 4u> m_srcOperands = { };
   util::small_vector<uint8_t, 4u> m_immOperands = { };

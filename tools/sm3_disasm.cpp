@@ -52,8 +52,6 @@ bool disassembleShader(util::ByteReader reader) {
     return false;
   }
 
-  std::cout << info << std::endl;
-
   return printCode(reader);
 }
 

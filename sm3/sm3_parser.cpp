@@ -175,6 +175,7 @@ static const std::array<InstructionLayout, 100> g_instructionLayouts = {{
   }} },
   /* Dcl */
   { {{
+    { OperandKind::eDclReg, ir::ScalarType::eUnknown },
     { OperandKind::eDstReg, ir::ScalarType::eUnknown },
   }} },
   /* Pow */
@@ -264,7 +265,7 @@ static const std::array<InstructionLayout, 100> g_instructionLayouts = {{
   { {{
     { OperandKind::eDstReg, ir::ScalarType::eF32 },
   }} },
-  /* Tex */
+  /* TexLd */
   { {{
     { OperandKind::eDstReg, ir::ScalarType::eF32 },
     { OperandKind::eSrcReg, ir::ScalarType::eSampler }, // Only on SM1.4
@@ -473,38 +474,27 @@ void ShaderInfo::resetOnError() {
 
 
 Operand::Operand(util::ByteReader& reader, const OperandInfo& info, Instruction& op, const ShaderInfo& shaderInfo)
-: Operand(info, RegisterType::eConst) {
+  : Operand(info, RegisterType::eConst) {
   if (!reader.read(m_token)) {
     Logger::err("Failed to read operand token");
     resetOnError();
     return;
   }
 
-  /* Read immediate value or index tokens, depending on the operand type */
-  auto type = getRegisterType();
-
-  std::cout << "Operand kind: " << uint32_t(info.kind) << std::endl;
-  std::cout << "Operand type: " << info.type << std::endl;
-  std::cout << "Register type: " << uint32_t(type) << std::endl;
-
-  if (info.kind == OperandKind::eImm32
-     && (type == RegisterType::eConst
-    || type == RegisterType::eConst2
-    || type == RegisterType::eConst3
-    || type == RegisterType::eConst4
-    || type == RegisterType::eConstInt
-    || type == RegisterType::eConstBool)) {
-    dxbc_spv_assert(!hasRelativeIndexing());
-
+  if (info.kind == OperandKind::eImm32) {
     ComponentCount dwordCount = getComponentCount(shaderInfo);
-    std::cout << "Component count: " << uint32_t(dwordCount) << std::endl;
-    for (uint32_t i = 0; i < uint32_t(dwordCount); i++) {
-      m_imm[i] = reader.read(dwordCount);
+    m_imm[0] = m_token;
+    for (uint32_t i = 1; i < uint32_t(dwordCount); i++) {
+      if (!reader.read(m_imm[i])) {
+        Logger::err("Failed to read immediate value");
+        resetOnError();
+        return;
+      }
     }
+    return;
   }
 
-  if (hasRelativeIndexing()) {
-    std::cout << "Relative indexing" << std::endl;
+  if ((info.kind == OperandKind::eSrcReg || info.kind == OperandKind::eDstReg) && hasRelativeIndexing()) {
     dxbc_spv_assert(info.kind == OperandKind::eDstReg || info.kind == OperandKind::eSrcReg);
 
     OperandInfo indexInfo = { };
@@ -514,7 +504,7 @@ Operand::Operand(util::ByteReader& reader, const OperandInfo& info, Instruction&
       // VS SM3 supports using the following registers as indices:
       // - a0 the dedicated address register, integer
       // - aL: the loop counter register, integer
-      // - cN: one of the float contant registers, float
+      // - cN: one of the float constant registers, float
       // - oN: one of the output registers, float
       // Everything else only supports a subset of this.
       indexInfo.type = ir::ScalarType::eUnknown;
@@ -563,10 +553,6 @@ Instruction::Instruction(util::ByteReader& reader, const ShaderInfo& info) {
   /* Advance base reader to the next instruction. */
   reader.skip(byteSize);
 
-  std::cout << "Opcode: " << getOpCode() << std::endl;
-  std::cout << "Expected token count: " << layout.operands.size() << std::endl;
-  std::cout << "Actual token count: " << tokenCount << std::endl;
-
   for (uint32_t i = 0u; i < layout.operands.size(); i++) {
     const auto& operandInfo = layout.operands[i];
     Operand operand(tokenReader, operandInfo, *this, info);
@@ -595,7 +581,7 @@ Instruction::Instruction(util::ByteReader& reader, const ShaderInfo& info) {
     }
   }
 
-  dxbc_spv_assert(getOpCode() == OpCode::eComment || tokenReader.getRemaining() == 0);
+  //dxbc_spv_assert(getOpCode() == OpCode::eComment || tokenReader.getRemaining() == 0);
 }
 
 
@@ -608,6 +594,10 @@ uint32_t Instruction::addOperand(const Operand& operand) {
     case OperandKind::eDstReg:
       dxbc_spv_assert(!m_dstOperand.has_value());
       m_dstOperand = index;
+      break;
+    case OperandKind::eDclReg:
+      dxbc_spv_assert(!m_dclOperand.has_value());
+      m_dclOperand = index;
       break;
     case OperandKind::eImm32:   m_immOperands.push_back(index); break;
     case OperandKind::eNone:    dxbc_spv_unreachable();
@@ -667,11 +657,18 @@ InstructionLayout Instruction::getLayout(const ShaderInfo& info) const {
   }
 
   if ((getOpCode() == OpCode::eTex
-    || getOpCode() == OpCode::eTexCoord) && minor < 4u) {
+    || getOpCode() == OpCode::eTexCoord)
+    && major == 1u && minor < 4u) {
     // Tex/TexLd (same opcode) are only available in SM1.
     // TexLd (SM 1.4) has separate dst/src registers.
     // Tex (SM <1.4) only has the dst register.
     result.operands.pop_back();
+  }
+
+  if (getOpCode() == OpCode::eTex && major >= 2u) {
+    result.operands.pop_back();
+    result.operands.push_back({ OperandKind::eSrcReg, ir::ScalarType::eF32 });
+    result.operands.push_back({ OperandKind::eSrcReg, ir::ScalarType::eSampler });
   }
 
   if (getOpCode() == OpCode::eMov && major >= 3) {
@@ -710,18 +707,16 @@ Instruction Parser::parseInstruction() {
 
 std::ostream& operator << (std::ostream& os, ShaderType type) {
   switch (type) {
-    case ShaderType::eVertex: os << "Vertex";  break;
-    case ShaderType::ePixel:  os << "Pixel";   break;
-    default:                  os << "Unknown"; break;
+    case ShaderType::eVertex: os << "vs";  break;
+    case ShaderType::ePixel:  os << "ps";   break;
+    default:                  os << "unknown"; break;
   }
   return os;
 }
 
 
 std::ostream& operator << (std::ostream& os, const ShaderInfo& shaderInfo) {
-  os << shaderInfo.getType() << '\n';
-  os << "SM" << shaderInfo.getVersion().first << "_" << shaderInfo.getVersion().second << '\n';
-  return os;
+  return os << shaderInfo.getType() << "_" << shaderInfo.getVersion().first << "_" << shaderInfo.getVersion().second;
 }
 
 }

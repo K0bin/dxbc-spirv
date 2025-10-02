@@ -37,7 +37,7 @@ private:
 
   void disassembleOpcodeToken(std::ostream& stream, const Instruction& op) const;
 
-  bool disassembleEnumOperand(std::ostream& stream, const Instruction& op, uint32_t index) const;
+  void disassembleDeclaration(std::ostream& stream, const Instruction& op, const Operand& operand) const;
 
   void disassembleImmediate(std::ostream& stream, const Operand& arg) const;
 
