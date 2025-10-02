@@ -483,7 +483,7 @@ void Disassembler::decrementIndentation() {
 }
 
 
-  bool Disassembler::opBeginsNestedBlock(const Instruction& op) {
+bool Disassembler::opBeginsNestedBlock(const Instruction& op) {
   auto opCode = op.getOpCode();
 
   return opCode == OpCode::eIf ||
@@ -494,7 +494,7 @@ void Disassembler::decrementIndentation() {
 }
 
 
-  bool Disassembler::opEndsNestedBlock(const Instruction& op) {
+bool Disassembler::opEndsNestedBlock(const Instruction& op) {
   auto opCode = op.getOpCode();
 
   return opCode == OpCode::eElse ||
