@@ -4,16 +4,13 @@
 
 namespace dxbc_spv::sm3 {
 
-/* If the number of operands differs between shading models, use the one with the most operands.
- * and modify the instruction layout as necessary when retrieving it.
- * The layout is also used to determine the number of tokens on SM1 which is encoded into
- * the first token in SM2+. */
+/* If the operands differ between shading model versions, use the latest ones. */
 static const std::array<InstructionLayout, 100> g_instructionLayouts = {{
   /* Nop */
   { },
   /* Mov */
   { {{
-    { OperandKind::eDstReg, ir::ScalarType::eUnknown },
+    { OperandKind::eDstReg, ir::ScalarType::eF32 },
     { OperandKind::eSrcReg, ir::ScalarType::eF32 },
   }} },
   /* Add */
@@ -210,8 +207,6 @@ static const std::array<InstructionLayout, 100> g_instructionLayouts = {{
   { {{
     { OperandKind::eDstReg, ir::ScalarType::eF32 },
     { OperandKind::eSrcReg, ir::ScalarType::eF32 },
-    { OperandKind::eSrcReg, ir::ScalarType::eF32 }, // Only on SM2
-    { OperandKind::eSrcReg, ir::ScalarType::eF32 }, // Only on SM2
   }} },
   /* Rep */
   { {{
@@ -255,19 +250,20 @@ static const std::array<InstructionLayout, 100> g_instructionLayouts = {{
     { OperandKind::eImm32, ir::ScalarType::eI32 },
   }} },
 
-  /* TexCoord */
+  /* TexCrd. Same opcode as the SM<1.4 instruction 'texcoord'. */
   { {{
     { OperandKind::eDstReg, ir::ScalarType::eF32 },
-    { OperandKind::eSrcReg, ir::ScalarType::eSampler }, // Only on SM1.4
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
   }} },
   /* TexKill */
   { {{
     { OperandKind::eDstReg, ir::ScalarType::eF32 },
   }} },
-  /* TexLd */
+  /* TexLd. Same opcode as the SM<1.4 instruction 'tex'. */
   { {{
     { OperandKind::eDstReg, ir::ScalarType::eF32 },
-    { OperandKind::eSrcReg, ir::ScalarType::eSampler }, // Only on SM1.4
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 }, // Only on SM2+
+    { OperandKind::eSrcReg, ir::ScalarType::eSampler }, // Only on SM2+
   }} },
   /* TexBem */
   { {{
@@ -444,8 +440,8 @@ const InstructionLayout* getInstructionLayout(OpCode op) {
     index -= uint32_t(OpCode::ePhase);
     index += uint32_t(OpCode::eBreakP) + 1u;
   }
-  if (index >= uint32_t(OpCode::eTexCoord)) {
-    index -= uint32_t(OpCode::eTexCoord);
+  if (index >= uint32_t(OpCode::eTexCrd)) {
+    index -= uint32_t(OpCode::eTexCrd);
     index += uint32_t(OpCode::eDefI) + 1u;
   }
 
@@ -647,34 +643,54 @@ InstructionLayout Instruction::getLayout(const ShaderInfo& info) const {
   auto result = *layout;
   auto [major, minor] = info.getVersion();
 
-  if (getOpCode() == OpCode::eSinCos && major >= 3u) {
+  if (getOpCode() == OpCode::eSinCos && major <= 2u) {
     // Shader Model 2 SinCos has two additional src registers
     // that need to have the value of specific constants
     // for some reason.
-    result.operands.pop_back();
-    result.operands.pop_back();
-  }
-
-  if ((getOpCode() == OpCode::eTex
-    || getOpCode() == OpCode::eTexCoord)
-    && major == 1u && minor < 4u) {
-    // Tex/TexLd (same opcode) are only available in SM1.
-    // TexLd (SM 1.4) has separate dst/src registers.
-    // Tex (SM <1.4) only has the dst register.
-    result.operands.pop_back();
-  }
-
-  if (getOpCode() == OpCode::eTex && major >= 2u) {
-    result.operands.pop_back();
     result.operands.push_back({ OperandKind::eSrcReg, ir::ScalarType::eF32 });
-    result.operands.push_back({ OperandKind::eSrcReg, ir::ScalarType::eSampler });
+    result.operands.push_back({ OperandKind::eSrcReg, ir::ScalarType::eF32 });
+  }
+
+  if (getOpCode() == OpCode::eTexLd && major < 2u) {
+    // TexLd/Tex (same opcode)
+    result.operands.pop_back();
+    result.operands.pop_back();
+    result.operands.pop_back();
+    if (minor < 4u) {
+      // Tex (SM <1.4) only has the dst register.
+      // This destination register has to be a texture register
+      // and will contain the texture data afterward.
+      // The index of it also determines the texture that will be sampled.
+      result.operands.pop_back();
+      result.operands.pop_back();
+      result.operands.pop_back();
+      result.operands.push_back({ OperandKind::eDstReg, ir::ScalarType::eF32 });
+    } else if (minor == 4u) {
+      // TexLd (SM 1.4) has separate dst/src registers.
+      // Dst needs to be a temporary register and the index of it also determines the texture
+      // that will be sampled.
+      // Src provides the texture coordinates. It can be a texcoord register or a temporary register.
+      result.operands.push_back({ OperandKind::eDstReg, ir::ScalarType::eF32 });
+      result.operands.push_back({ OperandKind::eSrcReg, ir::ScalarType::eF32 });
+    }
+  }
+
+  if (getOpCode() == OpCode::eTexCrd && major == 1u && minor < 4u) {
+      // TexCrd/TexCoord (same opcode) are only available in SM1.
+      // SM2+ can just access texcoord registers directly.
+      // TexCoord (SM <1.4) does not take a separate source register.
+      // The destination register has to be a texture register
+      // and will contain the texture coord afterward.
+      result.operands.pop_back();
   }
 
   if (getOpCode() == OpCode::eMov && major >= 3) {
-    // Shader Model >=2 has the mova instruction to move
+    // Shader Model <2 doesn't have the mova instruction to move
     // a value to the address register. So the destination
-    // is always a float.
-    result.operands[0].type = ir::ScalarType::eF32;
+    // *can* have an integer type.
+    dxbc_spv_assert(!result.operands.empty());
+    dxbc_spv_assert(result.operands[0].kind == OperandKind::eDstReg);
+    result.operands[0].type = ir::ScalarType::eUnknown;
   }
 
   return result;

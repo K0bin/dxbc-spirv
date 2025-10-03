@@ -64,9 +64,9 @@ enum class OpCode : uint32_t {
   eDefB         = 47u,
   eDefI         = 48u,
 
-  eTexCoord     = 64u,
+  eTexCrd     = 64u,
   eTexKill      = 65u,
-  eTex          = 66u,
+  eTexLd        = 66u,
   eTexBem       = 67u,
   eTexBemL      = 68u,
   eTexReg2Ar    = 69u,

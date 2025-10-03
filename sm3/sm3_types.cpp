@@ -54,9 +54,9 @@ std::ostream& operator << (std::ostream& os, OpCode op) {
     case OpCode::eDefB:         return os << "defb";
     case OpCode::eDefI:         return os << "defi";
 
-    case OpCode::eTexCoord:     return os << "texcoord";
+    case OpCode::eTexCrd:     return os << "texcoord";
     case OpCode::eTexKill:      return os << "texkill";
-    case OpCode::eTex:          return os << "texld";
+    case OpCode::eTexLd:          return os << "texld";
     case OpCode::eTexBem:       return os << "texbem";
     case OpCode::eTexBemL:      return os << "texbeml";
     case OpCode::eTexReg2Ar:    return os << "texreg2ar";
