@@ -468,6 +468,7 @@ void ShaderInfo::resetOnError() {
 
 
 
+
 Operand::Operand(util::ByteReader& reader, const OperandInfo& info, Instruction& op, const ShaderInfo& shaderInfo)
   : Operand(info, RegisterType::eConst) {
   if (!reader.read(m_token)) {
@@ -526,7 +527,6 @@ Operand::Operand(util::ByteReader& reader, const OperandInfo& info, Instruction&
 void Operand::resetOnError() {
   m_token = DefaultInvalidToken;
 }
-
 
 
 Instruction::Instruction(util::ByteReader& reader, const ShaderInfo& info) {
@@ -605,6 +605,7 @@ uint32_t Instruction::addOperand(const Operand& operand) {
 
   return index;
 }
+
 
 uint32_t Instruction::getOperandTokenCount(const ShaderInfo& info, const InstructionLayout& layout) const {
   OpCode opcode = getOpCode();
@@ -697,10 +698,10 @@ InstructionLayout Instruction::getLayout(const ShaderInfo& info) const {
 }
 
 
-
 void Instruction::resetOnError() {
   m_token = DefaultInvalidToken;
 }
+
 
 
 
@@ -718,6 +719,8 @@ Instruction Parser::parseInstruction() {
   }
   return instruction;
 }
+
+
 
 
 std::ostream& operator << (std::ostream& os, ShaderType type) {
