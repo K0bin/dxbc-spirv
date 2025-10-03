@@ -298,7 +298,8 @@ void Disassembler::disassembleRegisterType(std::ostream& stream, RegisterType re
 
 
 void Disassembler::disassembleDeclaration(std::ostream& stream, const Instruction& op, const Operand& operand) const {
-  if (op.getDst().getRegisterType() == RegisterType::eSampler) {
+  auto registerType = op.getDst().getRegisterType();
+  if (registerType == RegisterType::eSampler) {
     switch (operand.getTextureType()) {
       case TextureType::eTexture2D:   stream << "_2d";   break;
       case TextureType::eTextureCube: stream << "_cube"; break;
@@ -307,7 +308,7 @@ void Disassembler::disassembleDeclaration(std::ostream& stream, const Instructio
     return;
   }
 
-  auto registerType = operand.getRegisterType();
+
   if (registerType == RegisterType::eOutput
     || registerType == RegisterType::eInput) {
     switch (operand.getUsage()) {
@@ -315,16 +316,16 @@ void Disassembler::disassembleDeclaration(std::ostream& stream, const Instructio
         stream << "_position" << operand.getUsageIndex();
         break;
       case Usage::eBlendWeight:
-        stream << "_blendweight" << operand.getUsageIndex();
+        stream << "_weight";
         break;
       case Usage::eBlendIndices:
-        stream << "_blendindices" << operand.getUsageIndex();
+        stream << "_blend";
         break;
       case Usage::eNormal:
         stream << "_normal" << operand.getUsageIndex();
         break;
       case Usage::ePointSize:
-        stream << "_pointSize";
+        stream << "_psize";
         break;
       case Usage::eTexCoord:
         stream << "_texcoord" << operand.getUsageIndex();
@@ -342,7 +343,11 @@ void Disassembler::disassembleDeclaration(std::ostream& stream, const Instructio
         stream << "_positiont";
         break;
       case Usage::eColor:
-        stream << "_color" << operand.getUsageIndex();
+        if (operand.getUsageIndex() == 0) {
+          stream << "_color";
+        } else {
+          stream << "_specular" << (operand.getUsageIndex() - 1u);
+        }
         break;
       case Usage::eFog:
         stream << "_fog";
