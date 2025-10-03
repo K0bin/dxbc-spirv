@@ -90,14 +90,14 @@ std::string Disassembler::disassembleOp(const Instruction& op, const ShaderInfo&
 void Disassembler::disassembleOpcodeToken(std::ostream& stream, const Instruction& op) const {
   stream << op.getOpCode();
 
-  if (op.hasDcl()) {
+  if (op.hasDst()) {
     const auto& dst = op.getDst();
-    if (dst.isCentroid()) {
-      stream << "_centroid";
-    }
-
     if (dst.isPartialPrecision()) {
       stream << "_pp";
+    }
+
+    if (dst.isCentroid()) {
+      stream << "_centroid";
     }
 
     if (dst.isSaturated()) {
