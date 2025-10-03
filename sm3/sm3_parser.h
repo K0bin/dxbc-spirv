@@ -428,6 +428,10 @@ public:
     return TexLdMode(util::bextract(m_token, 16u, 8u));
   }
 
+  const std::string& getComment() const {
+    return m_comment.value();
+  }
+
   /** Checks whether instruction is valid */
   explicit operator bool () const {
     return m_token != DefaultInvalidToken;
@@ -445,6 +449,8 @@ private:
   util::small_vector<uint8_t, 4u> m_immOperands = { };
 
   util::small_vector<Operand, 16u> m_operands = { };
+
+  std::optional<std::string> m_comment = { };
 
   void resetOnError();
 

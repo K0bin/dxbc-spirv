@@ -9,6 +9,11 @@
 namespace dxbc_spv::sm3 {
 
 void Disassembler::disassembleOp(std::ostream& stream, const Instruction& op, const ShaderInfo& info) {
+  if (op.getOpCode() == OpCode::eComment) {
+    disassembleComment(stream, op);
+    return;
+  }
+
   if (opEndsNestedBlock(op))
     decrementIndentation();
 
@@ -486,6 +491,12 @@ void Disassembler::decrementIndentation() {
   else
     std::cout << "Underflow" << '\n';
 }
+
+
+void Disassembler::disassembleComment(std::ostream& stream, const Instruction& op) {
+  stream << " Comment: " << op.getComment() << std::endl;
+}
+
 
 
 bool Disassembler::opBeginsNestedBlock(const Instruction& op) {
