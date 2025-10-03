@@ -666,9 +666,6 @@ InstructionLayout Instruction::getLayout(const ShaderInfo& info) const {
       // This destination register has to be a texture register
       // and will contain the texture data afterward.
       // The index of it also determines the texture that will be sampled.
-      result.operands.pop_back();
-      result.operands.pop_back();
-      result.operands.pop_back();
       result.operands.push_back({ OperandKind::eDstReg, ir::ScalarType::eF32 });
     } else if (minor == 4u) {
       // TexLd (SM 1.4) has separate dst/src registers.
