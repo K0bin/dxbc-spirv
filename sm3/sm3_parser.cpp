@@ -457,6 +457,11 @@ ShaderInfo::ShaderInfo(util::ByteReader& reader) {
 }
 
 
+bool ShaderInfo::write(util::ByteWriter& writer) const {
+  return writer.write(m_token);
+}
+
+
 void ShaderInfo::resetOnError() {
   *this = ShaderInfo();
 }
@@ -516,6 +521,39 @@ Operand::Operand(util::ByteReader& reader, const OperandInfo& info, Instruction&
 
     m_relAddr = op.addOperand(relAddrOperand);
   }
+}
+
+
+bool Operand::write(util::ByteWriter& writer, const Instruction& op, const ShaderInfo& info) const {
+  if (m_info.kind == OperandKind::eImm32) {
+    auto componentCount = getComponentCount(info);
+    for (uint32_t i = 0u; i < uint32_t(componentCount); i++) {
+      bool lastWrite;
+      if (m_info.type == ir::ScalarType::eBool)
+        lastWrite = writer.write(getImmediate<bool>(i));
+      else if (m_info.type == ir::ScalarType::eF32)
+        lastWrite = writer.write(getImmediate<float>(i));
+      else
+        lastWrite = writer.write(getImmediate<uint32_t>(i));
+
+      if (!lastWrite)
+        return false;
+    }
+    return true;
+  }
+
+  if (!writer.write(m_token))
+    return false;
+
+  if ((m_info.kind == OperandKind::eSrcReg || m_info.kind == OperandKind::eDstReg)
+    && hasRelativeAddressing()
+    && hasExtraRelativeAddressingToken(m_info.kind, info)) {
+    const auto& relAddrOperand = op.getRawOperand(m_relAddr);
+    if (!relAddrOperand.write(writer, op, info))
+      return false;
+  }
+
+  return true;
 }
 
 
@@ -697,6 +735,54 @@ InstructionLayout Instruction::getLayout(const ShaderInfo& info) const {
 }
 
 
+bool Instruction::write(util::ByteWriter& writer, const ShaderInfo& info) const {
+  if (!writer.write(m_token))
+    return false;
+
+  /* Emit operands */
+  auto layout = getLayout(info);
+
+  uint32_t nSrc = 0u;
+  bool hasDst  = false;
+  bool hasImm  = false;
+  bool hasDcl  = false;
+  bool hasPred = false;
+
+  for (uint32_t i = 0u; i < m_operands.size(); i++) {
+    const auto& operandInfo = layout.operands[i];
+    const auto* operand = [&] () -> const Operand* {
+      switch (operandInfo.kind) {
+        case OperandKind::eNone:    break;
+        case OperandKind::eDcl:     return !std::exchange(hasDcl, true) ? &getDcl() : nullptr;
+        case OperandKind::eDstReg:  return !std::exchange(hasDst, true) ? &getDst() : nullptr;
+        case OperandKind::eSrcReg:  return nSrc < getSrcCount() ? &getSrc(nSrc++) : nullptr;
+        case OperandKind::eImm32:   return !std::exchange(hasImm, true) ? &getImm() : nullptr;
+        case OperandKind::ePred:    return !std::exchange(hasPred, true) ? &getPred() : nullptr;
+        case OperandKind::eRelAddr: break;
+      }
+
+      return nullptr;
+    } ();
+
+    if (!operand) {
+      Logger::err("Missing operands for instruction ", getOpCode());
+      return false;
+    }
+
+    if (!operand->write(writer, *this, info))
+      return false;
+
+    if (i == 0u && isPredicated()) {
+      dxbc_spv_assert(m_predOperand.has_value());
+      if (!m_operands[m_predOperand.value()].write(writer, *this, info))
+        return false;
+    }
+  }
+
+  return true;
+}
+
+
 void Instruction::resetOnError() {
   m_token = DefaultInvalidToken;
 }
@@ -717,6 +803,38 @@ Instruction Parser::parseInstruction() {
     m_isPastEnd = true;
   }
   return instruction;
+}
+
+
+
+
+Builder::Builder(ShaderType type, uint32_t major, uint32_t minor)
+: m_info(type, major, minor) {
+
+}
+
+
+Builder::~Builder() {
+
+}
+
+
+void Builder::add(Instruction ins) {
+  m_instructions.push_back(std::move(ins));
+}
+
+
+bool Builder::write(util::ByteWriter& writer) const {
+  if (!m_info.write(writer))
+    return false;
+
+  /* Emit instructions */
+  for (const auto& e : m_instructions) {
+    if (!e.write(writer, m_info))
+      return false;
+  }
+
+  return true;
 }
 
 
