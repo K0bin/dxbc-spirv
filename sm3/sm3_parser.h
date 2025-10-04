@@ -19,6 +19,13 @@ enum class ShaderType : uint32_t {
   ePixel    = 1u,
 };
 
+
+/** Translate SM3 program type to internal IR shader stage.
+ *  Our IR has the inverse enum order, but as a bit mask. */
+inline ir::ShaderStage resolveShaderStage(ShaderType type) {
+  return ir::ShaderStage(1u << (1u - uint32_t(type)));
+}
+
 /** Shader code header */
 class ShaderInfo {
 
