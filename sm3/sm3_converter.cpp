@@ -42,6 +42,9 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
   switch (opCode) {
     case OpCode::eNop:
       return true;
+
+    case OpCode::eDcl:
+      return m_ioMap.handleDclIoVar(builder, op);
   }
 
   return logOpError(op, "Unhandled opcode.");
@@ -103,6 +106,60 @@ void Converter::logOp(LogLevel severity, const Instruction& op) const {
   auto instruction = disasm.disassembleOp(op);
 
   Logger::log(severity, "Line ", m_instructionCount, ": ", instruction);
+}
+
+
+
+std::string Converter::makeRegisterDebugName(RegisterType type, uint32_t index, WriteMask mask) const {
+  auto stage = m_parser.getShaderInfo().getType();
+
+  std::stringstream name;
+
+  switch (type) {
+    case RegisterType::eTemp:               name << "r" << index << (mask ? "_" : "") << mask; break;
+    case RegisterType::eInput:              name << "v" << index << (mask ? "_" : "") << mask; break;
+    case RegisterType::eOutput:
+    // case RegisterType::eOutput: Same value.
+      if (m_parser.getShaderInfo().getVersion().first == 3) {
+        name << "o" << index << (mask ? "_" : "") << mask;
+      } else {
+        name << "oT" << index << (mask ? "_" : "") << mask;
+      }
+      break;
+    case RegisterType::eSampler:            name << "s" << index; break;
+    case RegisterType::eLabel:              name << "l" << index; break;
+    case RegisterType::eConst:              name << "c" << index << (mask ? "_" : "") << mask; break;
+    case RegisterType::eAddr:
+    // case RegisterType::eTexture: Same value
+      name << (stage == ShaderType::eVertex ? "a" : "t");
+      break;
+    case RegisterType::eRasterizerOut:      name << "oPos"; break;
+    case RegisterType::eAttributeOut:       name << "o" << index << (mask ? "_" : "") << mask; break;
+    case RegisterType::eConstInt:           name << "i" << index << (mask ? "_" : "") << mask; break;
+    case RegisterType::eColorOut:           name << "oC" << index << (mask ? "_" : "") << mask; break;
+    case RegisterType::eDepthOut:           name << "oDepth"; break;
+    case RegisterType::eConst2:             name << "c" << index << (mask ? "_" : "") << mask; break;
+    case RegisterType::eConst3:             name << "c" << index << (mask ? "_" : "") << mask; break;
+    case RegisterType::eConst4:             name << "c" << index << (mask ? "_" : "") << mask; break;
+    case RegisterType::eConstBool:          name << "b" << index; break;
+    case RegisterType::eLoop:               name << "aL"; break;
+    case RegisterType::eTempFloat16:        name << "tempFloat" << index << (mask ? "_" : "") << mask; break;
+    case RegisterType::ePredicate:          name << "p"; break;
+    case RegisterType::ePixelTexCoord:      name << "t" << index << (mask ? "_" : "") << mask; break;
+    case RegisterType::eMiscType:
+      if (index == uint32_t(MiscTypeIndex::eMiscTypeFace)) {
+        name << "vFace";
+      } else if (index == uint32_t(MiscTypeIndex::eMiscTypeFace)) {
+        name << "vPosition";
+      } else {
+        name << "misc_" << index;
+      }
+      break;
+
+    default: name << "reg_" << uint32_t(type) << "_" << index << (mask ? "_" : "") << mask;
+  }
+
+  return name.str();
 }
 
 }
