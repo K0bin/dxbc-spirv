@@ -17,7 +17,7 @@ IoMap::~IoMap() {
 
 }
 
-bool IoMap::handleDclIoVar(Builder& builder, const Instruction& op) {
+bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
   const auto& dst = op.getDst();
   bool isInput = dst.getRegisterType() == RegisterType::eInput;
 
@@ -43,8 +43,12 @@ bool IoMap::handleDclIoVar(Builder& builder, const Instruction& op) {
     mapping.baseType = declaration.getType();
     mapping.baseDef = builder.add(std::move(declaration));
 
+    emitDebugName(builder, mapping.baseDef, mapping.regType, mapping.regIndex, mapping.componentMask, op.getDcl());
+
     componentMask -= nextMask;
   }
+
+  return true;
 }
 
 
@@ -54,11 +58,56 @@ void IoMap::emitDebugName(ir::Builder& builder, ir::SsaDef def, RegisterType typ
 
   std::string name = m_converter.makeRegisterDebugName(type, index, mask);
 
-  if (sigEntry) {
-    name = sigEntry->getSemanticName();
-
-    if (sigEntry->getSemanticIndex())
-      name += std::to_string(sigEntry->getSemanticIndex());
+  if (type == RegisterType::eOutput
+    || type == RegisterType::eInput) {
+    switch (dclOperand.getUsage()) {
+      case Usage::ePosition:
+        name = "position" + std::to_string(dclOperand.getUsageIndex());
+        break;
+      case Usage::eBlendWeight:
+        name = "weight";
+        break;
+      case Usage::eBlendIndices:
+        name = "blend";
+        break;
+      case Usage::eNormal:
+        name = "normal" + std::to_string(dclOperand.getUsageIndex());
+        break;
+      case Usage::ePointSize:
+        name = "psize";
+        break;
+      case Usage::eTexCoord:
+        name = "texcoord" + std::to_string(dclOperand.getUsageIndex());
+        break;
+      case Usage::eTangent:
+        name = "tangent";
+        break;
+      case Usage::eBinormal:
+        name = "binormal";
+        break;
+      case Usage::eTessFactor:
+        name = "tessfactor";
+        break;
+      case Usage::ePositionT:
+        name = "positiont";
+        break;
+      case Usage::eColor:
+        if (dclOperand.getUsageIndex() == 0) {
+          name = "color";
+        } else {
+          name = "specular" + std::to_string(dclOperand.getUsageIndex() - 1u);
+        }
+        break;
+      case Usage::eFog:
+        name = "fog";
+        break;
+      case Usage::eDepth:
+        name = "depth";
+        break;
+      case Usage::eSample:
+        name = "sample" + std::to_string(dclOperand.getUsageIndex());
+        break;
+    }
   }
 
   builder.add(ir::Op::DebugName(def, name.c_str()));

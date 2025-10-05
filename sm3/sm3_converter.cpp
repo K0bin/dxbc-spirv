@@ -133,7 +133,7 @@ std::string Converter::makeRegisterDebugName(RegisterType type, uint32_t index, 
     // case RegisterType::eTexture: Same value
       name << (stage == ShaderType::eVertex ? "a" : "t");
       break;
-    case RegisterType::eRasterizerOut:      name << "oPos"; break;
+    case RegisterType::eRasterizerOut:      name << "oPos" << (mask ? "_" : "") << mask; break;
     case RegisterType::eAttributeOut:       name << "o" << index << (mask ? "_" : "") << mask; break;
     case RegisterType::eConstInt:           name << "i" << index << (mask ? "_" : "") << mask; break;
     case RegisterType::eColorOut:           name << "oC" << index << (mask ? "_" : "") << mask; break;
@@ -143,16 +143,16 @@ std::string Converter::makeRegisterDebugName(RegisterType type, uint32_t index, 
     case RegisterType::eConst4:             name << "c" << index << (mask ? "_" : "") << mask; break;
     case RegisterType::eConstBool:          name << "b" << index; break;
     case RegisterType::eLoop:               name << "aL"; break;
-    case RegisterType::eTempFloat16:        name << "tempFloat" << index << (mask ? "_" : "") << mask; break;
+    case RegisterType::eTempFloat16:        name << "half" << index << (mask ? "_" : "") << mask; break;
     case RegisterType::ePredicate:          name << "p"; break;
     case RegisterType::ePixelTexCoord:      name << "t" << index << (mask ? "_" : "") << mask; break;
     case RegisterType::eMiscType:
       if (index == uint32_t(MiscTypeIndex::eMiscTypeFace)) {
         name << "vFace";
       } else if (index == uint32_t(MiscTypeIndex::eMiscTypeFace)) {
-        name << "vPosition";
+        name << "vPosition" << (mask ? "_" : "") << mask;
       } else {
-        name << "misc_" << index;
+        name << "misc" << index << (mask ? "_" : "") << mask;
       }
       break;
 
