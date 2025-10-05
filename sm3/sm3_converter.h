@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sm3_parser.h"
+#include "sm3_io_map.h"
 
 #include "../ir/ir_builder.h"
 
@@ -22,12 +23,18 @@ enum class FloatEmulation {
  * unknown types, and instructions that cannot be lowered directly. As
  * such, the IR will require further processing. */
 class Converter {
+  friend IoMap;
+
 public:
 
   struct Options {
     /** Shader name. If non-null, this will be set as the entry point
      *  name, which is interpreted as the overall name of the shader. */
     const char* name = nullptr;
+    /** Whether to emit any debug names besides the shader name. This
+     *  includes resources, scratch and shared variables, as well as
+     *  semantic names for I/O variables. */
+    bool includeDebugNames = false;
 
     FloatEmulation floatEmulation;
   };
@@ -43,8 +50,11 @@ public:
 private:
 
   util::ByteReader m_code;
-  Parser           m_parser;
   Options          m_options;
+
+  //RegisterFile   m_regFile;
+  IoMap            m_ioMap;
+  Parser           m_parser;
 
   uint32_t m_instructionCount = 0u;
 
@@ -80,6 +90,8 @@ private:
   bool logOpError(const Instruction& op, const Args&... args) const {
     return logOpMessage(LogLevel::eError, op, args...);
   }
+
+  std::string makeRegisterDebugName(RegisterType type, uint32_t index, WriteMask mask) const;
 
 };
 
