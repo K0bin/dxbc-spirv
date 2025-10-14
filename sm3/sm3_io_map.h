@@ -17,9 +17,9 @@ class Converter;
  *  multiple mappings, e.g. if a built-in output is mirrored to a
  *  regular I/O variable, or if an input is part of an index range. */
 struct IoVarInfo {
-  RegisterType regType = RegisterType::eTemp;
+  SemanticUsage semanticUsage = SemanticUsage::eTexCoord;
 
-  uint32_t regIndex = 0u;
+  uint32_t semanticIndex = 0u;
 
   /* Component write mask to match, if applicable. */
   WriteMask componentMask = { };
@@ -28,15 +28,24 @@ struct IoVarInfo {
    * type of the base definition, unless that is a function. */
   ir::Type baseType = { };
 
-  /* Variable definition. May be an input, output, control point input,
-   * control point output, scratch, or temporary variable, depending on
-   * various factors. For indexable outputs, this may be a function. */
+  /* Variable definition. May be an input, output, scratch, or temporary variable,
+   * depending on various factors. For indexable outputs, this may be a function. */
   ir::SsaDef baseDef = { };
 
   /* Checks whether the variable matches the given conditions */
-  bool matches(RegisterType type, uint32_t index, WriteMask mask) const {
-    return type == regType && (mask & componentMask) && index == regIndex;
+  bool matches(SemanticUsage usage, uint32_t index, WriteMask mask) const {
+    return usage == semanticUsage && (mask & componentMask) && index == semanticIndex;
   }
+};
+
+  struct IoArrayVarInfo {
+    /* Type of the underlying variable. Will generally match the declared
+     * type of the base definition, unless that is a function. */
+    ir::Type baseType = { };
+
+    /* Variable definition. May be an input, output, scratch, or temporary variable,
+     * depending on various factors. For indexable outputs, this may be a function. */
+    ir::SsaDef baseDef = { };
 };
 
 /** I/O register map.
@@ -47,12 +56,17 @@ struct IoVarInfo {
 class IoMap {
   constexpr static uint32_t MaxIoArraySize = 32u;
 
+  constexpr static uint32_t SM2TexCoordCount = 8u;
+  constexpr static uint32_t SM2ColorCount = 8u;
+
   using IoVarList = util::small_vector<IoVarInfo, 32u>;
 public:
 
   explicit IoMap(Converter& converter);
 
   ~IoMap();
+
+  void initialize(ir::Builder& builder);
 
   /** Handles an input or output declaration of any kind. If possible, this uses
    *  the signature to determine the correct layout for the declaration. */
@@ -95,8 +109,19 @@ private:
 
   IoVarList       m_variables;
 
-  void emitDebugName(ir::Builder& builder, ir::SsaDef def, RegisterType type, uint32_t index, WriteMask mask, const Operand& dclOperand) const;
+  /** Register array if the outputs are accessible using relative addressing. */
+  std::optional<IoArrayVarInfo> m_outputRegisterArray;
+  /** Register array if the inputs are accessible using relative addressing. */
+  std::optional<IoArrayVarInfo> m_inputRegisterArray;
 
+  void emitDebugName(
+    ir::Builder& builder,
+    ir::SsaDef def,
+    RegisterType registerType,
+    uint32_t registerIndex,
+    WriteMask writeMask,
+    SemanticUsage semanticUsage,
+    uint32_t semanticIndex) const;
 };
 
 }
