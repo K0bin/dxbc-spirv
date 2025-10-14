@@ -44,7 +44,7 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
       return true;
 
     case OpCode::eDcl:
-      return m_ioMap.handleDclIoVar(builder, op);
+      return m_ioMap.handleDclIoVar(builder, op, m_parser.getShaderInfo());
   }
 
   return logOpError(op, "Unhandled opcode.");
