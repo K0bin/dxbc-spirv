@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sm3_parser.h"
+#include "sm3_semantic_map.h"
 #include "sm3_io_map.h"
 
 #include "../ir/ir_builder.h"
@@ -39,7 +40,7 @@ public:
     FloatEmulation floatEmulation;
   };
 
-  Converter(util::ByteReader code, const Options& options);
+  Converter(util::ByteReader code, IoSemanticMap& semanticMap, const Options& options);
 
   ~Converter();
 
@@ -47,10 +48,16 @@ public:
    *  will return false and log messages to the thread-local logger. */
   bool convertShader(ir::Builder& builder);
 
+  IoSemanticMap& getSemanticMap() const {
+    return m_semanticMap;
+  }
+
 private:
 
   util::ByteReader m_code;
   Options          m_options;
+
+  IoSemanticMap&   m_semanticMap;
 
   //RegisterFile   m_regFile;
   IoMap            m_ioMap;
