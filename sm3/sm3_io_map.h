@@ -1,9 +1,8 @@
 #pragma once
 
-#include "sm3_container.h"
 #include "sm3_parser.h"
-#include "sm3_signature.h"
 #include "sm3_types.h"
+#include "sm3_semantic_map.h"
 
 #include "../ir/ir_builder.h"
 
@@ -17,9 +16,21 @@ class Converter;
  *  multiple mappings, e.g. if a built-in output is mirrored to a
  *  regular I/O variable, or if an input is part of an index range. */
 struct IoVarInfo {
-  SemanticUsage semanticUsage = SemanticUsage::eTexCoord;
+  /* Semantic used to link vertex inputs to the vertex declaration
+   * or shader I/O across stages in the original SM1-3 DXBC shader. */
+  Semantic semantic = { };
 
-  uint32_t semanticIndex = 0u;
+  /* v/o Register index
+   * o Registers are only used on VS 3.
+   * v Registers are used on VS 1-3 or PS 3. */
+  uint32_t registerIndex = 0u;
+
+  /* Semantic used to link vertex inputs to the vertex declaration
+   * or shader I/O across stages in the compiled shader.
+   * We cannot use the registerIndex for this because VS and PS
+   * might assign different indices to the same semantics and expect
+   * linking to be done based on the semantic. */
+  uint32_t location = 0u;
 
   /* Component write mask to match, if applicable. */
   WriteMask componentMask = { };
@@ -31,21 +42,6 @@ struct IoVarInfo {
   /* Variable definition. May be an input, output, scratch, or temporary variable,
    * depending on various factors. For indexable outputs, this may be a function. */
   ir::SsaDef baseDef = { };
-
-  /* Checks whether the variable matches the given conditions */
-  bool matches(SemanticUsage usage, uint32_t index, WriteMask mask) const {
-    return usage == semanticUsage && (mask & componentMask) && index == semanticIndex;
-  }
-};
-
-  struct IoArrayVarInfo {
-    /* Type of the underlying variable. Will generally match the declared
-     * type of the base definition, unless that is a function. */
-    ir::Type baseType = { };
-
-    /* Variable definition. May be an input, output, scratch, or temporary variable,
-     * depending on various factors. For indexable outputs, this may be a function. */
-    ir::SsaDef baseDef = { };
 };
 
 /** I/O register map.
@@ -59,7 +55,7 @@ class IoMap {
   constexpr static uint32_t SM2TexCoordCount = 8u;
   constexpr static uint32_t SM2ColorCount = 8u;
 
-  using IoVarList = util::small_vector<IoVarInfo, 32u>;
+  using IoVarList = util::small_vector<IoVarInfo, 16u>;
 public:
 
   explicit IoMap(Converter& converter);
@@ -109,19 +105,14 @@ private:
 
   IoVarList       m_variables;
 
-  /** Register array if the outputs are accessible using relative addressing. */
-  std::optional<IoArrayVarInfo> m_outputRegisterArray;
-  /** Register array if the inputs are accessible using relative addressing. */
-  std::optional<IoArrayVarInfo> m_inputRegisterArray;
-
   void emitDebugName(
     ir::Builder& builder,
     ir::SsaDef def,
     RegisterType registerType,
     uint32_t registerIndex,
     WriteMask writeMask,
-    SemanticUsage semanticUsage,
-    uint32_t semanticIndex) const;
+    Semantic semantic,
+    bool isInput) const;
 };
 
 }
