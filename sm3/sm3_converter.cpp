@@ -4,9 +4,10 @@
 
 namespace dxbc_spv::sm3 {
 
-Converter::Converter(util::ByteReader code, const Options &options)
+Converter::Converter(util::ByteReader code, IoSemanticMap& semanticMap, const Options &options)
 : m_code(code)
-, m_options(options) {
+, m_options(options)
+, m_semanticMap(semanticMap) {
 
 }
 
@@ -133,7 +134,17 @@ std::string Converter::makeRegisterDebugName(RegisterType type, uint32_t index, 
     // case RegisterType::eTexture: Same value
       name << (stage == ShaderType::eVertex ? "a" : "t");
       break;
-    case RegisterType::eRasterizerOut:      name << "oPos" << (mask ? "_" : "") << mask; break;
+    case RegisterType::eRasterizerOut:
+      if (index == uint32_t(RasterizerOutIndex::eRasterOutPosition)) {
+        name << "oPos" << (mask ? "_" : "") << mask;
+      } else if (index == uint32_t(RasterizerOutIndex::eRasterOutFog)) {
+        name << "oFog" << (mask ? "_" : "") << mask;
+      } else if (index == uint32_t(RasterizerOutIndex::eRasterOutPointSize)) {
+        name << "oPSize" << (mask ? "_" : "") << mask;
+      } else {
+        name << "oRasterOut" << index << (mask ? "_" : "") << mask;
+      }
+      break;
     case RegisterType::eAttributeOut:       name << "o" << index << (mask ? "_" : "") << mask; break;
     case RegisterType::eConstInt:           name << "i" << index << (mask ? "_" : "") << mask; break;
     case RegisterType::eColorOut:           name << "oC" << index << (mask ? "_" : "") << mask; break;
