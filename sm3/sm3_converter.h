@@ -77,6 +77,10 @@ private:
     return m_entryPoint.def;
   }
 
+  ShaderInfo getShaderInfo() const {
+    return m_parser.getShaderInfo();
+  }
+
   void logOp(LogLevel severity, const Instruction& op) const;
 
   template<typename... Args>
