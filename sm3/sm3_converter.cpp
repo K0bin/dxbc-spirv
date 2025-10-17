@@ -57,6 +57,8 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
 
 
 bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
+  m_ioMap.initialize(builder);
+
   /* A valid debug namee is required for the main function */
   m_entryPoint.mainFunc = builder.add(ir::Op::Function(ir::ScalarType::eVoid));
   builder.add(ir::Op::FunctionEnd());
@@ -83,6 +85,8 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
 
 
 bool Converter::finalize(ir::Builder& builder, ShaderType shaderType) {
+  m_ioMap.finalize(builder);
+
   return true;
 }
 
@@ -120,10 +124,26 @@ std::string Converter::makeRegisterDebugName(RegisterType type, uint32_t index, 
 
   std::stringstream name;
   writeToStream(name, type, shaderInfo.getType(), shaderInfo.getVersion().first);
-  name << index;
-  if (mask) {
-    name << "_" << mask;
+
+  const ConstantInfo* constantInfo = m_ctab.findConstantInfo(type, index);
+  if (constantInfo != nullptr && m_options.includeDebugNames) {
+    name << "_" << constantInfo->name;
+    if (constantInfo->count > 1u) {
+      name << index - constantInfo->index;
+    }
+  } else {
+    if (type == RegisterType::eMiscType) {
+      name << MiscTypeIndex(index);
+    } else if (type == RegisterType::eRasterizerOut) {
+      name << RasterizerOutIndex(index);
+    } else if (type != RegisterType::eLoop) {
+      name << index;
+    }
+    if (mask) {
+      name << "_" << mask;
+    }
   }
+
   return name.str();
 }
 

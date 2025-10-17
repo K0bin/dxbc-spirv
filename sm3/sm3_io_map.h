@@ -20,6 +20,10 @@ struct IoVarInfo {
    * or shader I/O across stages in the original SM1-3 DXBC shader. */
   Semantic semantic = { };
 
+  /* Register type
+   * Has to be v/o on SM 3. */
+  RegisterType registerType = RegisterType::eInput;
+
   /* v/o Register index
    * o Registers are only used on VS 3.
    * v Registers are used on VS 1-3 or PS 3. */
@@ -50,12 +54,15 @@ struct IoVarInfo {
  * mapping and accessing input and output registers with the help
  * of I/O signatures. */
 class IoMap {
-  constexpr static uint32_t MaxIoArraySize = 32u;
+  constexpr static uint32_t SM3VSInputArraySize = 16u;
+  constexpr static uint32_t SM3VSOutputArraySize = 12u;
+  constexpr static uint32_t SM3PSInputArraySize = 10u;
+  constexpr static uint32_t MaxIoArraySize = SM3VSInputArraySize;
 
   constexpr static uint32_t SM2TexCoordCount = 8u;
   constexpr static uint32_t SM2ColorCount = 8u;
 
-  using IoVarList = util::small_vector<IoVarInfo, 16u>;
+  using IoVarList = util::small_vector<IoVarInfo, MaxIoArraySize>;
 public:
 
   explicit IoMap(Converter& converter);
@@ -63,6 +70,8 @@ public:
   ~IoMap();
 
   void initialize(ir::Builder& builder);
+
+  void finalize(ir::Builder& builder);
 
   /** Handles an input or output declaration of any kind. If possible, this uses
    *  the signature to determine the correct layout for the declaration. */
@@ -81,8 +90,7 @@ public:
           ir::Builder&            builder,
     const Instruction&            op,
     const Operand&                operand,
-          WriteMask               componentMask,
-          ir::ScalarType          type);
+          WriteMask               componentMask);
 
   /** Stores a scalar or vector value to an output variable. The component
    *  type is ignored, but the component count must match that of the
@@ -104,6 +112,12 @@ private:
   ShaderType      m_shaderType = { };
 
   IoVarList       m_variables;
+
+  ir::SsaDef      m_inputSwitchFunction = { };
+  ir::SsaDef      m_outputSwitchFunction = { };
+
+  ir::SsaDef emitInputSwitchFunction(ir::Builder& builder) const;
+  ir::SsaDef emitOutputSwitchFunction(ir::Builder& builder) const;
 
   void emitDebugName(
     ir::Builder& builder,
