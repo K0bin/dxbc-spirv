@@ -57,6 +57,8 @@ private:
   util::ByteReader m_code;
   Options          m_options;
 
+  ConstantTable    m_ctab = { };
+
   IoSemanticMap&   m_semanticMap;
 
   //RegisterFile   m_regFile;
@@ -100,6 +102,10 @@ private:
   template<typename... Args>
   bool logOpError(const Instruction& op, const Args&... args) const {
     return logOpMessage(LogLevel::eError, op, args...);
+  }
+
+  static ir::BasicType makeVectorType(ir::ScalarType type, WriteMask mask) {
+    return ir::BasicType(type, util::popcnt(uint8_t(mask)));
   }
 
   std::string makeRegisterDebugName(RegisterType type, uint32_t index, WriteMask mask) const;
