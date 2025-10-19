@@ -217,7 +217,6 @@ ir::SsaDef IoMap::emitLoad(
   const Operand&                operand,
         WriteMask               componentMask) {
   auto vec4Type = ir::Type(ir::ScalarType::eF32, 4u);
-  auto inputType = Converter::makeVectorType(ir::ScalarType::eF32, componentMask);
   ir::SsaDef value;
   if (!operand.hasRelativeAddressing()) {
     const IoVarInfo* ioVar = nullptr;
@@ -244,7 +243,56 @@ ir::SsaDef IoMap::emitLoad(
       .addOperand(index));
   }
 
+  value = m_converter.swizzleVector(builder, value, operand.getSwizzle(m_converter.getShaderInfo()), componentMask);
+
   return value;
+}
+
+
+
+bool IoMap::emitStore(
+        ir::Builder&            builder,
+  const Instruction&            op,
+  const Operand&                operand,
+        ir::SsaDef              value) {
+  auto vec4Type = ir::Type(ir::ScalarType::eF32, 4u);
+  WriteMask writeMask = operand.getWriteMask(m_converter.getShaderInfo());
+
+  /* Write each component individually */
+  uint32_t componentIndex = 0u;
+  std::array<ir::SsaDef, 4u> components;
+  for (auto c : writeMask) {
+    ir::SsaDef baseScalar = m_converter.extractFromVector(builder, value, componentIndex++);
+    components[uint8_t(componentFromBit(c))] = baseScalar;
+  }
+  ir::SsaDef vec4Value = m_converter.composite(builder, ir::BasicType(ir::ScalarType::eF32), components.data(), Swizzle::identity(), WriteMask(ComponentBit::eAll));
+
+  if (!operand.hasRelativeAddressing()) {
+    const IoVarInfo* ioVar = nullptr;
+    for (const auto& variable : m_variables) {
+      if (variable.registerType == operand.getRegisterType() && variable.registerIndex == operand.getIndex()) {
+        ioVar = &variable;
+      }
+    }
+    if (ioVar == nullptr) {
+      m_converter.logOpError(op, "Failed to process I/O load.");
+      return false;
+    }
+    dxbc_spv_assert(ioVar != nullptr);
+    dxbc_spv_assert(ioVar->baseType == vec4Type);
+    builder.add(ir::Op::OutputStore(ioVar->baseDef, ir::SsaDef(), vec4Value));
+  } else {
+    dxbc_spv_assert(operand.getRegisterType() == RegisterType::eInput);
+    ir::Type indexType = ir::Type(ir::ScalarType::eU32);
+    auto index = builder.add(ir::Op::Constant(operand.getIndex()));
+    ir::SsaDef registerValue = { }; // TODO
+    index = builder.add(ir::Op::IAdd(indexType, index, registerValue));
+    dxbc_spv_assert(m_outputSwitchFunction);
+    builder.add(ir::Op::FunctionCall(vec4Type, m_outputSwitchFunction)
+      .addOperand(index)
+      .addOperand(vec4Value));
+  }
+  return true;
 }
 
 
