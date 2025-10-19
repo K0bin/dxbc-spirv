@@ -8,6 +8,7 @@ Converter::Converter(util::ByteReader code, IoSemanticMap& semanticMap, const Op
 : m_code(code)
 , m_options(options)
 , m_semanticMap(semanticMap)
+, m_regFile(*this)
 , m_ioMap(*this) {
 
 }

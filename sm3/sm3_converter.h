@@ -3,6 +3,7 @@
 #include "sm3_parser.h"
 #include "sm3_semantic_map.h"
 #include "sm3_io_map.h"
+#include "sm3_registers.h"
 
 #include "../ir/ir_builder.h"
 
@@ -25,6 +26,7 @@ enum class FloatEmulation {
  * such, the IR will require further processing. */
 class Converter {
   friend IoMap;
+  friend RegisterFile;
 
 public:
 
@@ -61,7 +63,7 @@ private:
 
   IoSemanticMap&   m_semanticMap;
 
-  //RegisterFile   m_regFile;
+  RegisterFile     m_regFile;
   IoMap            m_ioMap;
   Parser           m_parser;
 
