@@ -129,7 +129,7 @@ void IoMap::initialize(ir::Builder& builder) {
       auto& mapping = m_variables.emplace_back();
       mapping.semantic = { SemanticUsage::eFog, 0u };
       mapping.registerType = RegisterType::eRasterizerOut;
-      mapping.registerIndex = semanticMap.getIoLocation(mapping.semantic);
+      mapping.registerIndex = uint32_t(RasterizerOutIndex::eRasterOutFog);
       mapping.location = semanticMap.getIoLocation(mapping.semantic);
       mapping.componentMask = WriteMask(ComponentBit::eAll);
       mapping.baseType = declaration.getType();
@@ -191,8 +191,9 @@ bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
 
   auto& mapping = m_variables.emplace_back();
   mapping.semantic = semantic;
-  mapping.registerIndex = m_converter.getSemanticMap().getIoLocation(semantic);
+  mapping.registerIndex = dst.getIndex();
   mapping.registerType = isInput ? RegisterType::eInput : RegisterType::eOutput;
+  mapping.location = m_converter.getSemanticMap().getIoLocation(semantic);
   mapping.componentMask = componentMask;
   mapping.baseType = declaration.getType();
   mapping.baseDef = builder.add(std::move(declaration));
