@@ -79,7 +79,7 @@ public:
 
   /** Handles an input or output declaration of any kind. If possible, this uses
    *  the signature to determine the correct layout for the declaration. */
-  void handleDclIoVar(ir::Builder& builder, const Instruction& op);
+  bool handleDclIoVar(ir::Builder& builder, const Instruction& op);
 
   /** Loads an input or output value and returns a scalar or vector containing
    *  one element for each component in the component mask. Applies swizzles,

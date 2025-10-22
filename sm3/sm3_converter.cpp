@@ -266,7 +266,7 @@ std::string Converter::makeRegisterDebugName(RegisterType type, uint32_t index, 
   auto shaderInfo = m_parser.getShaderInfo();
 
   std::stringstream name;
-  writeToStream(name, type, shaderInfo.getType(), shaderInfo.getVersion().first);
+  name << UnambiguousRegisterType { type, shaderInfo.getType(), shaderInfo.getVersion().first };
 
   const ConstantInfo* constantInfo = m_ctab.findConstantInfo(type, index);
   if (constantInfo != nullptr && m_options.includeDebugNames) {
