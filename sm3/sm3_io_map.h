@@ -39,12 +39,16 @@ struct IoVarInfo {
   /* Component write mask to match, if applicable. */
   WriteMask componentMask = { };
 
+  /* Whether this variable has been written to.
+   * Used to emit defaults if the shader itself doesn't write
+   * to specific output registers. */
+  bool wasWritten = false;
+
   /* Type of the underlying variable. Will generally match the declared
    * type of the base definition, unless that is a function. */
   ir::Type baseType = { };
 
-  /* Variable definition. May be an input, output, scratch, or temporary variable,
-   * depending on various factors. For indexable outputs, this may be a function. */
+  /* Variable definition. May be an input or an output. */
   ir::SsaDef baseDef = { };
 };
 
@@ -75,7 +79,7 @@ public:
 
   /** Handles an input or output declaration of any kind. If possible, this uses
    *  the signature to determine the correct layout for the declaration. */
-  bool handleDclIoVar(ir::Builder& builder, const Instruction& op);
+  void handleDclIoVar(ir::Builder& builder, const Instruction& op);
 
   /** Loads an input or output value and returns a scalar or vector containing
    *  one element for each component in the component mask. Applies swizzles,
@@ -118,6 +122,16 @@ private:
 
   ir::SsaDef emitInputSwitchFunction(ir::Builder& builder) const;
   ir::SsaDef emitOutputSwitchFunction(ir::Builder& builder) const;
+
+  void dclIoVar(
+   ir::Builder& builder,
+   RegisterType registerType,
+   uint32_t     registerIndex,
+   Semantic     semantic,
+   WriteMask    componentMask);
+
+  /** Turns a front face boolean into a float. 1.0 for the front face, -1.0 for the back face. */
+  ir::SsaDef emitFrontFaceFloat(ir::Builder& builder, ir::SsaDef isFrontFaceDef) const;
 
   void emitDebugName(
     ir::Builder& builder,

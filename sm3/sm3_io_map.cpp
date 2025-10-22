@@ -32,119 +32,56 @@ void IoMap::initialize(ir::Builder& builder) {
     // that do not get explicitly declared.
 
     bool isInput = info.getType() == ShaderType::ePixel;
-    auto opCode = isInput
-      ? ir::OpCode::eDclInput
-      : ir::OpCode::eDclOutput;
 
     ir::Type type(ir::ScalarType::eF32, 4u);
 
     // Normal
-    {
-      auto declaration = ir::Op(opCode, type)
-        .addOperand(m_converter.getEntryPoint())
-        .addOperand(0u)
-        .addOperand(0u);
-
-      auto& mapping = m_variables.emplace_back();
-      mapping.semantic = { SemanticUsage::eNormal, 0u };
-      mapping.registerType = RegisterType::eRasterizerOut;
-      mapping.registerIndex = 3u;
-      mapping.location = semanticMap.getIoLocation(mapping.semantic);
-      mapping.componentMask = WriteMask(ComponentBit::eAll);
-      mapping.baseType = declaration.getType();
-      mapping.baseDef = builder.add(std::move(declaration));
-
-      emitDebugName(
+    if (!isInput) {
+      // There is no register for the normal, we emit it in case the VS is used with fixed function.
+      // So we get a little tricky and use an imaginary 13th output register.
+      // Register type & index are only used for emitting debug naming and we handle that edge case there.
+      dclIoVar(
         builder,
-        mapping.baseDef,
-        mapping.registerType,
-        mapping.registerIndex,
-        WriteMask(ComponentBit::eAll),
-        mapping.semantic,
-        isInput
+        RegisterType::eOutput,
+        SM3VSOutputArraySize,
+        { SemanticUsage::eNormal, 0u },
+        WriteMask(ComponentBit::eAll)
       );
     }
 
     // Texture coords
     for (uint32_t i = 0u; i < SM2TexCoordCount; i++) {
-      auto declaration = ir::Op(opCode, type)
-        .addOperand(m_converter.getEntryPoint())
-        .addOperand(i)
-        .addOperand(0u);
-
-      auto& mapping = m_variables.emplace_back();
-      mapping.semantic = { SemanticUsage::eTexCoord, i };
-      mapping.registerType = isInput ? RegisterType::ePixelTexCoord : RegisterType::eTexCoordOut;
-      mapping.registerIndex = i;
-      mapping.location = semanticMap.getIoLocation(mapping.semantic);
-      mapping.componentMask = WriteMask(ComponentBit::eAll);
-      mapping.baseType = declaration.getType();
-      mapping.baseDef = builder.add(std::move(declaration));
-
-      emitDebugName(
+      dclIoVar(
         builder,
-        mapping.baseDef,
-        mapping.registerType,
-        mapping.registerIndex,
-        WriteMask(ComponentBit::eAll),
-        mapping.semantic,
-        isInput
+        isInput ? RegisterType::ePixelTexCoord : RegisterType::eTexCoordOut,
+        i,
+        { SemanticUsage::eTexCoord, i },
+        WriteMask(ComponentBit::eAll)
       );
     }
 
     // Colors
     for (uint32_t i = 0u; i < SM2ColorCount; i++) {
-      auto declaration = ir::Op(opCode, type)
-        .addOperand(m_converter.getEntryPoint())
-        .addOperand(i)
-        .addOperand(0u);
-
-      auto& mapping = m_variables.emplace_back();
-      mapping.semantic = { SemanticUsage::eColor, i };
-      mapping.registerType = isInput ? RegisterType::eInput : RegisterType::eColorOut;
-      mapping.registerIndex = semanticMap.getIoLocation(mapping.semantic);
-      mapping.location = semanticMap.getIoLocation(mapping.semantic);
-      mapping.componentMask = WriteMask(ComponentBit::eAll);
-      mapping.baseType = declaration.getType();
-      mapping.baseDef = builder.add(std::move(declaration));
-
-      emitDebugName(
+      dclIoVar(
         builder,
-        mapping.baseDef,
-        mapping.registerType,
-        mapping.registerIndex,
-        WriteMask(ComponentBit::eAll),
-        mapping.semantic,
-        isInput
+        isInput ? RegisterType::eInput : RegisterType::eColorOut,
+        i,
+        { SemanticUsage::eColor, i },
+        WriteMask(ComponentBit::eAll)
       );
     }
 
     // Fog
-    {
-      auto declaration = ir::Op(opCode, type)
-        .addOperand(m_converter.getEntryPoint())
-        .addOperand(0u)
-        .addOperand(0u);
-
-      auto& mapping = m_variables.emplace_back();
-      mapping.semantic = { SemanticUsage::eFog, 0u };
-      mapping.registerType = RegisterType::eRasterizerOut;
-      mapping.registerIndex = uint32_t(RasterizerOutIndex::eRasterOutFog);
-      mapping.location = semanticMap.getIoLocation(mapping.semantic);
-      mapping.componentMask = WriteMask(ComponentBit::eAll);
-      mapping.baseType = declaration.getType();
-      mapping.baseDef = builder.add(std::move(declaration));
-
-      emitDebugName(
-        builder,
-        mapping.baseDef,
-        mapping.registerType,
-        mapping.registerIndex,
-        WriteMask(ComponentBit::eAll),
-        mapping.semantic,
-        isInput
-      );
-    }
+    // There is no fog input register in the pixel shader that is accessible
+    // to the shader. We do however need to pass the vertex shader calculated
+    // fog value across to the fragment shader. Use an imaginary 11th input register.
+    dclIoVar(
+      builder,
+      !isInput ? RegisterType::eRasterizerOut : RegisterType::eInput,
+      !isInput ? uint32_t(RasterizerOutIndex::eRasterOutFog) : SM3PSInputArraySize,
+      { SemanticUsage::eFog, 0u },
+      WriteMask(ComponentBit::eAll)
+    );
   }
 }
 
@@ -157,14 +94,9 @@ void IoMap::finalize(ir::Builder& builder) {
   builder.rewriteDef(m_outputSwitchFunction, outputSwitchFunction);
 }
 
-bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
+void IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
   const auto& dst = op.getDst();
   const auto& dcl = op.getDcl();
-  bool isInput = dst.getRegisterType() == RegisterType::eInput;
-
-  auto opCode = isInput
-    ? ir::OpCode::eDclInput
-    : ir::OpCode::eDclOutput;
 
   WriteMask componentMask = dst.getWriteMask(m_converter.getShaderInfo());
   if (m_converter.getShaderInfo().getVersion().first < 3) {
@@ -172,6 +104,21 @@ bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
   }
 
   Semantic semantic = { dcl.getSemanticUsage(), dcl.getSemanticIndex() };
+
+  dclIoVar(builder, dst.getRegisterType(), dst.getIndex(), semantic, componentMask);
+}
+
+
+void IoMap::dclIoVar(
+   ir::Builder& builder,
+   RegisterType registerType,
+   uint32_t     registerIndex,
+   Semantic     semantic,
+   WriteMask    componentMask) {
+
+  bool isInput = registerType == RegisterType::eInput
+    || registerType == RegisterType::eMiscType
+    || registerType == RegisterType::ePixelTexCoord;
 
   bool foundExisting = false;
   for (auto& entry : m_variables) {
@@ -182,18 +129,84 @@ bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
   }
   dxbc_spv_assert(!foundExisting);
 
-  ir::Type type(ir::ScalarType::eF32, 4u);
+  ShaderType shaderType = m_converter.getShaderInfo().getType();
 
-  auto declaration = ir::Op(opCode, type)
-    .addOperand(m_converter.getEntryPoint())
-    .addOperand(dst.getIndex())
-    .addOperand(util::tzcnt(uint8_t(componentMask)));
+  ir::OpCode opCode = isInput
+    ? ir::OpCode::eDclInput
+    : ir::OpCode::eDclOutput;
+
+  ir::BuiltIn builtIn = ir::BuiltIn::ePosition;
+
+  // Position must not be mapped to a regular input. SM3 still has a separate register for that.
+  dxbc_spv_assert(semantic.usage != SemanticUsage::ePosition
+    || registerType == RegisterType::eMiscType
+    || registerType == RegisterType::eOutput);
+
+  if (semantic.usage == SemanticUsage::ePointSize && semantic.index == 0u) {
+    opCode = ir::OpCode::eDclOutputBuiltIn;
+    builtIn = ir::BuiltIn::ePointSize;
+  } else if (semantic.usage == SemanticUsage::ePosition && semantic.index == 0u) {
+    opCode = isInput
+      ? ir::OpCode::eDclInputBuiltIn
+      : ir::OpCode::eDclOutputBuiltIn;
+    builtIn = ir::BuiltIn::ePosition;
+  } else if (registerType == RegisterType::eMiscType) {
+    opCode = ir::OpCode::eDclInputBuiltIn;
+    if (registerIndex == uint32_t(MiscTypeIndex(MiscTypeIndex::eMiscTypeFace))) {
+      builtIn = ir::BuiltIn::eIsFrontFace;
+    } else if (registerIndex == uint32_t(MiscTypeIndex::eMiscTypePosition)) {
+      builtIn = ir::BuiltIn::ePosition;
+    } else {
+      // Invalid MiscType
+      dxbc_spv_assert(false);
+    }
+  }
+
+  bool isBuiltin = opCode == ir::OpCode::eDclInput || opCode == ir::OpCode::eDclOutput;
+
+  bool supportsRelativeAddressing = m_converter.getShaderInfo().getVersion().first == 3
+    && (m_converter.getShaderInfo().getType() == ShaderType::eVertex || isInput);
+
+  uint32_t location = m_converter.getSemanticMap().getIoLocation(semantic);
+
+  bool isScalar = registerType == RegisterType::eRasterizerOut
+    && (registerIndex == uint32_t(RasterizerOutIndex::eRasterOutFog)
+    || registerIndex == uint32_t(RasterizerOutIndex::eRasterOutPointSize));
+  isScalar |= registerType == RegisterType::eMiscType && registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace);
+
+  ir::Type type(
+    builtIn == ir::BuiltIn::eIsFrontFace ? ir::ScalarType::eBool : ir::ScalarType::eF32,
+    isScalar ? 1u : 4u
+  );
+
+  ir::Op declaration = ir::Op(opCode, type)
+    .addOperand(m_converter.getEntryPoint());
+
+  if (!isBuiltin) {
+      declaration.addOperand(location)
+        .addOperand(util::tzcnt(uint8_t(componentMask)));
+
+    if (isInput && shaderType == ShaderType::ePixel) {
+      if (semantic.usage == SemanticUsage::eColor) {
+        declaration.addOperand(ir::InterpolationModes(ir::InterpolationMode::eCentroid));
+      } else {
+        declaration.addOperand(ir::InterpolationModes(ir::InterpolationMode::eSample));
+      }
+    }
+  } else {
+    declaration.addOperand(builtIn);
+
+    if (isInput && shaderType == ShaderType::ePixel) {
+      declaration.addOperand(ir::InterpolationModes(ir::InterpolationMode::eSample));
+    }
+  }
 
   auto& mapping = m_variables.emplace_back();
   mapping.semantic = semantic;
-  mapping.registerIndex = dst.getIndex();
-  mapping.registerType = isInput ? RegisterType::eInput : RegisterType::eOutput;
-  mapping.location = m_converter.getSemanticMap().getIoLocation(semantic);
+  mapping.registerType = registerType;
+  mapping.registerIndex = registerIndex;
+  mapping.location = location;
+  mapping.wasWritten = supportsRelativeAddressing;
   mapping.componentMask = componentMask;
   mapping.baseType = declaration.getType();
   mapping.baseDef = builder.add(std::move(declaration));
@@ -201,14 +214,12 @@ bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
   emitDebugName(
     builder,
     mapping.baseDef,
-    dst.getRegisterType(),
-    dst.getIndex(),
-    dst.getWriteMask(m_converter.getShaderInfo()),
+    registerType,
+    registerIndex,
+    componentMask,
     mapping.semantic,
     isInput
   );
-
-  return true;
 }
 
 
@@ -217,34 +228,45 @@ ir::SsaDef IoMap::emitLoad(
   const Instruction&            op,
   const Operand&                operand,
         WriteMask               componentMask) {
-  auto vec4Type = ir::Type(ir::ScalarType::eF32, 4u);
   ir::SsaDef value;
   if (!operand.hasRelativeAddressing()) {
     const IoVarInfo* ioVar = nullptr;
     for (const auto& variable : m_variables) {
       if (variable.registerType == operand.getRegisterType() && variable.registerIndex == operand.getIndex()) {
         ioVar = &variable;
+        break;
       }
     }
     if (ioVar == nullptr) {
       m_converter.logOpError(op, "Failed to process I/O load.");
       return ir::SsaDef();
     }
-    dxbc_spv_assert(ioVar != nullptr);
-    dxbc_spv_assert(ioVar->baseType == vec4Type);
+
     value = builder.add(ir::Op::InputLoad(ioVar->baseType, ioVar->baseDef, ir::SsaDef()));
+
+    if (ioVar->registerType == RegisterType::eMiscType && ioVar->registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace)) {
+      // The front face can only be loaded using a separate register, even on SM3.
+      // So we don't need to handle it in the relative addressing function.
+      value = emitFrontFaceFloat(builder, value);
+    }
   } else {
     dxbc_spv_assert(operand.getRegisterType() == RegisterType::eInput);
+    dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 3);
     ir::Type indexType = ir::Type(ir::ScalarType::eU32);
     auto index = builder.add(ir::Op::Constant(operand.getIndex()));
     ir::SsaDef registerValue = { }; // TODO
     index = builder.add(ir::Op::IAdd(indexType, index, registerValue));
     dxbc_spv_assert(m_inputSwitchFunction);
+    auto vec4Type = ir::Type(ir::ScalarType::eF32, 4u);
     value = builder.add(ir::Op::FunctionCall(vec4Type, m_inputSwitchFunction)
       .addOperand(index));
   }
 
-  value = m_converter.swizzleVector(builder, value, operand.getSwizzle(m_converter.getShaderInfo()), componentMask);
+  if (builder.getOp(value).getType().isScalarType()) {
+    value = m_converter.broadcastScalar(builder, value, componentMask);
+  } else {
+    value = m_converter.swizzleVector(builder, value, operand.getSwizzle(m_converter.getShaderInfo()), componentMask);
+  }
 
   return value;
 }
@@ -273,17 +295,22 @@ bool IoMap::emitStore(
     for (const auto& variable : m_variables) {
       if (variable.registerType == operand.getRegisterType() && variable.registerIndex == operand.getIndex()) {
         ioVar = &variable;
+        break;
       }
     }
     if (ioVar == nullptr) {
       m_converter.logOpError(op, "Failed to process I/O load.");
       return false;
     }
-    dxbc_spv_assert(ioVar != nullptr);
-    dxbc_spv_assert(ioVar->baseType == vec4Type);
+
+    bool isInput = ioVar->registerType == RegisterType::eInput
+      || ioVar->registerType == RegisterType::eMiscType
+      || ioVar->registerType == RegisterType::ePixelTexCoord;
+    dxbc_spv_assert(isInput);
     builder.add(ir::Op::OutputStore(ioVar->baseDef, ir::SsaDef(), vec4Value));
   } else {
     dxbc_spv_assert(operand.getRegisterType() == RegisterType::eInput);
+    dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 3);
     ir::Type indexType = ir::Type(ir::ScalarType::eU32);
     auto index = builder.add(ir::Op::Constant(operand.getIndex()));
     ir::SsaDef registerValue = { }; // TODO
@@ -325,6 +352,7 @@ ir::SsaDef IoMap::emitInputSwitchFunction(ir::Builder& builder) const {
     for (const auto& variable : m_variables) {
       if (variable.registerIndex == i) {
         ioVar = &variable;
+        break;
       }
     }
     dxbc_spv_assert(ioVar != nullptr);
@@ -377,6 +405,7 @@ ir::SsaDef IoMap::emitOutputSwitchFunction(ir::Builder& builder) const {
     for (const auto& variable : m_variables) {
       if (variable.registerIndex == i) {
         ioVar = &variable;
+        break;
       }
     }
     dxbc_spv_assert(ioVar != nullptr);
@@ -392,6 +421,14 @@ ir::SsaDef IoMap::emitOutputSwitchFunction(ir::Builder& builder) const {
   builder.add(ir::Op::FunctionEnd());
   return function;
 }
+
+
+ir::SsaDef IoMap::emitFrontFaceFloat(ir::Builder &builder, ir::SsaDef isFrontFaceDef) const {
+  auto frontFaceValue = builder.add(ir::Op::Constant(1.0f));
+  auto backFaceValue = builder.add(ir::Op::Constant(-1.0f));
+  return builder.add(ir::Op::Select(ir::ScalarType::eF32, isFrontFaceDef, frontFaceValue, backFaceValue));
+}
+
 
 
 void IoMap::emitDebugName(
