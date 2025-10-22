@@ -18,7 +18,6 @@ IoMap::~IoMap() {
 
 void IoMap::initialize(ir::Builder& builder) {
   const ShaderInfo& info = m_converter.getShaderInfo();
-  IoSemanticMap& semanticMap = m_converter.getSemanticMap();
 
   if (info.getVersion().first >= 3u) {
     // Emit functions that pick a register using
@@ -94,7 +93,7 @@ void IoMap::finalize(ir::Builder& builder) {
   builder.rewriteDef(m_outputSwitchFunction, outputSwitchFunction);
 }
 
-void IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
+bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
   const auto& dst = op.getDst();
   const auto& dcl = op.getDcl();
 
@@ -106,6 +105,7 @@ void IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
   Semantic semantic = { dcl.getSemanticUsage(), dcl.getSemanticIndex() };
 
   dclIoVar(builder, dst.getRegisterType(), dst.getIndex(), semantic, componentMask);
+  return true;
 }
 
 
