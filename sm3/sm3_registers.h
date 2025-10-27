@@ -20,6 +20,8 @@ public:
 
   ~RegisterFile();
 
+  void initialize(ir::Builder& builder);
+
   /** Loads temporary register. */
   ir::SsaDef emitLoad(
           ir::Builder&            builder,
@@ -39,7 +41,17 @@ private:
 
   Converter& m_converter;
 
+  // Temporary registers
   util::small_vector<ir::SsaDef, 32u * 4u> m_rRegs = { };
+
+  // Address register
+  std::array<ir::SsaDef, 4u> m_a0Reg = { };
+
+  // Loop counter register
+  ir::SsaDef m_aLReg = { };
+
+  // Predicate register
+  ir::SsaDef m_pReg = { };
 
 };
 
