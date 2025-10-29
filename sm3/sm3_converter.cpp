@@ -59,6 +59,7 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
 
 bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
   m_ioMap.initialize(builder);
+  m_regFile.initialize(builder);
 
   /* A valid debug namee is required for the main function */
   m_entryPoint.mainFunc = builder.add(ir::Op::Function(ir::ScalarType::eVoid));
