@@ -52,28 +52,35 @@ ir::SsaDef RegisterFile::emitLoad(
   for (auto c : swizzle.getReadMask(componentMask)) {
     auto component = componentFromBit(c);
 
+    ir::ScalarType loadType = type;
+
     switch (operand.getRegisterType()) {
       case RegisterType::eTemp: {
+        loadType = ir::ScalarType::eUnknown;
         auto tmpReg = getOrDeclareTemp(builder, regIndex, component);
-        scalar = builder.add(ir::Op::TmpLoad(ir::ScalarType::eUnknown, tmpReg));
-
-        /* Convert to requested type */
-        if (type != ir::ScalarType::eUnknown)
-          scalar = builder.add(ir::Op::ConsumeAs(type, scalar));
+        scalar = builder.add(ir::Op::TmpLoad(loadType, tmpReg));
       } break;
 
       case RegisterType::eAddr: {
         dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 2u
-            || c == ComponentBit::eX);
-        dxbc_spv_assert(type == ir::ScalarType::eI32);
+            || c == ComponentBit::eX); // The a0 register only has a single component on SM1.1
+        dxbc_spv_assert(type == ir::ScalarType::eI32
+          || type == ir::ScalarType::eU32
+          || type == ir::ScalarType::eMinI16
+          || type == ir::ScalarType::eMinU16);
         dxbc_spv_assert(m_a0Reg[uint8_t(component)]);
-        scalar = builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, m_a0Reg[regIndex]));
+        loadType = ir::ScalarType::eUnknown;
+        scalar = builder.add(ir::Op::TmpLoad(loadType, m_a0Reg[regIndex]));
       } break;
 
       case RegisterType::eLoop: {
         dxbc_spv_assert(c == ComponentBit::eX);
-        dxbc_spv_assert(type == ir::ScalarType::eI32);
-        scalar = builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, m_aLReg));
+        dxbc_spv_assert(type == ir::ScalarType::eI32
+          || type == ir::ScalarType::eU32
+          || type == ir::ScalarType::eMinI16
+          || type == ir::ScalarType::eMinU16);
+        loadType = ir::ScalarType::eUnknown;
+        scalar = builder.add(ir::Op::TmpLoad(loadType, m_aLReg));
       } break;
 
       case RegisterType::ePredicate: {
@@ -82,26 +89,14 @@ ir::SsaDef RegisterFile::emitLoad(
         scalar = builder.add(ir::Op::TmpLoad(ir::ScalarType::eBool, m_pReg));
       } break;
 
-      case RegisterType::eConst:
-      case RegisterType::eConst2:
-      case RegisterType::eConst3:
-      case RegisterType::eConst4:
-        dxbc_spv_assert(type == ir::ScalarType::eF32);
-        break;
-
-      case RegisterType::eConstBool:
-        dxbc_spv_assert(type == ir::ScalarType::eBool);
-        break;
-
-      case RegisterType::eConstInt:
-        dxbc_spv_assert(type == ir::ScalarType::eI32);
-        break;
-
       default:
         dxbc_spv_unreachable();
         return ir::SsaDef();
     }
 
+    /* Convert to requested type */
+    if (loadType != type && type != ir::ScalarType::eUnknown)
+      scalar = builder.add(ir::Op::ConsumeAs(type, scalar));
 
     components[uint8_t(component)] = scalar;
   }

@@ -108,6 +108,104 @@ bool Converter::initParser(Parser& parser, util::ByteReader reader) {
 }
 
 
+ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand) {
+  auto modifiedDef = ir::SsaDef();
+
+  const auto& op = builder.getOp(def);
+  auto type = op.getType().getBaseType(0u);
+
+  auto mod = operand.getModifier();
+  switch (mod) {
+    case OperandModifier::eAbs:
+      modifiedDef = builder.add(type.isFloatType()
+        ? ir::Op::FAbs(type, def)
+        : ir::Op::IAbs(type, def));
+      break;
+
+    case OperandModifier::eAbsNeg:
+      if (type.isFloatType()) {
+        modifiedDef = builder.add(ir::Op::FAbs(type, def));
+        modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
+      } else {
+        modifiedDef = builder.add(ir::Op::IAbs(type, def));
+        modifiedDef = builder.add(ir::Op::INeg(type, modifiedDef));
+      }
+      break;
+
+    case OperandModifier::eBias: {
+      dxbc_spv_assert(type.isFloatType());
+      // TODO: how to get a minF16 constant?
+      ir::SsaDef halfConst = builder.add(ir::Op::Constant(0.5f));
+      modifiedDef = builder.add(ir::Op::FSub(type, def, halfConst));
+    } break;
+
+    case OperandModifier::eBiasNeg: {
+      dxbc_spv_assert(type.isFloatType());
+      // TODO: how to get a minF16 constant?
+      ir::SsaDef halfConst = builder.add(ir::Op::Constant(0.5f));
+      modifiedDef = builder.add(ir::Op::FSub(type, def, halfConst));
+      modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
+    } break;
+  }
+
+  return modifiedDef;
+}
+
+
+ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::ScalarType type) {
+  auto loadDef = ir::SsaDef();
+
+  switch (operand.getRegisterType()) {
+    case RegisterType::eInput:
+    case RegisterType::ePixelTexCoord:
+    case RegisterType::eMiscType:
+      loadDef = m_ioMap.emitLoad(builder, op, operand, mask, type);
+      break;
+
+    case RegisterType::eAddr:
+    // case RegisterType::eTexture: Same Value
+      if (m_parser.getShaderInfo().getType() == ShaderType::eVertex)
+        loadDef = m_regFile.emitLoad(builder, operand, mask, type); // RegisterType::eAddr
+      else
+        loadDef = m_ioMap.emitLoad(builder, op, operand, mask, type); // RegisterType::eTexture
+      break;
+
+    case RegisterType::eTemp:
+    case RegisterType::eLoop:
+    case RegisterType::ePredicate:
+      loadDef = m_regFile.emitLoad(builder, operand, mask, type);
+      break;
+
+
+    case RegisterType::eConst:
+    case RegisterType::eConst2:
+    case RegisterType::eConst3:
+    case RegisterType::eConst4:
+    case RegisterType::eConstInt:
+    case RegisterType::eConstBool:
+      logOpError(op, "Shader constants are not implemented yet.");
+      break;
+
+    default:
+      break;
+  }
+
+  if (!loadDef) {
+    auto name = makeRegisterDebugName(operand.getRegisterType(), 0u, WriteMask());
+    logOpError(op, "Failed to load operand: ", name);
+    return loadDef;
+  }
+
+  return loadDef;
+}
+
+
+ir::SsaDef Converter::loadSrcModified(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::ScalarType type) {
+  auto value = loadSrc(builder, op, operand, mask, type);
+  return applySrcModifiers(builder, value, op, operand);
+}
+
+
 ir::SsaDef Converter::broadcastScalar(ir::Builder& builder, ir::SsaDef def, WriteMask mask) {
   if (mask == mask.first())
     return def;

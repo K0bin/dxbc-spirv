@@ -94,7 +94,8 @@ public:
           ir::Builder&            builder,
     const Instruction&            op,
     const Operand&                operand,
-          WriteMask               componentMask);
+          WriteMask               componentMask,
+          ir::ScalarType          type);
 
   /** Stores a scalar or vector value to an output variable. The component
    *  type is ignored, but the component count must match that of the
