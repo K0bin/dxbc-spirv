@@ -227,7 +227,8 @@ ir::SsaDef IoMap::emitLoad(
         ir::Builder&            builder,
   const Instruction&            op,
   const Operand&                operand,
-        WriteMask               componentMask) {
+        WriteMask               componentMask,
+        ir::ScalarType          type) {
   ir::SsaDef value;
   if (!operand.hasRelativeAddressing()) {
     const IoVarInfo* ioVar = nullptr;
@@ -260,6 +261,11 @@ ir::SsaDef IoMap::emitLoad(
     auto vec4Type = ir::Type(ir::ScalarType::eF32, 4u);
     value = builder.add(ir::Op::FunctionCall(vec4Type, m_inputSwitchFunction)
       .addOperand(index));
+  }
+
+  if (type != ir::ScalarType::eUnknown && type != ir::ScalarType::eF32) {
+    dxbc_spv_assert(type == ir::ScalarType::eMinF16);
+    value = builder.add(ir::Op::ConsumeAs(type, value));
   }
 
   if (builder.getOp(value).getType().isScalarType()) {
