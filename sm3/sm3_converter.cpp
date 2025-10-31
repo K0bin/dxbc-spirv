@@ -4,6 +4,33 @@
 
 namespace dxbc_spv::sm3 {
 
+/* Types in SM3
+ * Integer:
+ *   - Instructions:
+ *     - loop and rep instructions: Both of those load it straight from a constant integer register.
+ *   - Registers:
+ *     - Constant integer: Only used for loop and rep. Can NOT be used to write the address register or for relative addressing.
+ *     - Address register (a0): Only written to with mova (or mov on SM1.1) which takes in a float and has a specific rounding mode.
+ *                              Used for relative addressing, can't be read directly.
+ *     - Loop counter register (aL): Used to hold the loop index. Automatically populated in loops, can't be written to.
+ *
+ * Boolean:
+ *   - Instructions:
+ *     - if bool: Loads straight from a constant boolean register.
+ *     - if pred: Loads predicate register.
+ *     - callnz: Loads straight from a constant boolean register.
+ *     - callnz pred: Loads predicate register.
+ *     - break_comp: Loads straight from a constant boolean register.
+ *     - breakp pred: Loads predicate register.
+ *   - Registers:
+ *     - pred: Can't be read directly. Can only be used with if pred or to make operations conditional with predication.
+ *             Can only be written to with setp which compares two float registers.
+ *             Can be altered with NOT modifier before application.
+ *
+ * Float:
+ *   Everything else. Has partial precision flag in Dst operand.
+ */
+
 Converter::Converter(util::ByteReader code, IoSemanticMap& semanticMap, const Options &options)
 : m_code(code)
 , m_options(options)
@@ -108,44 +135,120 @@ bool Converter::initParser(Parser& parser, util::ByteReader reader) {
 }
 
 
-ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand) {
-  auto modifiedDef = ir::SsaDef();
+ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask) {
+  auto modifiedDef = def;
 
   const auto& op = builder.getOp(def);
   auto type = op.getType().getBaseType(0u);
+  bool isUnknown = type.isUnknownType();
+  bool partialPrecision = instruction.getDst().isPartialPrecision();
+
+  if (!type.isFloatType()) {
+    type = ir::BasicType(partialPrecision ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32, type.getVectorSize());
+    modifiedDef = builder.add(ir::Op::ConsumeAs(type, modifiedDef));
+  }
 
   auto mod = operand.getModifier();
   switch (mod) {
-    case OperandModifier::eAbs:
-      modifiedDef = builder.add(type.isFloatType()
-        ? ir::Op::FAbs(type, def)
-        : ir::Op::IAbs(type, def));
-      break;
-
-    case OperandModifier::eAbsNeg:
-      if (type.isFloatType()) {
-        modifiedDef = builder.add(ir::Op::FAbs(type, def));
+    case OperandModifier::eAbs: // abs(r)
+    case OperandModifier::eAbsNeg: // -abs(r)
+      modifiedDef = builder.add(ir::Op::FAbs(type, modifiedDef));
+      if (mod == OperandModifier::eAbsNeg) {
         modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
-      } else {
-        modifiedDef = builder.add(ir::Op::IAbs(type, def));
-        modifiedDef = builder.add(ir::Op::INeg(type, modifiedDef));
       }
       break;
 
-    case OperandModifier::eBias: {
-      dxbc_spv_assert(type.isFloatType());
-      // TODO: how to get a minF16 constant?
-      ir::SsaDef halfConst = builder.add(ir::Op::Constant(0.5f));
-      modifiedDef = builder.add(ir::Op::FSub(type, def, halfConst));
+    case OperandModifier::eBias: // r - 0.5
+    case OperandModifier::eBiasNeg: { // -(r - 0.5)
+      auto halfConstOp = ir::Op(ir::OpCode::eConstant, type);
+      for (uint32_t i = 0u; i < type.getVectorSize(); i++) {
+        halfConstOp.addOperand(0.5f);
+      }
+      ir::SsaDef halfConst = builder.add(halfConstOp);
+      modifiedDef = builder.add(ir::Op::FSub(type, modifiedDef, halfConst));
+      if (mod == OperandModifier::eBiasNeg)
+        modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
     } break;
 
-    case OperandModifier::eBiasNeg: {
-      dxbc_spv_assert(type.isFloatType());
-      // TODO: how to get a minF16 constant?
-      ir::SsaDef halfConst = builder.add(ir::Op::Constant(0.5f));
-      modifiedDef = builder.add(ir::Op::FSub(type, def, halfConst));
+    case OperandModifier::eSign: // fma(r, 2.0, -1.0)
+    case OperandModifier::eSignNeg: { // -fma(r, 2.0, -1.0)
+      auto twoConstOp = ir::Op(ir::OpCode::eConstant, type);
+      auto minusOneConstOp = ir::Op(ir::OpCode::eConstant, type);
+      for (uint32_t i = 0u; i < type.getVectorSize(); i++) {
+        twoConstOp.addOperand(2.0f);
+        minusOneConstOp.addOperand(-1.0f);
+      }
+      auto twoConst = builder.add(twoConstOp);
+      auto minusOneConst = builder.add(minusOneConstOp);
+      modifiedDef = builder.add(ir::Op::FMad(type, modifiedDef, twoConst, minusOneConst));
+      if (mod == OperandModifier::eSignNeg)
+        modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
+    } break;
+
+    case OperandModifier::eComp: { // 1.0 - r
+      auto oneConstOp = ir::Op(ir::OpCode::eConstant, type);
+      for (uint32_t i = 0u; i < type.getVectorSize(); i++) {
+        oneConstOp.addOperand(1.0f);
+      }
+      ir::SsaDef oneConst = builder.add(oneConstOp);
+      modifiedDef = builder.add(ir::Op::FSub(type, oneConst, modifiedDef));
+    } break;
+
+    case OperandModifier::eX2: // r * 2.0
+    case OperandModifier::eX2Neg: { // -(r * 2.0)
+      auto twoConstOp = ir::Op(ir::OpCode::eConstant, type);
+      for (uint32_t i = 0u; i < type.getVectorSize(); i++) {
+          twoConstOp.addOperand(2.0f);
+      }
+      ir::SsaDef twoConst = builder.add(twoConstOp);
+      modifiedDef = builder.add(ir::Op::FMul(type, modifiedDef, twoConst));
+      if (mod == OperandModifier::eX2Neg) {
+        modifiedDef = builder.add(ir::Op::FAbs(type, modifiedDef));
+      }
+    } break;
+
+    case OperandModifier::eDz:
+    case OperandModifier::eDw: {
+      // The Dz and Dw modifiers can only be applied to SM1.4 TexLd & TexCrd instructions.
+      // Both of those only accept a texture coord register as argument and that is always
+      // a float vec4.
+      // Adjust the index to the compacted vector.
+      uint32_t fullVec4ComponentIndex = mod == OperandModifier::eDz ? 2u : 3u;
+      uint32_t componentIndex = 0u;
+      for (auto c : mask) {
+        if (util::componentFromBit(c) == Component(fullVec4ComponentIndex))
+          break;
+
+        componentIndex++;
+      }
+
+      auto indexConst = builder.add(ir::Op::Constant(componentIndex));
+      auto zComp = builder.add(ir::Op::CompositeExtract(type.getBaseType(), modifiedDef, indexConst));
+      modifiedDef = builder.add(ir::Op::FDiv(type, modifiedDef, zComp));
+    } break;
+
+    case OperandModifier::eNeg: {
       modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
     } break;
+
+    case OperandModifier::eNot: {
+      // TODO: Move this out of here because it can only be used with the predicate register.
+      // The NOT modifier can only be used with the predicate register which always stores a boolean.
+      dxbc_spv_assert(type.isBoolType());
+      modifiedDef = builder.add(ir::Op::BNot(type, modifiedDef));
+    }
+
+    case OperandModifier::eNone:
+      break;
+
+    default:
+      Logger::log(LogLevel::eError, "Unknown source register modifier: ", uint32_t(mod));
+      break;
+  }
+
+  if (isUnknown) {
+    type = ir::BasicType(ir::ScalarType::eUnknown, type.getVectorSize());
+    modifiedDef = builder.add(ir::Op::ConsumeAs(type, modifiedDef));
   }
 
   return modifiedDef;
@@ -201,8 +304,33 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
 
 
 ir::SsaDef Converter::loadSrcModified(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::ScalarType type) {
+  WriteMask originalMask = mask;
+  // If the modifier divides by one of the components, that component needs to be loaded.
+  if (operand.getModifier() == OperandModifier::eDz) {
+    mask |= ComponentBit::eZ;
+  } else if (operand.getModifier() == OperandModifier::eDw) {
+    mask |= ComponentBit::eW;
+  }
+
   auto value = loadSrc(builder, op, operand, mask, type);
-  return applySrcModifiers(builder, value, op, operand);
+  auto modified = applySrcModifiers(builder, value, op, operand, mask);
+
+  if (originalMask != mask) {
+    // Remove the component that was only added for the modifier.
+    std::array<ir::SsaDef, 4u> components = { };
+    uint32_t componentIndexDst = 0u;
+    uint32_t componentIndexSrc = 0u;
+    for (auto c : mask) {
+      if (originalMask & c) {
+        components[componentIndexDst] = builder.add(ir::Op::CompositeExtract(type, modified, builder.add(ir::Op::Constant(componentIndexSrc))));
+        componentIndexDst++;
+      }
+      componentIndexSrc++;
+    }
+    modified = buildVector(builder, type, componentIndexDst, components.data());
+  }
+
+  return modified;
 }
 
 
