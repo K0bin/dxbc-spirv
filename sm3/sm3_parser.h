@@ -185,11 +185,11 @@ enum class OperandModifier : uint32_t {
   eNeg     = 1u,  // -r
   eBias    = 2u,  // r - 0.5
   eBiasNeg = 3u,  // -(r - 0.5)
-  eSign    = 4u,  // fma(r, 2.0f, -1.0f)
-  eSignNeg = 5u,  // -fma(r, 2.0f, -1.0f)
-  eComp    = 6u,  // 1 - r
-  eX2      = 7u,  // r * 2
-  eX2Neg   = 8u,  // -r * 2
+  eSign    = 4u,  // fma(r, 2.0, -1.0)
+  eSignNeg = 5u,  // -fma(r, 2.0, -1.0)
+  eComp    = 6u,  // 1.0 - r
+  eX2      = 7u,  // r * 2.0
+  eX2Neg   = 8u,  // -(r * 2.0)
   eDz      = 9u,  // r / r.z
   eDw      = 10u, // r / r.w
   eAbs     = 11u, // abs(r)
