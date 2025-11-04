@@ -86,10 +86,10 @@ void IoMap::initialize(ir::Builder& builder) {
 
 void IoMap::finalize(ir::Builder& builder) {
   // Now that all dcl instructions are processed, we can emit the functions containing the switch statements.
-  auto inputSwitchFunction = emitInputSwitchFunction(builder);
+  auto inputSwitchFunction = emitDynamicLoadFunction(builder);
   builder.rewriteDef(m_inputSwitchFunction, inputSwitchFunction);
 
-  auto outputSwitchFunction = emitOutputSwitchFunction(builder);
+  auto outputSwitchFunction = emitDynamicStoreFunction(builder);
   builder.rewriteDef(m_outputSwitchFunction, outputSwitchFunction);
 }
 
@@ -229,7 +229,7 @@ ir::SsaDef IoMap::emitLoad(
   const Operand&                operand,
         WriteMask               componentMask,
         ir::ScalarType          type) {
-  ir::SsaDef value;
+  std::array<ir::SsaDef, 4u> components = { };
   if (!operand.hasRelativeAddressing()) {
     const IoVarInfo* ioVar = nullptr;
     for (const auto& variable : m_variables) {
@@ -240,27 +240,36 @@ ir::SsaDef IoMap::emitLoad(
     }
     if (ioVar == nullptr) {
       m_converter.logOpError(op, "Failed to process I/O load.");
-      return ir::SsaDef();
     }
 
-    value = builder.add(ir::Op::InputLoad(ioVar->baseType, ioVar->baseDef, ir::SsaDef()));
+    for (auto c : operand.getSwizzle(m_converter.getShaderInfo()).getReadMask(componentMask)) {
+      auto componentIndex = uint8_t(util::componentFromBit(c));
 
-    if (ioVar->registerType == RegisterType::eMiscType && ioVar->registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace)) {
-      // The front face can only be loaded using a separate register, even on SM3.
-      // So we don't need to handle it in the relative addressing function.
-      value = emitFrontFaceFloat(builder, value);
+      if (!ioVar) {
+        components[componentIndex] = builder.add(ir::Op::Undef(type));
+      } else {
+        ir::SsaDef value = builder.add(ir::Op::InputLoad(ioVar->baseType, ioVar->baseDef, ir::SsaDef()));;
+        if (ioVar->registerType == RegisterType::eMiscType && ioVar->registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace)) {
+          // The front face can only be loaded using a separate register, even on SM3.
+          // So we don't need to handle it in the relative addressing function.
+          value = emitFrontFaceFloat(builder, value);
+        }
+        components[componentIndex] = value;
+      }
     }
   } else {
     dxbc_spv_assert(operand.getRegisterType() == RegisterType::eInput);
     dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 3);
-    ir::Type indexType = ir::Type(ir::ScalarType::eU32);
     auto index = builder.add(ir::Op::Constant(operand.getIndex()));
     ir::SsaDef registerValue = { }; // TODO
-    index = builder.add(ir::Op::IAdd(indexType, index, registerValue));
+    index = builder.add(ir::Op::IAdd(ir::Type(ir::ScalarType::eU32), index, registerValue));
     dxbc_spv_assert(m_inputSwitchFunction);
-    auto vec4Type = ir::Type(ir::ScalarType::eF32, 4u);
-    value = builder.add(ir::Op::FunctionCall(vec4Type, m_inputSwitchFunction)
-      .addOperand(index));
+    auto vec4Value = builder.add(ir::Op::FunctionCall(ir::Type(ir::ScalarType::eF32, 4u), m_inputSwitchFunction)
+        .addOperand(index));
+    for (auto c : operand.getSwizzle(m_converter.getShaderInfo()).getReadMask(componentMask)) {
+      auto componentIndex = uint8_t(util::componentFromBit(c));
+      components[componentIndex] = builder.add(ir::Op::CompositeExtract(type, vec4Value, builder.add(ir::Op::Constant(componentIndex))));
+    }
   }
 
   if (type != ir::ScalarType::eUnknown && type != ir::ScalarType::eF32) {
@@ -284,17 +293,7 @@ bool IoMap::emitStore(
   const Instruction&            op,
   const Operand&                operand,
         ir::SsaDef              value) {
-  auto vec4Type = ir::Type(ir::ScalarType::eF32, 4u);
   WriteMask writeMask = operand.getWriteMask(m_converter.getShaderInfo());
-
-  /* Write each component individually */
-  uint32_t componentIndex = 0u;
-  std::array<ir::SsaDef, 4u> components;
-  for (auto c : writeMask) {
-    ir::SsaDef baseScalar = m_converter.extractFromVector(builder, value, componentIndex++);
-    components[uint8_t(componentFromBit(c))] = baseScalar;
-  }
-  ir::SsaDef vec4Value = m_converter.composite(builder, ir::BasicType(ir::ScalarType::eF32), components.data(), Swizzle::identity(), WriteMask(ComponentBit::eAll));
 
   if (!operand.hasRelativeAddressing()) {
     const IoVarInfo* ioVar = nullptr;
@@ -309,45 +308,60 @@ bool IoMap::emitStore(
       return false;
     }
 
-    bool isInput = ioVar->registerType == RegisterType::eInput
-      || ioVar->registerType == RegisterType::eMiscType
-      || ioVar->registerType == RegisterType::ePixelTexCoord;
-    dxbc_spv_assert(isInput);
-    builder.add(ir::Op::OutputStore(ioVar->baseDef, ir::SsaDef(), vec4Value));
+    bool isOutput = ioVar->registerType == RegisterType::eOutput
+      || ioVar->registerType == RegisterType::eAttributeOut
+      || ioVar->registerType == RegisterType::eColorOut;
+    dxbc_spv_assert(isOutput);
+    ir::Type scalarType = ioVar->baseType.isVectorType() ? ioVar->baseType.getBaseType(0u) : ioVar->baseType;
+    uint32_t componentIndex = 0u;
+    for (auto c : writeMask) {
+      auto dstComponentIndexConst = builder.add(ir::Op::Constant(uint32_t(util::componentFromBit(c))));
+      ir::SsaDef valueScalar = value;
+      if (ioVar->baseType.isVectorType()) {
+        auto componentIndexConst = builder.add(ir::Op::Constant(componentIndex));
+        valueScalar = builder.add(ir::Op::CompositeExtract(scalarType, value, componentIndexConst));
+      }
+      builder.add(ir::Op::OutputStore(ioVar->baseDef, dstComponentIndexConst, valueScalar));
+      componentIndex++;
+    }
   } else {
-    dxbc_spv_assert(operand.getRegisterType() == RegisterType::eInput);
+    dxbc_spv_assert(operand.getRegisterType() == RegisterType::eOutput);
     dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 3);
-    ir::Type indexType = ir::Type(ir::ScalarType::eU32);
     auto index = builder.add(ir::Op::Constant(operand.getIndex()));
     ir::SsaDef registerValue = { }; // TODO
-    index = builder.add(ir::Op::IAdd(indexType, index, registerValue));
+    index = builder.add(ir::Op::IAdd(ir::ScalarType::eU32, index, registerValue));
     dxbc_spv_assert(m_outputSwitchFunction);
-    builder.add(ir::Op::FunctionCall(vec4Type, m_outputSwitchFunction)
-      .addOperand(index)
-      .addOperand(vec4Value));
+    uint32_t componentIndex = 0u;
+    for (auto c : writeMask) {
+      auto dstComponentIndexConst = builder.add(ir::Op::Constant(uint32_t(util::componentFromBit(c))));
+      auto componentIndexConst = builder.add(ir::Op::Constant(componentIndex));
+      auto valueScalar = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, value, componentIndexConst));
+      builder.add(ir::Op::FunctionCall(ir::Type(ir::ScalarType::eF32, 4u), m_outputSwitchFunction)
+        .addOperand(index)
+        .addOperand(dstComponentIndexConst)
+        .addOperand(valueScalar));
+      componentIndex++;
+    }
   }
   return true;
 }
 
 
-ir::SsaDef IoMap::emitInputSwitchFunction(ir::Builder& builder) const {
-  auto vec4Type = ir::Type(ir::ScalarType::eF32, 4u);
-  auto uintType = ir::Type(ir::ScalarType::eU32);
-
-  auto indexParameter = builder.add(ir::Op::DclParam(uintType));
+ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
+  auto indexParameter = builder.add(ir::Op::DclParam(ir::ScalarType::eU32));
   if (m_converter.m_options.includeDebugNames) {
-    builder.add(ir::Op::DebugName(indexParameter, "index"));
+    builder.add(ir::Op::DebugName(indexParameter, "reg"));
   }
 
   auto function = builder.add(
-    ir::Op::Function(vec4Type)
+    ir::Op::Function(ir::Type(ir::ScalarType::eF32, 4u))
     .addOperand(indexParameter)
   );
   if (m_converter.m_options.includeDebugNames) {
     builder.add(ir::Op::DebugName(function, "loadInputDynamic"));
   }
 
-  auto indexArg = builder.add(ir::Op::ParamLoad(uintType, function, indexParameter));
+  auto indexArg = builder.add(ir::Op::ParamLoad(ir::ScalarType::eU32, function, indexParameter));
   auto switchDecl = ir::Op::ScopedSwitch(ir::SsaDef(), indexArg);
   auto switchDef = builder.add(switchDecl);
 
@@ -362,10 +376,10 @@ ir::SsaDef IoMap::emitInputSwitchFunction(ir::Builder& builder) const {
       }
     }
     dxbc_spv_assert(ioVar != nullptr);
-    dxbc_spv_assert(ioVar->baseType == vec4Type);
+    dxbc_spv_assert(ioVar->baseType == ir::Type(ir::ScalarType::eF32, 4u));
 
     auto input = builder.add(ir::Op::InputLoad(ioVar->baseType, ioVar->baseDef, ir::SsaDef()));
-    builder.add(ir::Op::Return(vec4Type, input));
+    builder.add(ir::Op::Return(ir::Type(ir::ScalarType::eF32, 4u), input));
     builder.add(ir::Op::ScopedSwitchBreak(switchDef));
   }
 
@@ -376,31 +390,35 @@ ir::SsaDef IoMap::emitInputSwitchFunction(ir::Builder& builder) const {
   return function;
 }
 
-ir::SsaDef IoMap::emitOutputSwitchFunction(ir::Builder& builder) const {
-  auto vec4Type = ir::Type(ir::ScalarType::eF32, 4u);
-  auto uintType = ir::Type(ir::ScalarType::eU32);
-
-  auto indexParameter = builder.add(ir::Op::DclParam(uintType));
+ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
+  auto indexParameter = builder.add(ir::Op::DclParam(ir::ScalarType::eU32));
   if (m_converter.m_options.includeDebugNames) {
-    builder.add(ir::Op::DebugName(indexParameter, "index"));
+    builder.add(ir::Op::DebugName(indexParameter, "reg"));
   }
 
-  auto valueParameter = builder.add(ir::Op::DclParam(vec4Type));
+  auto componentParameter = builder.add(ir::Op::DclParam(ir::ScalarType::eU32));
+  if (m_converter.m_options.includeDebugNames) {
+    builder.add(ir::Op::DebugName(indexParameter, "c"));
+  }
+
+  auto valueParameter = builder.add(ir::Op::DclParam(ir::ScalarType::eF32));
   if (m_converter.m_options.includeDebugNames) {
     builder.add(ir::Op::DebugName(valueParameter, "value"));
   }
 
   auto function = builder.add(
-    ir::Op::Function(vec4Type)
+    ir::Op::Function(ir::Type())
     .addOperand(indexParameter)
+    .addOperand(componentParameter)
     .addOperand(valueParameter)
   );
   if (m_converter.m_options.includeDebugNames) {
     builder.add(ir::Op::DebugName(function, "storeOutputDynamic"));
   }
 
-  auto indexArg = builder.add(ir::Op::ParamLoad(uintType, function, indexParameter));
-  auto valueArg = builder.add(ir::Op::ParamLoad(vec4Type, function, valueParameter));
+  auto indexArg = builder.add(ir::Op::ParamLoad(ir::ScalarType::eU32, function, indexParameter));
+  auto componentArg = builder.add(ir::Op::ParamLoad(ir::ScalarType::eU32, function, componentParameter));
+  auto valueArg = builder.add(ir::Op::ParamLoad(ir::ScalarType::eF32, function, valueParameter));
   auto switchDecl = ir::Op::ScopedSwitch(ir::SsaDef(), indexArg);
   auto switchDef = builder.add(switchDecl);
 
@@ -415,9 +433,9 @@ ir::SsaDef IoMap::emitOutputSwitchFunction(ir::Builder& builder) const {
       }
     }
     dxbc_spv_assert(ioVar != nullptr);
-    dxbc_spv_assert(ioVar->baseType == vec4Type);
+    dxbc_spv_assert(ioVar->baseType == ir::Type(ir::ScalarType::eF32, 4u));
 
-    builder.add(ir::Op::OutputStore(ioVar->baseDef, ir::SsaDef(), valueArg));
+    builder.add(ir::Op::OutputStore(ioVar->baseDef, componentArg, valueArg));
     builder.add(ir::Op::ScopedSwitchBreak(switchDef));
   }
 

@@ -121,8 +121,8 @@ private:
   ir::SsaDef      m_inputSwitchFunction = { };
   ir::SsaDef      m_outputSwitchFunction = { };
 
-  ir::SsaDef emitInputSwitchFunction(ir::Builder& builder) const;
-  ir::SsaDef emitOutputSwitchFunction(ir::Builder& builder) const;
+  ir::SsaDef emitDynamicLoadFunction(ir::Builder& builder) const;
+  ir::SsaDef emitDynamicStoreFunction(ir::Builder& builder) const;
 
   void dclIoVar(
    ir::Builder& builder,
