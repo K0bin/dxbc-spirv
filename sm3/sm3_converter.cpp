@@ -306,6 +306,7 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
 ir::SsaDef Converter::loadSrcModified(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::ScalarType type) {
   WriteMask originalMask = mask;
   // If the modifier divides by one of the components, that component needs to be loaded.
+  // TODO: Dz & Dw need to get applied before the swizzle!
   if (operand.getModifier() == OperandModifier::eDz) {
     mask |= ComponentBit::eZ;
   } else if (operand.getModifier() == OperandModifier::eDw) {
