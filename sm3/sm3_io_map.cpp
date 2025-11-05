@@ -239,6 +239,7 @@ ir::SsaDef IoMap::emitLoad(
       }
     }
     if (ioVar == nullptr) {
+      auto name = m_converter.makeRegisterDebugName(operand.getRegisterType(), operand.getIndex(), componentMask);
       m_converter.logOpError(op, "Failed to process I/O load.");
     }
 
@@ -247,15 +248,23 @@ ir::SsaDef IoMap::emitLoad(
 
       if (!ioVar) {
         components[componentIndex] = builder.add(ir::Op::Undef(type));
-      } else {
-        ir::SsaDef value = builder.add(ir::Op::InputLoad(ioVar->baseType, ioVar->baseDef, ir::SsaDef()));;
-        if (ioVar->registerType == RegisterType::eMiscType && ioVar->registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace)) {
-          // The front face can only be loaded using a separate register, even on SM3.
-          // So we don't need to handle it in the relative addressing function.
-          value = emitFrontFaceFloat(builder, value);
-        }
-        components[componentIndex] = value;
+        continue;
       }
+
+      bool isFrontFaceBuiltin = ioVar->registerType == RegisterType::eMiscType && ioVar->registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace);
+      ir::SsaDef value;
+      if (!isFrontFaceBuiltin) {
+        ir::SsaDef addressConstant = builder.add(ir::Op::Constant(componentIndex));
+        auto varScalarType = ioVar->baseType.getBaseType(0u).getBaseType();
+        value = builder.add(ir::Op::InputLoad(varScalarType, ioVar->baseDef, addressConstant));
+      } else {
+        // The front face needs to be transformed from a bool to 1.0/-1.0.
+        // It can only be loaded using a separate register, even on SM3.
+        // So we don't need to handle it in the relative addressing function.
+        value = builder.add(ir::Op::InputLoad(ioVar->baseType, ioVar->baseDef, ir::SsaDef()));
+        value = emitFrontFaceFloat(builder, value);
+      }
+      components[componentIndex] = value;
     }
   } else {
     dxbc_spv_assert(operand.getRegisterType() == RegisterType::eInput);
@@ -272,13 +281,7 @@ ir::SsaDef IoMap::emitLoad(
     }
   }
 
-  ir::SsaDef value = m_converter.composite(builder, type, components.data(), operand.getSwizzle(m_converter.getShaderInfo()), componentMask);
-
-  if (builder.getOp(value).getType().isScalarType()) {
-    value = m_converter.broadcastScalar(builder, value, componentMask);
-  } else {
-    value = m_converter.swizzleVector(builder, value, operand.getSwizzle(m_converter.getShaderInfo()), componentMask);
-  }
+  ir::SsaDef value = m_converter.composite(builder, ir::BasicType(ir::ScalarType::eF32, 4u), components.data(), operand.getSwizzle(m_converter.getShaderInfo()), componentMask);
 
   return value;
 }
@@ -442,6 +445,7 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
   builder.add(ir::Op::FunctionEnd());
   return function;
 }
+
 
 
 ir::SsaDef IoMap::emitFrontFaceFloat(ir::Builder &builder, ir::SsaDef isFrontFaceDef) const {
