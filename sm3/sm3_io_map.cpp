@@ -272,10 +272,7 @@ ir::SsaDef IoMap::emitLoad(
     }
   }
 
-  if (type != ir::ScalarType::eUnknown && type != ir::ScalarType::eF32) {
-    dxbc_spv_assert(type == ir::ScalarType::eMinF16);
-    value = builder.add(ir::Op::ConsumeAs(type, value));
-  }
+  ir::SsaDef value = m_converter.composite(builder, type, components.data(), operand.getSwizzle(m_converter.getShaderInfo()), componentMask);
 
   if (builder.getOp(value).getType().isScalarType()) {
     value = m_converter.broadcastScalar(builder, value, componentMask);
