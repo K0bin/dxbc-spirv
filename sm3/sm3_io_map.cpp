@@ -229,7 +229,7 @@ ir::SsaDef IoMap::emitLoad(
   const Operand&                operand,
         WriteMask               componentMask,
         ir::ScalarType          type) {
-  std::array<ir::SsaDef, 4u> components = { };
+  ir::SsaDef value;
   if (!operand.hasRelativeAddressing()) {
     const IoVarInfo* ioVar = nullptr;
     for (const auto& variable : m_variables) {
@@ -240,31 +240,17 @@ ir::SsaDef IoMap::emitLoad(
     }
     if (ioVar == nullptr) {
       auto name = m_converter.makeRegisterDebugName(operand.getRegisterType(), operand.getIndex(), componentMask);
-      m_converter.logOpError(op, "Failed to process I/O load.");
-    }
+      m_converter.logOpError(op, "Failed to process I/O load: ", name);
+      value = builder.add(ir::Op::Undef(type));
+    } else {
+      value = builder.add(ir::Op::InputLoad(ioVar->baseType, ioVar->baseDef, ir::SsaDef()));
 
-    for (auto c : operand.getSwizzle(m_converter.getShaderInfo()).getReadMask(componentMask)) {
-      auto componentIndex = uint8_t(util::componentFromBit(c));
-
-      if (!ioVar) {
-        components[componentIndex] = builder.add(ir::Op::Undef(type));
-        continue;
-      }
-
-      bool isFrontFaceBuiltin = ioVar->registerType == RegisterType::eMiscType && ioVar->registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace);
-      ir::SsaDef value;
-      if (!isFrontFaceBuiltin) {
-        ir::SsaDef addressConstant = builder.add(ir::Op::Constant(componentIndex));
-        auto varScalarType = ioVar->baseType.getBaseType(0u).getBaseType();
-        value = builder.add(ir::Op::InputLoad(varScalarType, ioVar->baseDef, addressConstant));
-      } else {
+      if (ioVar->registerType == RegisterType::eMiscType && ioVar->registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace)) {
         // The front face needs to be transformed from a bool to 1.0/-1.0.
         // It can only be loaded using a separate register, even on SM3.
         // So we don't need to handle it in the relative addressing function.
-        value = builder.add(ir::Op::InputLoad(ioVar->baseType, ioVar->baseDef, ir::SsaDef()));
         value = emitFrontFaceFloat(builder, value);
       }
-      components[componentIndex] = value;
     }
   } else {
     dxbc_spv_assert(operand.getRegisterType() == RegisterType::eInput);
@@ -273,15 +259,11 @@ ir::SsaDef IoMap::emitLoad(
     ir::SsaDef registerValue = { }; // TODO
     index = builder.add(ir::Op::IAdd(ir::Type(ir::ScalarType::eU32), index, registerValue));
     dxbc_spv_assert(m_inputSwitchFunction);
-    auto vec4Value = builder.add(ir::Op::FunctionCall(ir::Type(ir::ScalarType::eF32, 4u), m_inputSwitchFunction)
+    value = builder.add(ir::Op::FunctionCall(ir::Type(ir::ScalarType::eF32, 4u), m_inputSwitchFunction)
         .addOperand(index));
-    for (auto c : operand.getSwizzle(m_converter.getShaderInfo()).getReadMask(componentMask)) {
-      auto componentIndex = uint8_t(util::componentFromBit(c));
-      components[componentIndex] = builder.add(ir::Op::CompositeExtract(type, vec4Value, builder.add(ir::Op::Constant(componentIndex))));
-    }
   }
 
-  ir::SsaDef value = m_converter.composite(builder, ir::BasicType(ir::ScalarType::eF32, 4u), components.data(), operand.getSwizzle(m_converter.getShaderInfo()), componentMask);
+  value = m_converter.swizzleVector(builder, value, operand.getSwizzle(m_converter.getShaderInfo()), componentMask);
 
   return value;
 }
