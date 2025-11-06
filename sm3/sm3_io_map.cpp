@@ -230,28 +230,37 @@ ir::SsaDef IoMap::emitLoad(
         WriteMask               componentMask,
         Swizzle                 swizzle,
         ir::ScalarType          type) {
-  ir::SsaDef value;
+  std::array<ir::SsaDef, 4u> components = { };
   if (!operand.hasRelativeAddressing()) {
-    const IoVarInfo* ioVar = nullptr;
-    for (const auto& variable : m_variables) {
-      if (variable.registerType == operand.getRegisterType() && variable.registerIndex == operand.getIndex()) {
-        ioVar = &variable;
-        break;
-      }
-    }
+    const IoVarInfo* ioVar = findIoVar(m_variables, operand.getRegisterType(), operand.getIndex());
     if (ioVar == nullptr) {
       auto name = m_converter.makeRegisterDebugName(operand.getRegisterType(), operand.getIndex(), componentMask);
       m_converter.logOpError(op, "Failed to process I/O load: ", name);
-      value = builder.add(ir::Op::Undef(type));
-    } else {
-      value = builder.add(ir::Op::InputLoad(ioVar->baseType, ioVar->baseDef, ir::SsaDef()));
+    }
 
-      if (ioVar->registerType == RegisterType::eMiscType && ioVar->registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace)) {
+    for (auto c : swizzle.getReadMask(componentMask)) {
+      auto componentIndex = uint8_t(util::componentFromBit(c));
+
+      if (!ioVar) {
+        components[componentIndex] = builder.add(ir::Op::Undef(type));
+        continue;
+      }
+
+      bool isFrontFaceBuiltin = ioVar->registerType == RegisterType::eMiscType && ioVar->registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace);
+      ir::SsaDef value;
+      if (!isFrontFaceBuiltin) {
+        ir::SsaDef addressConstant = builder.add(ir::Op::Constant(componentIndex));
+        auto varScalarType = ioVar->baseType.getBaseType(0u).getBaseType();
+        value = builder.add(ir::Op::InputLoad(varScalarType, ioVar->baseDef, addressConstant));
+      } else {
         // The front face needs to be transformed from a bool to 1.0/-1.0.
         // It can only be loaded using a separate register, even on SM3.
         // So we don't need to handle it in the relative addressing function.
+        dxbc_spv_assert(ioVar->baseType.isScalarType());
+        value = builder.add(ir::Op::InputLoad(ioVar->baseType, ioVar->baseDef, ir::SsaDef()));
         value = emitFrontFaceFloat(builder, value);
       }
+      components[componentIndex] = convertScalar(builder, type, value);
     }
   } else {
     dxbc_spv_assert(operand.getRegisterType() == RegisterType::eInput);
@@ -260,11 +269,19 @@ ir::SsaDef IoMap::emitLoad(
     ir::SsaDef registerValue = { }; // TODO
     index = builder.add(ir::Op::IAdd(ir::Type(ir::ScalarType::eU32), index, registerValue));
     dxbc_spv_assert(m_inputSwitchFunction);
-    value = builder.add(ir::Op::FunctionCall(ir::Type(ir::ScalarType::eF32, 4u), m_inputSwitchFunction)
+    auto vec4Value = builder.add(ir::Op::FunctionCall(ir::Type(ir::ScalarType::eF32, 4u), m_inputSwitchFunction)
         .addOperand(index));
+    for (auto c : swizzle.getReadMask(componentMask)) {
+      auto componentIndex = uint8_t(util::componentFromBit(c));
+      components[componentIndex] = convertScalar(
+        builder,
+        type,
+        builder.add(ir::Op::CompositeExtract(type, vec4Value, builder.add(ir::Op::Constant(componentIndex))))
+      );
+    }
   }
 
-  value = m_converter.swizzleVector(builder, value, swizzle, componentMask);
+  ir::SsaDef value = m_converter.composite(builder, ir::BasicType(type, util::popcnt(uint8_t(componentMask))), components.data(), swizzle, componentMask);
 
   return value;
 }
@@ -279,13 +296,7 @@ bool IoMap::emitStore(
   WriteMask writeMask = operand.getWriteMask(m_converter.getShaderInfo());
 
   if (!operand.hasRelativeAddressing()) {
-    const IoVarInfo* ioVar = nullptr;
-    for (const auto& variable : m_variables) {
-      if (variable.registerType == operand.getRegisterType() && variable.registerIndex == operand.getIndex()) {
-        ioVar = &variable;
-        break;
-      }
-    }
+    const IoVarInfo* ioVar = findIoVar(m_variables, operand.getRegisterType(), operand.getIndex());
     if (ioVar == nullptr) {
       m_converter.logOpError(op, "Failed to process I/O load.");
       return false;
@@ -435,6 +446,33 @@ ir::SsaDef IoMap::emitFrontFaceFloat(ir::Builder &builder, ir::SsaDef isFrontFac
   auto frontFaceValue = builder.add(ir::Op::Constant(1.0f));
   auto backFaceValue = builder.add(ir::Op::Constant(-1.0f));
   return builder.add(ir::Op::Select(ir::ScalarType::eF32, isFrontFaceDef, frontFaceValue, backFaceValue));
+}
+
+
+
+IoVarInfo* IoMap::findIoVar(IoVarList& list, RegisterType regType, uint32_t regIndex) {
+  for (auto& e : list) {
+    if (e.registerType == regType && e.registerIndex == regIndex) {
+      return &e;
+      break;
+    }
+  }
+
+  return nullptr;
+}
+
+
+
+ir::SsaDef IoMap::convertScalar(ir::Builder& builder, ir::ScalarType dstType, ir::SsaDef value) {
+  const auto& srcType = builder.getOp(value).getType();
+  dxbc_spv_assert(srcType.isScalarType());
+
+  auto scalarType = srcType.getBaseType(0u).getBaseType();
+
+  if (scalarType == dstType)
+    return value;
+
+  return builder.add(ir::Op::ConsumeAs(dstType, value));
 }
 
 
