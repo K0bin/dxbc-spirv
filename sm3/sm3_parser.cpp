@@ -237,7 +237,7 @@ static const std::array<InstructionLayout, 100> g_instructionLayouts = {{
   /* Mova */
   { {{
     { OperandKind::eDstReg, ir::ScalarType::eI32 },
-    { OperandKind::eSrcReg, ir::ScalarType::eUnknown },
+    { OperandKind::eSrcReg, ir::ScalarType::eF32 },
   }} },
   /* DefB */
   { {{
