@@ -212,7 +212,6 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
       // The Dz and Dw modifiers can only be applied to SM1.4 TexLd & TexCrd instructions.
       // Both of those only accept a texture coord register as argument and that is always
       // a float vec4.
-      // Adjust the index to the compacted vector.
       uint32_t fullVec4ComponentIndex = mod == OperandModifier::eDz ? 2u : 3u;
       uint32_t componentIndex = 0u;
       for (auto c : mask) {
@@ -255,14 +254,14 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
 }
 
 
-ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::ScalarType type) {
+ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, Swizzle swizzle, ir::ScalarType type) {
   auto loadDef = ir::SsaDef();
 
   switch (operand.getRegisterType()) {
     case RegisterType::eInput:
     case RegisterType::ePixelTexCoord:
     case RegisterType::eMiscType:
-      loadDef = m_ioMap.emitLoad(builder, op, operand, mask, type);
+      loadDef = m_ioMap.emitLoad(builder, op, operand, mask, swizzle, type);
       break;
 
     case RegisterType::eAddr:
@@ -270,7 +269,7 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
       if (m_parser.getShaderInfo().getType() == ShaderType::eVertex)
         loadDef = m_regFile.emitLoad(builder, operand, mask, type); // RegisterType::eAddr
       else
-        loadDef = m_ioMap.emitLoad(builder, op, operand, mask, type); // RegisterType::eTexture
+        loadDef = m_ioMap.emitLoad(builder, op, operand, mask, swizzle, type); // RegisterType::eTexture
       break;
 
     case RegisterType::eTemp:
@@ -304,31 +303,24 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
 
 
 ir::SsaDef Converter::loadSrcModified(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::ScalarType type) {
+  Swizzle swizzle = operand.getSwizzle(m_parser.getShaderInfo());
+  Swizzle originalSwizzle = swizzle;
   WriteMask originalMask = mask;
   // If the modifier divides by one of the components, that component needs to be loaded.
-  // TODO: Dz & Dw need to get applied before the swizzle!
-  if (operand.getModifier() == OperandModifier::eDz) {
-    mask |= ComponentBit::eZ;
-  } else if (operand.getModifier() == OperandModifier::eDw) {
-    mask |= ComponentBit::eW;
+
+  // Dz & Dw need to get applied before the swizzle!
+  // So if those are used, we load the whole vector and swizzle afterward.
+  bool hasPreSwizzleModifier = operand.getModifier() == OperandModifier::eDz || operand.getModifier() == OperandModifier::eDw;
+  if (hasPreSwizzleModifier) {
+    mask = WriteMask(ComponentBit::eAll);
+    swizzle = Swizzle::identity();
   }
 
-  auto value = loadSrc(builder, op, operand, mask, type);
+  auto value = loadSrc(builder, op, operand, mask, swizzle, type);
   auto modified = applySrcModifiers(builder, value, op, operand, mask);
 
-  if (originalMask != mask) {
-    // Remove the component that was only added for the modifier.
-    std::array<ir::SsaDef, 4u> components = { };
-    uint32_t componentIndexDst = 0u;
-    uint32_t componentIndexSrc = 0u;
-    for (auto c : mask) {
-      if (originalMask & c) {
-        components[componentIndexDst] = builder.add(ir::Op::CompositeExtract(type, modified, builder.add(ir::Op::Constant(componentIndexSrc))));
-        componentIndexDst++;
-      }
-      componentIndexSrc++;
-    }
-    modified = buildVector(builder, type, componentIndexDst, components.data());
+  if (hasPreSwizzleModifier) {
+    modified = swizzleVector(builder, modified, originalSwizzle, originalMask);
   }
 
   return modified;

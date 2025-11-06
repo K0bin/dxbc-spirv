@@ -228,6 +228,7 @@ ir::SsaDef IoMap::emitLoad(
   const Instruction&            op,
   const Operand&                operand,
         WriteMask               componentMask,
+        Swizzle                 swizzle,
         ir::ScalarType          type) {
   ir::SsaDef value;
   if (!operand.hasRelativeAddressing()) {
@@ -263,7 +264,7 @@ ir::SsaDef IoMap::emitLoad(
         .addOperand(index));
   }
 
-  value = m_converter.swizzleVector(builder, value, operand.getSwizzle(m_converter.getShaderInfo()), componentMask);
+  value = m_converter.swizzleVector(builder, value, swizzle, componentMask);
 
   return value;
 }
