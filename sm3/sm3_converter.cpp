@@ -91,6 +91,14 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eRsq:
       return handleArithmetic(builder, op);
 
+    case OpCode::eMad:
+      return handleMad(builder, op);
+
+    case OpCode::eDp2Add:
+    case OpCode::eDp3:
+    case OpCode::eDp4:
+      return handleDot(builder, op);
+
     default:
       break;
   }
@@ -239,6 +247,73 @@ bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
   return storeDstModifiedPredicated(builder, op, dst, builder.add(std::move(result)));
 }
 
+
+bool Converter::handleMad(ir::Builder& builder, const Instruction& op) {
+  /* All instructions handled here will operate on float vectors of any kind. */
+  auto opCode = op.getOpCode();
+
+  dxbc_spv_assert(op.getSrcCount() == 3);
+
+  /* Instruction type */
+  const auto& dst = op.getDst();
+
+  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+  auto vectorType = makeVectorType(scalarType, writeMask);
+
+  /* Load source operands */
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
+  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
+  auto src2 = loadSrcModified(builder, op, op.getSrc(2u), writeMask, scalarType);
+
+  auto result = ir::Op::FMadLegacy(vectorType, src0, src1, src2);
+
+  return storeDstModifiedPredicated(builder, op, dst, builder.add(std::move(result)));
+}
+
+
+bool Converter::handleDot(ir::Builder& builder, const Instruction& op) {
+  /* Dp2/3/4 take two vector operands, produce a scalar, and replicate
+   * that in all components included in the destination write mask.
+   * Dp2Add takes a third vector operand and adds it.
+   * (dst0) Result
+   * (src0) First vector
+   * (src1) Second vector */
+  auto opCode = op.getOpCode();
+
+  /* The opcode determines which source components to read,
+   * since the write mask can be literally anything. */
+  auto readMask = [opCode] {
+    switch (opCode) {
+    case OpCode::eDp2Add: return util::makeWriteMaskForComponents(2u);
+    case OpCode::eDp3: return util::makeWriteMaskForComponents(3u);
+    case OpCode::eDp4: return util::makeWriteMaskForComponents(4u);
+    default: break;
+    }
+
+    dxbc_spv_unreachable();
+    return WriteMask();
+  } ();
+
+  /* Load source vectors and pass them to the internal dot instruction as they are */
+  const auto& dst = op.getDst();
+
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+
+  auto vectorA = loadSrcModified(builder, op, op.getSrc(0u), readMask, scalarType);
+  auto vectorB = loadSrcModified(builder, op, op.getSrc(1u), readMask, scalarType);
+
+  auto result = builder.add(ir::Op::FDotLegacy(scalarType, vectorA, vectorB));
+
+  if (opCode == OpCode::eDp2Add) {
+    auto summandC = loadSrcModified(builder, op, op.getSrc(2u), WriteMask(ComponentBit::eX), scalarType);
+    result = builder.add(ir::Op::FAdd(scalarType, result, summandC));
+  }
+
+  result = broadcastScalar(builder, result, dst.getWriteMask(m_parser.getShaderInfo()));
+  return storeDstModifiedPredicated(builder, op, dst, result);
+}
 
 ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask) {
   auto modifiedDef = def;
