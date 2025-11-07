@@ -92,11 +92,21 @@ private:
     return m_parser.getShaderInfo();
   }
 
+  bool handleMov(ir::Builder& builder, const Instruction& op);
+
+  bool handleArithmetic(ir::Builder& builder, const Instruction& op);
+
   ir::SsaDef applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask);
+
+  ir::SsaDef applyDstModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand);
 
   ir::SsaDef loadSrc(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, Swizzle swizzle, ir::ScalarType type);
 
   ir::SsaDef loadSrcModified(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::ScalarType type);
+
+  bool storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef value);
+
+  bool storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef value);
 
   ir::SsaDef broadcastScalar(ir::Builder& builder, ir::SsaDef def, WriteMask mask);
 
