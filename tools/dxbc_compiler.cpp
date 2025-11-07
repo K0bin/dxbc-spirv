@@ -20,6 +20,8 @@
 #include "../dxbc/dxbc_parser.h"
 #include "../dxbc/dxbc_signature.h"
 
+#include "../sm3/sm3_converter.h"
+
 #include "../spirv/spirv_builder.h"
 #include "../spirv/spirv_mapping.h"
 
@@ -66,6 +68,40 @@ private:
   std::string m_fileName;
   bool        m_debugLog = false;
 
+};
+
+
+struct SemanticHash
+{
+  std::size_t operator()(const sm3::Semantic& s) const noexcept
+  {
+    std::size_t h1 = std::hash<uint32_t>{}(s.index);
+    std::size_t h2 = std::hash<uint32_t>{}(uint32_t(s.usage));
+    return util::hash_combine(h1, h2);
+  }
+};
+
+
+class SM3SemanticMap : public sm3::IoSemanticMap
+{
+  public:
+
+  SM3SemanticMap() { }
+
+  uint32_t getIoLocation(sm3::Semantic semantic) override {
+    auto existing = m_map.find(semantic);
+    if (existing != m_map.end())
+      return existing->second;
+
+    uint32_t location = uint32_t(m_map.size());
+    m_map.insert(std::make_pair(semantic, location));
+
+    return location;
+  }
+
+private:
+
+  std::unordered_map<sm3::Semantic, uint32_t, SemanticHash> m_map = { };
 };
 
 
@@ -221,34 +257,44 @@ bool compileShader(util::ByteReader reader, const Options& options) {
   ir::Builder builder;
 
   if (!options.irInput) {
-    /* Parse file header */
-    dxbc::Container container(reader);
-
-    if (!container) {
-      std::cerr << "Error: " << options.input << " is not a valid dxbc file." << std::endl;
-      return false;
-    }
-
-    /* Work out shader name based on the file hash */
-    auto name = [&] {
-      std::stringstream stream;
-      stream << container.getHash();
-      return stream.str();
-    } ();
-
-    /* Set up conversion options */
-    dxbc::Converter::Options dxbcOptions = { };
-    dxbcOptions.includeDebugNames = !options.noDebug;
-    dxbcOptions.name = name.c_str();
-
-    dxbc::Converter converter(std::move(container), dxbcOptions);
-
     bool status = false;
 
-    if (options.gsPassthrough)
-      status = converter.createPassthroughGs(builder);
-    else
+    if (!dxbc::Container::checkFourCC(reader)) {
+      sm3::Converter::Options sm3Options = { };
+      sm3Options.includeDebugNames = !options.noDebug;
+
+      auto ioMap = SM3SemanticMap();
+      sm3::Converter converter(reader, ioMap, sm3Options);
+
       status = converter.convertShader(builder);
+    } else {
+      /* Parse file header */
+      dxbc::Container container(reader);
+
+      if (!container) {
+        std::cerr << "Error: " << options.input << " is not a valid dxbc file." << std::endl;
+        return false;
+      }
+
+      /* Work out shader name based on the file hash */
+      auto name = [&] {
+        std::stringstream stream;
+        stream << container.getHash();
+        return stream.str();
+      } ();
+
+      /* Set up conversion options */
+      dxbc::Converter::Options dxbcOptions = { };
+      dxbcOptions.includeDebugNames = !options.noDebug;
+      dxbcOptions.name = name.c_str();
+
+      dxbc::Converter converter(std::move(container), dxbcOptions);
+
+      if (options.gsPassthrough)
+        status = converter.createPassthroughGs(builder);
+      else
+        status = converter.convertShader(builder);
+    }
 
     if (!status) {
       std::cerr << "Error: Failed to convert shader." << std::endl;
