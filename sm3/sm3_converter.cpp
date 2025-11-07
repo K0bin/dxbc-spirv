@@ -380,8 +380,7 @@ ir::SsaDef Converter::applyDstModifiers(ir::Builder& builder, ir::SsaDef def, co
             ? 1.0f / (1 << -shift)
             : float(1 << shift);
 
-    auto shiftConst = builder.add(ir::Op::Constant(shiftAmount));
-    def = builder.add(ir::Op::FMulLegacy(type, def, makeTypedConstant(builder, type, shiftConst)));
+    def = builder.add(ir::Op::FMulLegacy(type, def, makeTypedConstant(builder, type, shiftAmount)));
   }
 
   /* Saturate dst */
