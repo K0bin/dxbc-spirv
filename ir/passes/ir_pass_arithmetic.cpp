@@ -390,6 +390,16 @@ Builder::iterator ArithmeticPass::lowerMulLegacy(Builder::iterator op) {
 }
 
 
+Builder::iterator ArithmeticPass::lowerPowLegacy(Builder::iterator op) {
+  const auto& base = m_builder.getOpForOperand(*op, 0u);
+  const auto& exponent = m_builder.getOpForOperand(*op, 0u);
+
+  // TODO
+
+  return ++op;
+}
+
+
 Builder::iterator ArithmeticPass::lowerDot(Builder::iterator op) {
   const auto& srcA = m_builder.getOpForOperand(*op, 0u);
   const auto& srcB = m_builder.getOpForOperand(*op, 1u);

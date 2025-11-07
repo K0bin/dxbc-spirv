@@ -135,6 +135,8 @@ private:
 
   Builder::iterator lowerInputBuiltIn(Builder::iterator op);
 
+  Builder::iterator lowerPowLegacy(Builder::iterator op);
+
   Op emitMulLegacy(const Type& type, SsaDef a, SsaDef b);
 
   Op emitMadLegacy(const Type& type, SsaDef a, SsaDef b, SsaDef c);
