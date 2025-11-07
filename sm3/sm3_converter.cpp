@@ -76,6 +76,21 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eDcl:
       return m_ioMap.handleDclIoVar(builder, op);
 
+    case OpCode::eMov:
+    case OpCode::eMova:
+      return handleMov(builder, op);
+
+    case OpCode::eAdd:
+    case OpCode::eExp:
+    case OpCode::eFrc:
+    case OpCode::eLog:
+    case OpCode::eMax:
+    case OpCode::eMin:
+    case OpCode::eMul:
+    case OpCode::eRcp:
+    case OpCode::eRsq:
+      return handleArithmetic(builder, op);
+
     default:
       break;
   }
@@ -132,6 +147,96 @@ bool Converter::initParser(Parser& parser, util::ByteReader reader) {
   }
 
   return true;
+}
+
+
+bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
+  /* Mov always moves data from a float register to another float register.
+   * There's just one exception: mova moves data from a float register to an address register
+   * and rounds the float (RTN) in the process.
+   * On SM1.1 mova doesn't exist and the regular mov has that responsibility. */
+
+  const auto& dst = op.getDst();
+  const auto& src = op.getSrc(0u);
+
+  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+
+  /* Even when writing the address register, we need to load it as a float to round properly. */
+  auto type = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+
+  auto value = loadSrcModified(builder, op, src, writeMask, type);
+
+  if (!value)
+    return false;
+
+  /* Mova writes to the address register. On <= SM2.1 mov *can* write to the address register. */
+  if (dst.getRegisterType() == RegisterType::eAddr) {
+    std::array<ir::SsaDef, 4u> components = { };
+    for (auto c : writeMask) {
+      auto componentIndex = uint8_t(util::componentFromBit(c));
+      auto componentConstant = builder.add(ir::Op::Constant(componentIndex));
+      auto scalarValue = builder.add(ir::Op::CompositeExtract(type, value, componentConstant));
+
+      ir::SsaDef roundedValue;
+      if (m_parser.getShaderInfo().getVersion().first < 2 && m_parser.getShaderInfo().getVersion().second < 2)
+        roundedValue = builder.add(ir::Op::FRound(type, scalarValue, ir::RoundMode::eZero));
+      else
+        roundedValue = builder.add(ir::Op::FRound(type, scalarValue, ir::RoundMode::eNearestEven));
+
+      components[componentIndex] = builder.add(ir::Op::Cast(ir::ScalarType::eI32, roundedValue));
+    }
+    value = buildVector(builder, ir::ScalarType::eI32, util::popcnt(uint8_t(writeMask)), components.data());
+  }
+
+  return storeDstModifiedPredicated(builder, op, dst, value);
+}
+
+
+bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
+  /* All instructions handled here will operate on float vectors of any kind. */
+  auto opCode = op.getOpCode();
+
+  dxbc_spv_assert(op.getSrcCount());
+
+  /* Instruction type */
+  const auto& dst = op.getDst();
+
+  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+  auto vectorType = makeVectorType(scalarType, writeMask);
+
+  /* Load source operands */
+  util::small_vector<ir::SsaDef, 2u> src;
+
+  for (uint32_t i = 0u; i < op.getSrcCount(); i++) {
+    auto value = loadSrcModified(builder, op, op.getSrc(i), writeMask, scalarType);
+
+    if (!value)
+      return false;
+
+    src.push_back(value);
+  }
+
+  ir::Op result = [opCode, vectorType, &src] {
+    switch (opCode) {
+      case OpCode::eAdd:        return ir::Op::FAdd(vectorType, src.at(0u), src.at(1u));
+      case OpCode::eExp:        return ir::Op::FExp2(vectorType, src.at(0u));
+      case OpCode::eFrc:        return ir::Op::FFract(vectorType, src.at(0u));
+      case OpCode::eLog:        return ir::Op::FLog2(vectorType, src.at(0u));
+      case OpCode::eMax:        return ir::Op::FMax(vectorType, src.at(0u), src.at(1u));
+      case OpCode::eMin:        return ir::Op::FMin(vectorType, src.at(0u), src.at(1u));
+      case OpCode::eMul:        return ir::Op::FMulLegacy(vectorType, src.at(0u), src.at(1u));
+      case OpCode::eRcp:        return ir::Op::FRcp(vectorType, src.at(0u));
+      case OpCode::eRsq:        return ir::Op::FRsq(vectorType, src.at(0u));
+      default: break;
+    }
+
+    dxbc_spv_unreachable();
+    return ir::Op();
+  } ();
+
+  return storeDstModifiedPredicated(builder, op, dst, builder.add(std::move(result)));
 }
 
 
@@ -254,6 +359,46 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
 }
 
 
+ir::SsaDef Converter::applyDstModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand) {
+  ir::Op op = builder.getOp(def);
+  auto type = op.getType().getBaseType(0u);
+  int8_t shift = operand.getShift();
+
+  /* Handle unknown type */
+  if (type.isUnknownType() && (shift != 0 || operand.isSaturated())) {
+    type = makeVectorType(ir::ScalarType::eF32, operand.getWriteMask(m_parser.getShaderInfo()));
+    def = builder.add(ir::Op::ConsumeAs(type, def));
+  }
+
+  /* Apply shift */
+  if (shift != 0) {
+    if (!type.isFloatType()) {
+      logOpMessage(LogLevel::eWarn, instruction, "Shift applied to a non-float result.");
+    }
+
+    float shiftAmount = shift < 0
+            ? 1.0f / (1 << -shift)
+            : float(1 << shift);
+
+    auto shiftConst = builder.add(ir::Op::Constant(shiftAmount));
+    def = builder.add(ir::Op::FMulLegacy(type, def, makeTypedConstant(builder, type, shiftConst)));
+  }
+
+  /* Saturate dst */
+  if (operand.isSaturated()) {
+    if (!type.isFloatType()) {
+      logOpMessage(LogLevel::eWarn, instruction, "Saturation applied to a non-float result.");
+    }
+
+    def = builder.add(ir::Op::FClamp(type, def,
+      makeTypedConstant(builder, type, 0.0f),
+      makeTypedConstant(builder, type, 1.0f)));
+  }
+
+  return def;
+}
+
+
 ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, Swizzle swizzle, ir::ScalarType type) {
   auto loadDef = ir::SsaDef();
 
@@ -324,6 +469,34 @@ ir::SsaDef Converter::loadSrcModified(ir::Builder& builder, const Instruction& o
   }
 
   return modified;
+}
+
+
+bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef value) {
+  auto writeMask = operand.getWriteMask(m_parser.getShaderInfo());
+
+  switch (operand.getRegisterType()) {
+    case RegisterType::eTemp:
+      return m_regFile.emitStore(builder, operand, value);
+
+    case RegisterType::eOutput:
+    case RegisterType::eRasterizerOut:
+    case RegisterType::eAttributeOut:
+    case RegisterType::eColorOut:
+    case RegisterType::eDepthOut:
+      return m_ioMap.emitStore(builder, op, operand, value);
+
+    default: {
+      auto name = makeRegisterDebugName(operand.getRegisterType(), 0u, writeMask);
+      logOpError(op, "Unhandled destination operand: ", name);
+    } return false;
+  }
+}
+
+
+bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef value) {
+  value = applyDstModifiers(builder, value, op, operand);
+  return storeDst(builder, op, operand, value);
 }
 
 
