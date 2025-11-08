@@ -1066,9 +1066,9 @@ enum class OpCode : uint16_t {
   eFClamp                       = 692u,
   eFSin                         = 693u,
   eFCos                         = 694u,
-  eFPow                         = 696u,
-  eFPowLegacy                   = 697u,
-  eFSgn                         = 698u,
+  eFPow                         = 695u,
+  eFPowLegacy                   = 696u,
+  eFSgn                         = 697u,
 
   eIAnd                         = 704u,
   eIOr                          = 705u,
