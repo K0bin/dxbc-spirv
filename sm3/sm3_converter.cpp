@@ -957,7 +957,7 @@ void Converter::logOp(LogLevel severity, const Instruction& op) const {
   options.lineNumbers = false;
 
   Disassembler disasm(options, m_parser.getShaderInfo());
-  auto instruction = disasm.disassembleOp(op);
+  auto instruction = disasm.disassembleOp(op, m_ctab);
 
   Logger::log(severity, "Line ", m_instructionCount, ": ", instruction);
 }
