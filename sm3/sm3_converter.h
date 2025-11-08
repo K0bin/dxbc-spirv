@@ -4,6 +4,7 @@
 #include "sm3_semantic_map.h"
 #include "sm3_io_map.h"
 #include "sm3_registers.h"
+#include "sm3_spec_constants.h"
 
 #include "../ir/ir_builder.h"
 
@@ -42,7 +43,7 @@ public:
     FloatEmulation floatEmulation;
   };
 
-  Converter(util::ByteReader code, IoSemanticMap& semanticMap, const Options& options);
+  Converter(util::ByteReader code, IoSemanticMap& semanticMap, SpecializationConstantLayout& specConstantsLayout, const Options& options);
 
   ~Converter();
 
@@ -68,6 +69,8 @@ private:
   Parser           m_parser;
 
   uint32_t m_instructionCount = 0u;
+
+  SpecializationConstantsMap m_specConstants;
 
   /* Entry point definition and function definitions. */
   struct {

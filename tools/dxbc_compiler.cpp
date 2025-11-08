@@ -82,9 +82,9 @@ struct SemanticHash
 };
 
 
-class SM3SemanticMap : public sm3::IoSemanticMap
-{
-  public:
+class SM3SemanticMap : public sm3::IoSemanticMap {
+
+public:
 
   SM3SemanticMap() { }
 
@@ -102,6 +102,21 @@ class SM3SemanticMap : public sm3::IoSemanticMap
 private:
 
   std::unordered_map<sm3::Semantic, uint32_t, SemanticHash> m_map = { };
+};
+
+class SM3SpecConstantsLayout : public sm3::SpecializationConstantLayout {
+
+public:
+
+  SM3SpecConstantsLayout() { }
+
+  uint32_t getOptimizedDwordOffset() const override {
+    return 1u;
+  }
+
+  sm3::SpecializationConstantBits getSpecConstantLayout(sm3::SpecConstantId id) const override {
+    return { 0u, 0u, 32u };
+  }
 };
 
 
@@ -264,7 +279,8 @@ bool compileShader(util::ByteReader reader, const Options& options) {
       sm3Options.includeDebugNames = !options.noDebug;
 
       auto ioMap = SM3SemanticMap();
-      sm3::Converter converter(reader, ioMap, sm3Options);
+      auto specConstLayout = SM3SpecConstantsLayout();
+      sm3::Converter converter(reader, ioMap, specConstLayout, sm3Options);
 
       status = converter.convertShader(builder);
     } else {
