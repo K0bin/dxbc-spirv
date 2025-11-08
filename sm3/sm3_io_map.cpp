@@ -292,9 +292,8 @@ bool IoMap::emitStore(
         ir::Builder&            builder,
   const Instruction&            op,
   const Operand&                operand,
+        WriteMask               writeMask,
         ir::SsaDef              value) {
-  WriteMask writeMask = operand.getWriteMask(m_converter.getShaderInfo());
-
   if (!operand.hasRelativeAddressing()) {
     const IoVarInfo* ioVar = findIoVar(m_variables, operand.getRegisterType(), operand.getIndex());
     if (ioVar == nullptr) {
