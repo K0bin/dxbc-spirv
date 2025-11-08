@@ -48,7 +48,7 @@ bool Converter::convertShader(ir::Builder& builder) {
   if (!initParser(m_parser, m_code))
     return false;
 
-  auto shaderType = m_parser.getShaderInfo().getType();
+  auto shaderType = getShaderInfo().getType();
 
   initialize(builder, shaderType);
 
@@ -250,7 +250,7 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.getSrcCount() == 1u);
   dxbc_spv_assert(op.hasDst());
 
-  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  WriteMask writeMask = dst.getWriteMask(getShaderInfo());
 
   /* Even when writing the address register, we need to load it as a float to round properly. */
   auto type = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
@@ -269,7 +269,7 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
       auto scalarValue = builder.add(ir::Op::CompositeExtract(type, value, componentConstant));
 
       ir::SsaDef roundedValue;
-      if (m_parser.getShaderInfo().getVersion().first < 2 && m_parser.getShaderInfo().getVersion().second < 2)
+      if (getShaderInfo().getVersion().first < 2 && getShaderInfo().getVersion().second < 2)
         roundedValue = builder.add(ir::Op::FRound(type, scalarValue, ir::RoundMode::eZero));
       else
         roundedValue = builder.add(ir::Op::FRound(type, scalarValue, ir::RoundMode::eNearestEven));
@@ -293,7 +293,7 @@ bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
   /* Instruction type */
   const auto& dst = op.getDst();
 
-  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  WriteMask writeMask = dst.getWriteMask(getShaderInfo());
 
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   auto vectorType = makeVectorType(scalarType, writeMask);
@@ -343,7 +343,7 @@ bool Converter::handleMad(ir::Builder& builder, const Instruction& op) {
   /* Instruction type */
   const auto& dst = op.getDst();
 
-  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  WriteMask writeMask = dst.getWriteMask(getShaderInfo());
 
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   auto vectorType = makeVectorType(scalarType, writeMask);
@@ -400,7 +400,7 @@ bool Converter::handleDot(ir::Builder& builder, const Instruction& op) {
     result = builder.add(ir::Op::FAdd(scalarType, result, summandC));
   }
 
-  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  WriteMask writeMask = dst.getWriteMask(getShaderInfo());
   result = broadcastScalar(builder, result, writeMask);
   return storeDstModifiedPredicated(builder, op, dst, writeMask, result);
 }
@@ -416,7 +416,7 @@ bool Converter::handleCompare(ir::Builder& builder, const Instruction& op) {
   /* Instruction type */
   const auto& dst = op.getDst();
 
-  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  WriteMask writeMask = dst.getWriteMask(getShaderInfo());
 
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   auto boolType = makeVectorType(ir::ScalarType::eBool, writeMask);
@@ -478,7 +478,7 @@ bool Converter::handleMatrixArithmetic(ir::Builder& builder, const Instruction& 
   /* Instruction type */
   const auto& dst = op.getDst();
 
-  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  WriteMask writeMask = dst.getWriteMask(getShaderInfo());
 
   /* Fix the write mask if it writes more components than the matrix has rows. */
   WriteMask maxWriteMask = WriteMask((1u << rowCount) - 1u);
@@ -511,7 +511,7 @@ bool Converter::handleMatrixArithmetic(ir::Builder& builder, const Instruction& 
 
 bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
   const auto& dst = op.getDst();
-  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  WriteMask writeMask = dst.getWriteMask(getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   auto src = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
 
@@ -721,7 +721,7 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
 
     case RegisterType::eAddr:
     // case RegisterType::eTexture: Same Value
-      if (m_parser.getShaderInfo().getType() == ShaderType::eVertex)
+      if (getShaderInfo().getType() == ShaderType::eVertex)
         loadDef = m_regFile.emitLoad(builder, operand, mask, type); // RegisterType::eAddr
       else
         loadDef = m_ioMap.emitLoad(builder, op, operand, mask, swizzle, type); // RegisterType::eTexture
@@ -758,7 +758,7 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
 
 
 ir::SsaDef Converter::loadSrcModified(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::ScalarType type) {
-  Swizzle swizzle = operand.getSwizzle(m_parser.getShaderInfo());
+  Swizzle swizzle = operand.getSwizzle(getShaderInfo());
   Swizzle originalSwizzle = swizzle;
   WriteMask originalMask = mask;
   // If the modifier divides by one of the components, that component needs to be loaded.
@@ -956,7 +956,7 @@ void Converter::logOp(LogLevel severity, const Instruction& op) const {
   options.indent = false;
   options.lineNumbers = false;
 
-  Disassembler disasm(options, m_parser.getShaderInfo());
+  Disassembler disasm(options, getShaderInfo());
   auto instruction = disasm.disassembleOp(op, m_ctab);
 
   Logger::log(severity, "Line ", m_instructionCount, ": ", instruction);
@@ -964,7 +964,7 @@ void Converter::logOp(LogLevel severity, const Instruction& op) const {
 
 
 std::string Converter::makeRegisterDebugName(RegisterType type, uint32_t index, WriteMask mask) const {
-  auto shaderInfo = m_parser.getShaderInfo();
+  auto shaderInfo = getShaderInfo();
 
   std::stringstream name;
   name << UnambiguousRegisterType { type, shaderInfo.getType(), shaderInfo.getVersion().first };
