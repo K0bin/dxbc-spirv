@@ -33,6 +33,7 @@ public:
   bool emitStore(
           ir::Builder&            builder,
     const Operand&                operand,
+          WriteMask               writeMask,
           ir::SsaDef              value);
 
 private:

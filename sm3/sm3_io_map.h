@@ -110,6 +110,7 @@ public:
           ir::Builder&            builder,
     const Instruction&            op,
     const Operand&                operand,
+          WriteMask               writeMask,
           ir::SsaDef              value);
 
 private:

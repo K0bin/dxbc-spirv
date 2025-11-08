@@ -108,8 +108,8 @@ ir::SsaDef RegisterFile::emitLoad(
 bool RegisterFile::emitStore(
           ir::Builder&            builder,
     const Operand&                operand,
+          WriteMask               writeMask,
           ir::SsaDef              value) {
-  auto writeMask = operand.getWriteMask(m_converter.getShaderInfo());
   const auto& valueDef = builder.getOp(value);
   auto valueType = valueDef.getType().getBaseType(0u);
 
