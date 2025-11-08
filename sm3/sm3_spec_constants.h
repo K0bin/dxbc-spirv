@@ -38,11 +38,9 @@ class SpecializationConstantLayout {
 
 public:
 
-  SpecializationConstantLayout() = delete;
+  virtual SpecializationConstantBits getSpecConstantLayout(SpecConstantId id) const = 0;
 
-  virtual SpecializationConstantBits getSpecConstantLayout(SpecConstantId id) = 0;
-
-  virtual uint32_t getOptimizedDwordOffset() = 0;
+  virtual uint32_t getOptimizedDwordOffset() const = 0;
 
 };
 
@@ -50,11 +48,14 @@ class SpecializationConstantsMap {
 
 public:
 
+  SpecializationConstantsMap(SpecializationConstantLayout& layout)
+  : m_layout(layout) { }
+
   ir::SsaDef get(ir::Builder& builder, ir::SsaDef entryPoint, ir::SsaDef specUbo, SpecConstantId id) {
     return get(builder, entryPoint, specUbo, id, 0, 32);
   }
 
-  ir::SsaDef get(ir::Builder& builder, ir::SsaDef entryPoint, ir::SsaDef specUbo, SpecConstantId id, uint32_t bitOffset, uint32_t bitCount, ir::SsaDef uboOverride = 0) {
+  ir::SsaDef get(ir::Builder& builder, ir::SsaDef entryPoint, ir::SsaDef specUbo, SpecConstantId id, uint32_t bitOffset, uint32_t bitCount, ir::SsaDef uboOverride = { }) {
     const auto &layout = m_layout.getSpecConstantLayout(id);
 
     auto optimized = getOptimizedBool(builder, entryPoint);
