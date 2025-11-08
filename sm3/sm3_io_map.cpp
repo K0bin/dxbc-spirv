@@ -211,6 +211,41 @@ void IoMap::dclIoVar(
   mapping.baseType = declaration.getType();
   mapping.baseDef = builder.add(std::move(declaration));
 
+
+  if (!isInput) {
+    if (semantic == Semantic { SemanticUsage::eColor, 0u }) {
+      /* The default for color 0 is 1.0, 1.0, 1.0, 1.0 */
+      std::array<ir::SsaDef, 4u> components = {
+        builder.add(ir::Op::Constant(1.0f)), builder.add(ir::Op::Constant(1.0f)),
+        builder.add(ir::Op::Constant(1.0f)), builder.add(ir::Op::Constant(1.0f)),
+      };
+      builder.add(ir::Op::OutputStore(mapping.baseDef, ir::SsaDef(),
+        m_converter.buildVector(builder, ir::ScalarType::eF32, 4u, components.data())));
+    } else if (semantic.usage == SemanticUsage::eColor) {
+      /* The default for other color registers is 0.0, 0.0, 0.0, 1.0.
+       * TODO: If it's used with a SM3 PS, we need to export 0,0,0,0 as the default for color1.
+       *       Implement that using a spec constant. */
+      std::array<ir::SsaDef, 4u> components = {
+        builder.add(ir::Op::Constant(0.0f)), builder.add(ir::Op::Constant(0.0f)),
+        builder.add(ir::Op::Constant(0.0f)), builder.add(ir::Op::Constant(1.0f)),
+      };
+      builder.add(ir::Op::OutputStore(mapping.baseDef, ir::SsaDef(),
+        m_converter.buildVector(builder, ir::ScalarType::eF32, 4u, components.data())));
+    } else if (semantic.usage == SemanticUsage::eFog || isScalar) {
+      /* The default for the fog register is 0.0 */
+      builder.add(ir::Op::OutputStore(mapping.baseDef, ir::SsaDef(),
+        builder.add(ir::Op::Constant(0.0f))));
+    } else {
+      /* The default for other registers is 0.0, 0.0, 0.0, 0.0 */
+      std::array<ir::SsaDef, 4u> components = {
+        builder.add(ir::Op::Constant(0.0f)), builder.add(ir::Op::Constant(0.0f)),
+        builder.add(ir::Op::Constant(0.0f)), builder.add(ir::Op::Constant(0.0f)),
+      };
+      builder.add(ir::Op::OutputStore(mapping.baseDef, ir::SsaDef(),
+        m_converter.buildVector(builder, ir::ScalarType::eF32, 4u, components.data())));
+    }
+  }
+
   emitDebugName(
     builder,
     mapping.baseDef,
@@ -221,6 +256,55 @@ void IoMap::dclIoVar(
     isInput
   );
 }
+
+
+bool IoMap::determineSemanticForRegister(RegisterType regType, uint32_t regIndex, Semantic* semantic) {
+  switch (regType) {
+    case RegisterType::eColorOut:
+      *semantic = Semantic { SemanticUsage::eColor, regIndex };
+      return true;
+
+    case RegisterType::eInput:
+      *semantic = Semantic { SemanticUsage::eColor, regIndex };
+      return true;
+
+    case RegisterType::eTexCoordOut:
+      *semantic = Semantic { SemanticUsage::eTexCoord, regIndex };
+      return true;
+
+    case RegisterType::ePixelTexCoord:
+      *semantic = Semantic { SemanticUsage::eTexCoord, regIndex };
+      return true;
+
+    case RegisterType::eAttributeOut:
+      switch (regIndex) {
+        case uint32_t(RasterizerOutIndex::eRasterOutFog):
+            *semantic = Semantic { SemanticUsage::eFog, 0u };
+            return true;
+        case uint32_t(RasterizerOutIndex::eRasterOutPointSize):
+            *semantic = Semantic { SemanticUsage::ePointSize, 0u };
+            return true;
+        case uint32_t(RasterizerOutIndex::eRasterOutPosition):
+            *semantic = Semantic { SemanticUsage::ePosition, 0u };
+            return true;
+      }
+      break;
+
+    case RegisterType::eMiscType:
+      switch (regIndex) {
+        case uint32_t(MiscTypeIndex::eMiscTypePosition):
+            *semantic = Semantic { SemanticUsage::ePosition, 0u };
+            return true;
+        case uint32_t(MiscTypeIndex::eMiscTypeFace):
+            /* There is no semantic usage for the front face. */
+            break;
+      }
+      break;
+  }
+
+  return false;
+}
+
 
 
 ir::SsaDef IoMap::emitLoad(
@@ -234,8 +318,14 @@ ir::SsaDef IoMap::emitLoad(
   if (!operand.hasRelativeAddressing()) {
     const IoVarInfo* ioVar = findIoVar(m_variables, operand.getRegisterType(), operand.getIndex());
     if (ioVar == nullptr) {
-      auto name = m_converter.makeRegisterDebugName(operand.getRegisterType(), operand.getIndex(), componentMask);
-      m_converter.logOpError(op, "Failed to process I/O load: ", name);
+      Semantic semantic;
+      bool foundSemantic = determineSemanticForRegister(operand.getRegisterType(), operand.getIndex(), &semantic);
+      if (!foundSemantic) {
+        m_converter.logOpError(op, "Failed to process I/O load.");
+      } else {
+        dclIoVar(builder, operand.getRegisterType(), operand.getIndex(), semantic,  WriteMask(ComponentBit::eAll));
+        ioVar = &m_variables.back();
+      }
     }
 
     for (auto c : swizzle.getReadMask(componentMask)) {
@@ -297,8 +387,14 @@ bool IoMap::emitStore(
   if (!operand.hasRelativeAddressing()) {
     const IoVarInfo* ioVar = findIoVar(m_variables, operand.getRegisterType(), operand.getIndex());
     if (ioVar == nullptr) {
-      m_converter.logOpError(op, "Failed to process I/O load.");
-      return false;
+      Semantic semantic;
+      bool foundSemantic = determineSemanticForRegister(operand.getRegisterType(), operand.getIndex(), &semantic);
+      if (!foundSemantic) {
+        m_converter.logOpError(op, "Failed to process I/O store.");
+        return false;
+      }
+      dclIoVar(builder, operand.getRegisterType(), operand.getIndex(), semantic,  WriteMask(ComponentBit::eAll));
+      ioVar = &m_variables.back();
     }
 
     bool isOutput = ioVar->registerType == RegisterType::eOutput
@@ -313,6 +409,11 @@ bool IoMap::emitStore(
       if (ioVar->baseType.isVectorType()) {
         auto componentIndexConst = builder.add(ir::Op::Constant(componentIndex));
         valueScalar = builder.add(ir::Op::CompositeExtract(scalarType, value, componentIndexConst));
+      }
+      if (ioVar->semantic.usage == SemanticUsage::eColor && ioVar->semantic.index < 2 && m_converter.getShaderInfo().getVersion().first < 3) {
+        // The color register cannot be dynamically indexed, so there's no need to do this in the dynamic store function.
+        valueScalar = builder.add(ir::Op::FClamp(scalarType, valueScalar,
+          builder.add(ir::Op::Constant(0.0f)), builder.add(ir::Op::Constant(1.0f))));
       }
       builder.add(ir::Op::OutputStore(ioVar->baseDef, dstComponentIndexConst, valueScalar));
       componentIndex++;

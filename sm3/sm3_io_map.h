@@ -136,11 +136,14 @@ private:
   /** Turns a front face boolean into a float. 1.0 for the front face, -1.0 for the back face. */
   ir::SsaDef emitFrontFaceFloat(ir::Builder& builder, ir::SsaDef isFrontFaceDef) const;
 
- /* Looks up matching I/O variable in the given list. */
+ /** Looks up matching I/O variable in the given list. */
  IoVarInfo* findIoVar(IoVarList& list, RegisterType regType, uint32_t regIndex);
 
-  /* Converts input to the given scalar type. */
+  /** Converts input to the given scalar type. */
   ir::SsaDef convertScalar(ir::Builder& builder, ir::ScalarType dstType, ir::SsaDef value);
+
+ /** Determines the appropriate semantic for a given register in shader model 1/2 */
+ bool determineSemanticForRegister(RegisterType regType, uint32_t regIndex, Semantic* semantic);
 
   void emitDebugName(
     ir::Builder& builder,
