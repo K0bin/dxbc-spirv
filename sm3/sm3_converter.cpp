@@ -31,12 +31,16 @@ namespace dxbc_spv::sm3 {
  *   Everything else. Has partial precision flag in Dst operand.
  */
 
-Converter::Converter(util::ByteReader code, IoSemanticMap& semanticMap, const Options &options)
+Converter::Converter(util::ByteReader code,
+  IoSemanticMap& semanticMap,
+  SpecializationConstantLayout& specConstantsLayout,
+  const Options &options)
 : m_code(code)
 , m_options(options)
 , m_semanticMap(semanticMap)
 , m_regFile(*this)
-, m_ioMap(*this) {
+, m_ioMap(*this)
+, m_specConstants(specConstantsLayout) {
 
 }
 
