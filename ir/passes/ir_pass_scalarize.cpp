@@ -118,6 +118,7 @@ void ScalarizePass::scalarizeVectorOps() {
       case OpCode::eFCos:
       case OpCode::eFPow:
       case OpCode::eFPowLegacy:
+      case OpCode::eFSgn:
       case OpCode::eUMSad:
       case OpCode::eIAddCarry:
       case OpCode::eISubBorrow:
