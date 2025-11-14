@@ -4,6 +4,7 @@
 #include "sm3_semantic_map.h"
 #include "sm3_io_map.h"
 #include "sm3_registers.h"
+#include "sm3_resources.h"
 #include "sm3_spec_constants.h"
 
 #include "../ir/ir_builder.h"
@@ -28,6 +29,7 @@ enum class FloatEmulation {
 class Converter {
   friend IoMap;
   friend RegisterFile;
+  friend ResourceMap;
 
 public:
 
@@ -67,6 +69,7 @@ private:
   RegisterFile     m_regFile;
   IoMap            m_ioMap;
   Parser           m_parser;
+  ResourceMap      m_resources;
 
   uint32_t m_instructionCount = 0u;
 
@@ -108,6 +111,10 @@ private:
   bool handleMatrixArithmetic(ir::Builder& builder, const Instruction& op);
 
   bool handleLit(ir::Builder& builder, const Instruction& op);
+
+  bool handleTexCoord(ir::Builder& builder, const Instruction& op);
+
+  bool handleSample(ir::Builder& builder, const Instruction& op);
 
   ir::SsaDef applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask);
 

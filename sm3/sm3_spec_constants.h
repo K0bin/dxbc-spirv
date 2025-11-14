@@ -70,8 +70,8 @@ public:
       return val;
 
     return builder.add(ir::Op::UBitExtract(ir::ScalarType::eU32, val,
-      builder.add(ir::Op::Constant(bitOffset + layout.bitOffset)),
-      builder.add(ir::Op::Constant(bitCount))));
+      builder.makeConstant(bitOffset + layout.bitOffset),
+      builder.makeConstant(bitCount)));
   }
 
 private:
@@ -84,7 +84,7 @@ private:
   }
 
   ir::SsaDef getSpecUBODword(ir::Builder& builder, ir::SsaDef specUbo, uint32_t idx) {
-    auto member = builder.add(ir::Op::Constant(idx));
+    auto member = builder.makeConstant(idx);
     auto dword = builder.add(ir::Op::BufferLoad(ir::ScalarType::eU32, specUbo, member, 4u));
 
     return dword;
@@ -94,7 +94,7 @@ private:
     // The spec constant at MaxNumSpecConstants is set to True
     // when this is an optimized pipeline.
     auto optimized = getSpecConstDword(builder, entryPoint, m_layout.getOptimizedDwordOffset());
-    optimized = builder.add(ir::Op::INe(ir::ScalarType::eBool, optimized, builder.add(ir::Op::Constant(0u))));
+    optimized = builder.add(ir::Op::INe(ir::ScalarType::eBool, optimized, builder.makeConstant(0u)));
 
     return optimized;
   }

@@ -216,8 +216,8 @@ void IoMap::dclIoVar(
     if (semantic == Semantic { SemanticUsage::eColor, 0u }) {
       /* The default for color 0 is 1.0, 1.0, 1.0, 1.0 */
       std::array<ir::SsaDef, 4u> components = {
-        builder.add(ir::Op::Constant(1.0f)), builder.add(ir::Op::Constant(1.0f)),
-        builder.add(ir::Op::Constant(1.0f)), builder.add(ir::Op::Constant(1.0f)),
+        builder.makeConstant(1.0f), builder.makeConstant(1.0f),
+        builder.makeConstant(1.0f), builder.makeConstant(1.0f),
       };
       builder.add(ir::Op::OutputStore(mapping.baseDef, ir::SsaDef(),
         m_converter.buildVector(builder, ir::ScalarType::eF32, 4u, components.data())));
@@ -226,20 +226,20 @@ void IoMap::dclIoVar(
        * TODO: If it's used with a SM3 PS, we need to export 0,0,0,0 as the default for color1.
        *       Implement that using a spec constant. */
       std::array<ir::SsaDef, 4u> components = {
-        builder.add(ir::Op::Constant(0.0f)), builder.add(ir::Op::Constant(0.0f)),
-        builder.add(ir::Op::Constant(0.0f)), builder.add(ir::Op::Constant(1.0f)),
+        builder.makeConstant(0.0f), builder.makeConstant(0.0f),
+        builder.makeConstant(0.0f), builder.makeConstant(1.0f),
       };
       builder.add(ir::Op::OutputStore(mapping.baseDef, ir::SsaDef(),
         m_converter.buildVector(builder, ir::ScalarType::eF32, 4u, components.data())));
     } else if (semantic.usage == SemanticUsage::eFog || isScalar) {
       /* The default for the fog register is 0.0 */
       builder.add(ir::Op::OutputStore(mapping.baseDef, ir::SsaDef(),
-        builder.add(ir::Op::Constant(0.0f))));
+        builder.makeConstant(0.0f)));
     } else {
       /* The default for other registers is 0.0, 0.0, 0.0, 0.0 */
       std::array<ir::SsaDef, 4u> components = {
-        builder.add(ir::Op::Constant(0.0f)), builder.add(ir::Op::Constant(0.0f)),
-        builder.add(ir::Op::Constant(0.0f)), builder.add(ir::Op::Constant(0.0f)),
+        builder.makeConstant(0.0f), builder.makeConstant(0.0f),
+        builder.makeConstant(0.0f), builder.makeConstant(0.0f),
       };
       builder.add(ir::Op::OutputStore(mapping.baseDef, ir::SsaDef(),
         m_converter.buildVector(builder, ir::ScalarType::eF32, 4u, components.data())));
@@ -339,7 +339,7 @@ ir::SsaDef IoMap::emitLoad(
       bool isFrontFaceBuiltin = ioVar->registerType == RegisterType::eMiscType && ioVar->registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace);
       ir::SsaDef value;
       if (!isFrontFaceBuiltin) {
-        ir::SsaDef addressConstant = builder.add(ir::Op::Constant(componentIndex));
+        ir::SsaDef addressConstant = builder.makeConstant(componentIndex);
         auto varScalarType = ioVar->baseType.getBaseType(0u).getBaseType();
         value = builder.add(ir::Op::InputLoad(varScalarType, ioVar->baseDef, addressConstant));
       } else {
@@ -355,7 +355,7 @@ ir::SsaDef IoMap::emitLoad(
   } else {
     dxbc_spv_assert(operand.getRegisterType() == RegisterType::eInput);
     dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 3);
-    auto index = builder.add(ir::Op::Constant(operand.getIndex()));
+    auto index = builder.makeConstant(operand.getIndex());
     ir::SsaDef registerValue = { }; // TODO
     index = builder.add(ir::Op::IAdd(ir::Type(ir::ScalarType::eU32), index, registerValue));
     dxbc_spv_assert(m_inputSwitchFunction);
@@ -366,7 +366,7 @@ ir::SsaDef IoMap::emitLoad(
       components[componentIndex] = convertScalar(
         builder,
         type,
-        builder.add(ir::Op::CompositeExtract(type, vec4Value, builder.add(ir::Op::Constant(componentIndex))))
+        builder.add(ir::Op::CompositeExtract(type, vec4Value, builder.makeConstant(componentIndex)))
       );
     }
   }
@@ -404,16 +404,16 @@ bool IoMap::emitStore(
     ir::Type scalarType = ioVar->baseType.isVectorType() ? ioVar->baseType.getBaseType(0u) : ioVar->baseType;
     uint32_t componentIndex = 0u;
     for (auto c : writeMask) {
-      auto dstComponentIndexConst = builder.add(ir::Op::Constant(uint32_t(util::componentFromBit(c))));
+      auto dstComponentIndexConst = builder.makeConstant(uint32_t(util::componentFromBit(c)));
       ir::SsaDef valueScalar = value;
       if (ioVar->baseType.isVectorType()) {
-        auto componentIndexConst = builder.add(ir::Op::Constant(componentIndex));
+        auto componentIndexConst = builder.makeConstant(componentIndex);
         valueScalar = builder.add(ir::Op::CompositeExtract(scalarType, value, componentIndexConst));
       }
       if (ioVar->semantic.usage == SemanticUsage::eColor && ioVar->semantic.index < 2 && m_converter.getShaderInfo().getVersion().first < 3) {
         // The color register cannot be dynamically indexed, so there's no need to do this in the dynamic store function.
         valueScalar = builder.add(ir::Op::FClamp(scalarType, valueScalar,
-          builder.add(ir::Op::Constant(0.0f)), builder.add(ir::Op::Constant(1.0f))));
+          builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
       }
       builder.add(ir::Op::OutputStore(ioVar->baseDef, dstComponentIndexConst, valueScalar));
       componentIndex++;
@@ -421,14 +421,14 @@ bool IoMap::emitStore(
   } else {
     dxbc_spv_assert(operand.getRegisterType() == RegisterType::eOutput);
     dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 3);
-    auto index = builder.add(ir::Op::Constant(operand.getIndex()));
+    auto index = builder.makeConstant(operand.getIndex());
     ir::SsaDef registerValue = { }; // TODO
     index = builder.add(ir::Op::IAdd(ir::ScalarType::eU32, index, registerValue));
     dxbc_spv_assert(m_outputSwitchFunction);
     uint32_t componentIndex = 0u;
     for (auto c : writeMask) {
-      auto dstComponentIndexConst = builder.add(ir::Op::Constant(uint32_t(util::componentFromBit(c))));
-      auto componentIndexConst = builder.add(ir::Op::Constant(componentIndex));
+      auto dstComponentIndexConst = builder.makeConstant(uint32_t(util::componentFromBit(c)));
+      auto componentIndexConst = builder.makeConstant(componentIndex);
       auto valueScalar = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, value, componentIndexConst));
       builder.add(ir::Op::FunctionCall(ir::Type(ir::ScalarType::eF32, 4u), m_outputSwitchFunction)
         .addOperand(index)
@@ -543,8 +543,8 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
 
 
 ir::SsaDef IoMap::emitFrontFaceFloat(ir::Builder &builder, ir::SsaDef isFrontFaceDef) const {
-  auto frontFaceValue = builder.add(ir::Op::Constant(1.0f));
-  auto backFaceValue = builder.add(ir::Op::Constant(-1.0f));
+  auto frontFaceValue = builder.makeConstant(1.0f);
+  auto backFaceValue = builder.makeConstant(-1.0f);
   return builder.add(ir::Op::Select(ir::ScalarType::eF32, isFrontFaceDef, frontFaceValue, backFaceValue));
 }
 
