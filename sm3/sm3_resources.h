@@ -12,7 +12,13 @@ namespace dxbc_spv::sm3 {
 
 class Converter;
 
-  /** Resource info */
+enum class SpecConstTextureType : uint32_t {
+  eTexture2D   = 0u,
+  eTextureCube = 1u,
+  eTexture3D   = 2u,
+};
+
+/** Resource info */
 struct ResourceInfo {
   /* Register / Resource type */
   RegisterType regType = { };
@@ -27,21 +33,15 @@ struct ResourceInfo {
   /* Resource kind being declared */
   ir::ResourceKind kind = { };
 
-  /* Declared data type of the resource.
-   *
-   * - For constant buffers, this is a vec4 array fo an unknown type.
-   * - For raw buffers, this is a plain unbounded array of unknown
-   *   type, and will likely be mapped to u32 down the line.
-   * - For structured buffers, this is an unbounded array of a sized
-   *   array of unknown type, which may be promoted to a structure.
-   * - For typed buffers and images, this is a scalar type that matches
-   *   the returned scalar type of any sample or read operations. */
+  /* Declared data type of the resource. */
   ir::Type type = { };
 
   /* Declarations for the resource itself. */
+  /* Primary resource. For sampler register this is the sampler. */
   ir::SsaDef resourceDef = { };
+  /* Additional resources. For sampler registers, these are one (SM2+) or more (SM1) textures. */
+  std::array<ir::SsaDef, 3u> additionalResourceDefs = { };
 };
-
 
 /** Retrieved typed resource parameters */
 struct ResourceProperties {
@@ -83,9 +83,11 @@ class ResourceMap {
     /** Loads a resource or sampler descriptor and retrieves basic
      *  properties required to perform any operations on typed resources. */
     ResourceProperties emitDescriptorLoad(
-            ir::Builder&            builder,
-      const Instruction&            op,
-      const Operand&                operand);
+            ir::Builder&                        builder,
+      const ResourceInfo*                       resourceInfo,
+            std::optional<SpecConstTextureType> specConstTextureType);
+
+  const ResourceInfo* getResourceInfo(const Operand& operand);
 
     /** Loads data from a constant buffer using one or more BufferLoad
      *  instruction. If possible this will emit a vectorized load. */
@@ -100,15 +102,29 @@ class ResourceMap {
 
   Converter& m_converter;
 
-  std::pair<ir::SsaDef, const ResourceInfo*> loadDescriptor(
-          ir::Builder&            builder,
-    const Instruction&            op,
-    const Operand&                operand);
+  util::small_vector<ResourceInfo, 256u> m_resources;
 
   void emitDebugName(
           ir::Builder&            builder,
     const ResourceInfo*           info);
 
+  bool matchesResource(
+    const Operand&                   operand,
+    const ResourceInfo&              info) const;
+
 };
+
+
+inline ir::ResourceKind resourceKindFromTextureType(TextureType textureType) {
+  switch (textureType) {
+    case TextureType::eTexture2D:
+      return ir::ResourceKind::eImage2D;
+    case TextureType::eTextureCube:
+      return ir::ResourceKind::eImageCube;
+    case TextureType::eTexture3D:
+      return ir::ResourceKind::eImage3D;
+  }
+  return ir::ResourceKind::eBufferRaw;
+}
 
 }

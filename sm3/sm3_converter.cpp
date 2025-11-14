@@ -133,6 +133,8 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
       return true;
 
     case OpCode::eTexCrd:
+      return handleTexCoord(builder, op);
+
     case OpCode::eTexKill:
     case OpCode::eTexLd:
     case OpCode::eTexBem:
@@ -269,7 +271,7 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
     std::array<ir::SsaDef, 4u> components = { };
     for (auto c : writeMask) {
       auto componentIndex = uint8_t(util::componentFromBit(c));
-      auto componentConstant = builder.add(ir::Op::Constant(componentIndex));
+      auto componentConstant = builder.makeConstant(componentIndex);
       auto scalarValue = builder.add(ir::Op::CompositeExtract(type, value, componentConstant));
 
       ir::SsaDef roundedValue;
@@ -519,19 +521,19 @@ bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   auto src = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
 
-  auto xConst = builder.add(ir::Op::Constant(0u));
-  auto yConst = builder.add(ir::Op::Constant(1u));
-  auto wConst = builder.add(ir::Op::Constant(3u));
+  auto xConst = builder.makeConstant(0u);
+  auto yConst = builder.makeConstant(1u);
+  auto wConst = builder.makeConstant(3u);
 
   auto srcX = builder.add(ir::Op::CompositeExtract(scalarType, src, xConst));
   auto srcY = builder.add(ir::Op::CompositeExtract(scalarType, src, yConst));
   auto srcW = builder.add(ir::Op::CompositeExtract(scalarType, src, wConst));
 
   auto power = builder.add(ir::Op::FClamp(scalarType, srcW,
-    builder.add(ir::Op::Constant(-127.9961f)), builder.add(ir::Op::Constant(127.9961f))));
+    builder.makeConstant(-127.9961f), builder.makeConstant(127.9961f)));
 
-  auto zeroFConst = builder.add(ir::Op::Constant(0.0f));
-  auto oneFConst = builder.add(ir::Op::Constant(1.0f));
+  auto zeroFConst = builder.makeConstant(0.0f);
+  auto oneFConst = builder.makeConstant(1.0f);
 
   util::small_vector<ir::SsaDef, 4u> components;
   if (writeMask & ComponentBit::eX)
@@ -553,6 +555,52 @@ bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
   auto result = buildVector(builder, scalarType, util::popcnt(uint8_t(writeMask)), components.data());
   return storeDstModifiedPredicated(builder, op, dst, writeMask, result);
 }
+
+
+bool Converter::handleTexCoord(ir::Builder &builder, const Instruction &op) {
+  const auto& dst = op.getDst();
+  WriteMask writeMask = dst.getWriteMask(getShaderInfo());
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+
+  if (getShaderInfo().getVersion().first >= 2 || getShaderInfo().getVersion().second >= 4) {
+    /* TexCrd (SM 1.4) */
+    auto src = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
+    return storeDstModifiedPredicated(builder, op, dst, writeMask, src);
+
+  } else {
+    /* TexCoord (SM 1.1 - 1.3) */
+    ir::BasicType vectorType = makeVectorType(scalarType, writeMask);
+    auto src = loadSrc(builder, op, op.getSrc(0u), writeMask, op.getSrc(0u).getSwizzle(getShaderInfo()), scalarType);
+
+    /* Saturate */
+    src = builder.add(ir::Op::FClamp(
+      vectorType,
+      src,
+      makeTypedConstant(builder, vectorType, 0.0f),
+      makeTypedConstant(builder, vectorType, 1.0f)
+    ));
+
+    /* w = 1.0 */
+    if (writeMask & ComponentBit::eW)
+      src = builder.add(ir::Op::CompositeInsert(vectorType, src, builder.makeConstant(3u), builder.makeConstant(1.0f)));
+
+    return storeDstModifiedPredicated(builder, op, dst, writeMask, src);
+  }
+}
+
+
+  bool Converter::handleSample(ir::Builder& builder, const Instruction& op) {
+  const auto& dst = op.getDst();
+  const auto& texture = op.getSrc(0u);
+  auto resourceInfo = m_resources.getResourceInfo(op.getSrc(0u));
+
+  if (getShaderInfo().getVersion().first >= 2) {
+    auto textureInfo = m_resources.emitDescriptorLoad(builder, resourceInfo,);
+  } else {
+
+  }
+}
+
 
 
 ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask) {
@@ -641,7 +689,7 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
         componentIndex++;
       }
 
-      auto indexConst = builder.add(ir::Op::Constant(componentIndex));
+      auto indexConst = builder.makeConstant(componentIndex);
       auto zComp = builder.add(ir::Op::CompositeExtract(type.getBaseType(), modifiedDef, indexConst));
       modifiedDef = builder.add(ir::Op::FDiv(type, modifiedDef, zComp));
     } break;
