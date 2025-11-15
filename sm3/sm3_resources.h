@@ -74,7 +74,7 @@ struct ResourceKey {
  *  Also takes care of textures getting accessed without getting declared first
  *  in SM1. On top of that it handles constant registers. */
 class ResourceMap {
-  public:
+public:
 
     explicit ResourceMap(Converter& converter);
 
@@ -89,16 +89,21 @@ class ResourceMap {
 
   const ResourceInfo* getResourceInfo(const Operand& operand);
 
-    /** Loads data from a constant buffer using one or more BufferLoad
-     *  instruction. If possible this will emit a vectorized load. */
-    ir::SsaDef emitConstantLoad(
-            ir::Builder&            builder,
-      const Instruction&            op,
-      const Operand&                operand,
-            WriteMask               componentMask,
-            ir::ScalarType          scalarType);
+  /** Loads data from a constant buffer using one or more BufferLoad
+   *  instruction. If possible this will emit a vectorized load. */
+  ir::SsaDef emitConstantLoad(
+          ir::Builder&            builder,
+    const Instruction&            op,
+    const Operand&                operand,
+          WriteMask               componentMask,
+          ir::ScalarType          scalarType);
 
-  private:
+  /** Handles Dcl instructions on SM 2+ with Sampler as the register type. */
+  bool handleDclSampler(ir::Builder& builder, const Instruction& op);
+
+  const ResourceInfo* dclSamplerAndAllTextureTypes(ir::Builder& builder, uint32_t slot);
+
+private:
 
   Converter& m_converter;
 
@@ -111,6 +116,10 @@ class ResourceMap {
   bool matchesResource(
     const Operand&                   operand,
     const ResourceInfo&              info) const;
+
+  ir::SsaDef dclSampler(ir::Builder& builder, uint32_t slot);
+
+  ir::SsaDef dclTexture(ir::Builder& builder, SpecConstTextureType textureType, uint32_t slot);
 
 };
 
