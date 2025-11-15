@@ -98,6 +98,8 @@ private:
     return m_parser.getShaderInfo();
   }
 
+  bool handleDcl(ir::Builder& builder, const Instruction& op);
+
   bool handleMov(ir::Builder& builder, const Instruction& op);
 
   bool handleArithmetic(ir::Builder& builder, const Instruction& op);

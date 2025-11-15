@@ -105,4 +105,54 @@ bool ResourceMap::matchesResource(
   }
 }
 
+
+bool ResourceMap::handleDclSampler(ir::Builder& builder, const Instruction& op) {
+  auto dcl = op.getDcl();
+  auto dst = op.getDst();
+  uint32_t slot = dst.getIndex();
+  dxbc_spv_assert(dst.getRegisterType() == RegisterType::eSampler);
+  SpecConstTextureType textureType = specConstTextureTypeFromTextureType(dcl.getTextureType());
+
+  auto sampler = dclSampler(builder, slot);
+  auto texture = dclTexture(builder, textureType, slot);
+
+  auto& resourceInfo = m_resources.emplace_back();
+  resourceInfo.regType = RegisterType::eSampler;
+  resourceInfo.regIndex = slot;
+  resourceInfo.regCount = 1u;
+  resourceInfo.resourceDef = sampler;
+  resourceInfo.additionalResourceDefs[uint32_t(textureType)] = texture;
+  resourceInfo.kind = resourceKindFromTextureType(dcl.getTextureType());
+  return true;
+}
+
+
+const ResourceInfo* ResourceMap::dclSamplerAndAllTextureTypes(ir::Builder& builder, uint32_t slot) {
+  auto sampler = dclSampler(builder, slot);
+  std::array<ir::SsaDef, uint32_t(SpecConstTextureType::eTexture3D) + 1u> textures;
+  for (uint32_t i = 0; i < textures.size(); i++) {
+    SpecConstTextureType textureType = SpecConstTextureType(i);
+    textures[i] = dclTexture(builder, textureType, slot);
+  }
+
+  auto& resourceInfo = m_resources.emplace_back();
+  resourceInfo.regType = RegisterType::eSampler;
+  resourceInfo.regIndex = slot;
+  resourceInfo.regCount = 1u;
+  resourceInfo.resourceDef = sampler;
+  resourceInfo.additionalResourceDefs = textures;
+  resourceInfo.kind = { };
+  return &resourceInfo;
+}
+
+
+ir::SsaDef ResourceMap::dclSampler(ir::Builder& builder, uint32_t slot) {
+  return builder.add(ir::Op::DclSampler(m_converter.getEntryPoint(), 0u, slot, 1u));
+}
+
+
+ir::SsaDef ResourceMap::dclTexture(ir::Builder& builder, SpecConstTextureType textureType, uint32_t slot) {
+  return ir::SsaDef();
+}
+
 }

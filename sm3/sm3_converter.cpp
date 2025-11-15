@@ -40,6 +40,7 @@ Converter::Converter(util::ByteReader code,
 , m_semanticMap(semanticMap)
 , m_regFile(*this)
 , m_ioMap(*this)
+, m_resources(*this)
 , m_specConstants(specConstantsLayout) {
 
 }
@@ -87,7 +88,7 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
       return true;
 
     case OpCode::eDcl:
-      return m_ioMap.handleDclIoVar(builder, op);
+      return handleDcl(builder, op);
 
     case OpCode::eMov:
     case OpCode::eMova:
@@ -241,6 +242,28 @@ bool Converter::initParser(Parser& parser, util::ByteReader reader) {
   }
 
   return true;
+}
+
+
+bool Converter::handleDcl(ir::Builder& builder, const Instruction& op) {
+  auto dst = op.getDst();
+  switch (dst.getRegisterType()) {
+    case RegisterType::eSampler:
+      return m_resources.handleDclSampler(builder, op);
+
+    case RegisterType::eAttributeOut:
+    case RegisterType::eOutput:
+    case RegisterType::eInput:
+    case RegisterType::eTexture:
+    case RegisterType::ePixelTexCoord:
+    case RegisterType::eMiscType:
+    case RegisterType::eColorOut:
+      return m_ioMap.handleDclIoVar(builder, op);
+
+    default:
+      dxbc_spv_unreachable();
+      return false;
+  }
 }
 
 
@@ -593,16 +616,20 @@ bool Converter::handleTexCoord(ir::Builder &builder, const Instruction &op) {
   const auto& dst = op.getDst();
   const auto& texture = op.getSrc(0u);
   auto resourceInfo = m_resources.getResourceInfo(op.getSrc(0u));
+  if (resourceInfo == nullptr) {
+    dxbc_spv_assert(getShaderInfo().getVersion().first < 2u);
+    resourceInfo = m_resources.dclSamplerAndAllTextureTypes(builder, texture.getIndex());
+  }
+  dxbc_spv_assert(resourceInfo != nullptr);
   auto samplerInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::nullopt);
 
   if (getShaderInfo().getVersion().first >= 2) {
     auto specConstTextureType = specConstTextureTypeFromResourceKind(resourceInfo->kind);
     auto textureInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(specConstTextureType));
   } else {
-    auto texture2DInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(SpecConstTextureType::eTexture2D));
-    auto texture3DInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(SpecConstTextureType::eTexture3D));
+    auto texture2DInfo   = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(SpecConstTextureType::eTexture2D));
     auto textureCubeInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(SpecConstTextureType::eTextureCube));
-
+    auto texture3DInfo   = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(SpecConstTextureType::eTexture3D));
   }
 }
 
