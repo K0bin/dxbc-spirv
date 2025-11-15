@@ -593,10 +593,15 @@ bool Converter::handleTexCoord(ir::Builder &builder, const Instruction &op) {
   const auto& dst = op.getDst();
   const auto& texture = op.getSrc(0u);
   auto resourceInfo = m_resources.getResourceInfo(op.getSrc(0u));
+  auto samplerInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::nullopt);
 
   if (getShaderInfo().getVersion().first >= 2) {
-    auto textureInfo = m_resources.emitDescriptorLoad(builder, resourceInfo,);
+    auto specConstTextureType = specConstTextureTypeFromResourceKind(resourceInfo->kind);
+    auto textureInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(specConstTextureType));
   } else {
+    auto texture2DInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(SpecConstTextureType::eTexture2D));
+    auto texture3DInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(SpecConstTextureType::eTexture3D));
+    auto textureCubeInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(SpecConstTextureType::eTextureCube));
 
   }
 }
