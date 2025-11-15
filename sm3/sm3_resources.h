@@ -127,4 +127,26 @@ inline ir::ResourceKind resourceKindFromTextureType(TextureType textureType) {
   return ir::ResourceKind::eBufferRaw;
 }
 
+inline SpecConstTextureType specConstTextureTypeFromTextureType(TextureType textureType) {
+  return SpecConstTextureType(uint32_t(textureType) - uint32_t(TextureType::eTexture2D));
+}
+
+inline TextureType textureTypeFromSpecConstTextureType(SpecConstTextureType specConstTextureType) {
+  return TextureType(uint32_t(specConstTextureType) + uint32_t(TextureType::eTexture2D));
+}
+
+inline SpecConstTextureType specConstTextureTypeFromResourceKind(ir::ResourceKind resourceKind) {
+  switch (resourceKind) {
+    case ir::ResourceKind::eImage2D:
+      return SpecConstTextureType::eTexture2D;
+    case ir::ResourceKind::eImage3D:
+      return SpecConstTextureType::eTexture3D;
+    case ir::ResourceKind::eImageCube:
+      return SpecConstTextureType::eTextureCube;
+    default:
+      dxbc_spv_unreachable();
+      return SpecConstTextureType::eTexture2D;
+  }
+}
+
 }

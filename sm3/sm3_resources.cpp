@@ -14,23 +14,27 @@ ResourceProperties ResourceMap::emitDescriptorLoad(
   if (!resourceInfo)
     return ResourceProperties();
 
+  /* Retrieve resource definition. */
+  auto baseDef = resourceInfo->resourceDef;
+
   ir::ScalarType descriptorType = ir::ScalarType::eUnknown;
   switch (resourceInfo->regType) {
     case RegisterType::eSampler:
       descriptorType = ir::ScalarType::eSampler;
+
+      if (specConstTextureType.has_value()) {
+        /* If a texture type is provided as a parameter,
+         * load the requested texture descriptor instead of the sampler. */
+        baseDef = resourceInfo->additionalResourceDefs[uint32_t(specConstTextureType.value())];
+        descriptorType = ir::ScalarType::eSrv;
+      }
       break;
 
     default:
       dxbc_spv_unreachable();
-      break;
+      return ResourceProperties();
   }
 
-  /* Retrieve resource definition. */
-  auto baseDef = resourceInfo->resourceDef;
-  if (specConstTextureType.has_value()) {
-    baseDef = resourceInfo->additionalResourceDefs[uint32_t(specConstTextureType.value())];
-    descriptorType = ir::ScalarType::eSrv;
-  }
   if (!baseDef)
     return ResourceProperties();
 
