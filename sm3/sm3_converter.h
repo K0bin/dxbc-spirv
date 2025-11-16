@@ -75,6 +75,8 @@ private:
 
   SpecializationConstantsMap m_specConstants;
 
+  ir::SsaDef m_specConstUbo = { }; // TODO
+
   /* Entry point definition and function definitions. */
   struct {
     ir::SsaDef def;
@@ -129,6 +131,16 @@ private:
   bool storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::SsaDef value);
 
   bool storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::SsaDef value);
+
+  ir::SsaDef sampleImage(
+    ir::Builder& builder,
+    uint32_t     samplerIdx,
+    ir::SsaDef   texCoord,
+    ir::SsaDef   offset,
+    ir::SsaDef   lod,
+    ir::SsaDef   mipBias,
+    ir::SsaDef   dx,
+    ir::SsaDef   dy);
 
   ir::SsaDef broadcastScalar(ir::Builder& builder, ir::SsaDef def, WriteMask mask);
 

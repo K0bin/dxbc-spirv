@@ -87,7 +87,10 @@ public:
       const ResourceInfo*                       resourceInfo,
             std::optional<SpecConstTextureType> specConstTextureType);
 
-  const ResourceInfo* getResourceInfo(const Operand& operand);
+  const ResourceInfo* getResourceInfo(
+          RegisterType registerType,
+          uint32_t     registerIndex,
+          bool         hasRelativeAddressing) const;
 
   /** Loads data from a constant buffer using one or more BufferLoad
    *  instruction. If possible this will emit a vectorized load. */
@@ -114,8 +117,10 @@ private:
     const ResourceInfo*           info);
 
   bool matchesResource(
-    const Operand&                   operand,
-    const ResourceInfo&              info) const;
+          RegisterType  registerType,
+          uint32_t      registerIndex,
+          bool          hasRelativeAddressing,
+    const ResourceInfo& info) const;
 
   ir::SsaDef dclSampler(ir::Builder& builder, uint32_t slot);
 
