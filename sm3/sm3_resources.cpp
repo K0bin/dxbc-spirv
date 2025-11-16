@@ -57,14 +57,16 @@ ResourceProperties ResourceMap::emitDescriptorLoad(
 }
 
 
-const ResourceInfo* ResourceMap::getResourceInfo(const Operand& operand) {
+const ResourceInfo* ResourceMap::getResourceInfo(
+  RegisterType registerType,
+  uint32_t     registerIndex,
+  bool         hasRelativeAddressing) const {
   for (auto& e : m_resources) {
-    if (matchesResource(operand, e))
+    if (matchesResource(registerType, registerIndex, hasRelativeAddressing, e))
       return &e;
   }
 
-  auto name = m_converter.makeRegisterDebugName(operand.getRegisterType(), operand.getIndex(), WriteMask());
-  Logger::err("Resource ", name, " not declared.");
+  auto name = m_converter.makeRegisterDebugName(registerType, registerIndex, WriteMask());
   return nullptr;
 }
 
@@ -78,31 +80,20 @@ void ResourceMap::emitDebugName(ir::Builder& builder, const ResourceInfo* info) 
 
 
 bool ResourceMap::matchesResource(
-    const Operand&                   operand,
-    const ResourceInfo&              info) const {
-  if (info.regType != operand.getRegisterType())
+        RegisterType  registerType,
+        uint32_t      registerIndex,
+        bool          hasRelativeAddressing,
+  const ResourceInfo& info) const {
+  if (info.regType != registerType)
     return false;
 
-  if (!operand.hasRelativeAddressing() && info.regIndex != operand.getIndex())
+  if (!hasRelativeAddressing && info.regIndex != registerIndex)
     return false;
 
-  if (info.regIndex < operand.getIndex() || info.regIndex + info.regCount >= operand.getIndex())
+  if (info.regIndex < registerIndex || info.regIndex + info.regCount >= registerIndex)
     return false;
 
-  if (info.regType == RegisterType::eSampler) {
-    // RegisterType Sampler + No Texture type => Sampler
-    // RegisterType Sampler + Texture type => Texture
-    if (!textureType.has_value() && !info.kind.has_value()) {
-      return true;
-    } else if (textureType.has_value()) {
-      auto resourceType = resourceKindFromTextureType(textureType.value());
-      return info.kind == resourceType;
-    } else {
-      return false;
-    }
-  } else {
-    return true;
-  }
+  return true;
 }
 
 
