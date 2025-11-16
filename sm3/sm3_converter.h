@@ -118,7 +118,7 @@ private:
 
   bool handleTexCoord(ir::Builder& builder, const Instruction& op);
 
-  bool handleSample(ir::Builder& builder, const Instruction& op);
+  bool handleTextureSample(ir::Builder& builder, const Instruction& op);
 
   ir::SsaDef applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask);
 
