@@ -456,8 +456,7 @@ ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
   }
 
   auto indexArg = builder.add(ir::Op::ParamLoad(ir::ScalarType::eU32, function, indexParameter));
-  auto switchDecl = ir::Op::ScopedSwitch(ir::SsaDef(), indexArg);
-  auto switchDef = builder.add(switchDecl);
+  auto switchDef = builder.add(ir::Op::ScopedSwitch(ir::SsaDef(), indexArg));
 
   for (uint32_t i = 0u; i < MaxIoArraySize; i++) {
     builder.add(ir::Op::ScopedSwitchCase(switchDef, i));
@@ -478,7 +477,7 @@ ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
   }
 
   auto switchEnd = builder.add(ir::Op::ScopedEndSwitch(switchDef));
-  switchDecl.setOperand(0u, switchEnd);
+  builder.rewriteOp(switchDef, ir::Op::ScopedSwitch(switchEnd, indexArg));
 
   builder.add(ir::Op::FunctionEnd());
   return function;

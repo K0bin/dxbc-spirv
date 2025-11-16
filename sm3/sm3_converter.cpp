@@ -612,25 +612,13 @@ bool Converter::handleTexCoord(ir::Builder &builder, const Instruction &op) {
 }
 
 
-  bool Converter::handleSample(ir::Builder& builder, const Instruction& op) {
+bool Converter::handleSample(ir::Builder& builder, const Instruction& op) {
+  switch (op.getOpCode()) {
+
+  }
   const auto& dst = op.getDst();
   const auto& texture = op.getSrc(0u);
-  auto resourceInfo = m_resources.getResourceInfo(op.getSrc(0u));
-  if (resourceInfo == nullptr) {
-    dxbc_spv_assert(getShaderInfo().getVersion().first < 2u);
-    resourceInfo = m_resources.dclSamplerAndAllTextureTypes(builder, texture.getIndex());
-  }
-  dxbc_spv_assert(resourceInfo != nullptr);
-  auto samplerInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::nullopt);
-
-  if (getShaderInfo().getVersion().first >= 2) {
-    auto specConstTextureType = specConstTextureTypeFromResourceKind(resourceInfo->kind);
-    auto textureInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(specConstTextureType));
-  } else {
-    auto texture2DInfo   = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(SpecConstTextureType::eTexture2D));
-    auto textureCubeInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(SpecConstTextureType::eTextureCube));
-    auto texture3DInfo   = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(SpecConstTextureType::eTexture3D));
-  }
+  uint32_t slot = dst.getIndex();
 }
 
 
@@ -889,6 +877,169 @@ bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Oper
 bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask writeMask, ir::SsaDef value) {
   value = applyDstModifiers(builder, value, op, operand, writeMask);
   return storeDst(builder, op, operand, writeMask, value);
+}
+
+
+ir::SsaDef Converter::sampleImage(
+  ir::Builder& builder,
+  uint32_t     samplerIdx,
+  ir::SsaDef   texCoord,
+  ir::SsaDef   offset,
+  ir::SsaDef   lod,
+  ir::SsaDef   mipBias,
+  ir::SsaDef   dx,
+  ir::SsaDef   dy) {
+  auto resourceInfo = m_resources.getResourceInfo(RegisterType::eSampler, samplerIdx, false);
+  if (resourceInfo == nullptr) {
+    dxbc_spv_assert(getShaderInfo().getVersion().first < 2u);
+    resourceInfo = m_resources.dclSamplerAndAllTextureTypes(builder, samplerIdx);
+  }
+  dxbc_spv_assert(resourceInfo != nullptr);
+  auto samplerInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::nullopt);
+
+  uint32_t specConstIdx = getShaderInfo().getType() == ShaderType::eVertex
+    ? samplerIdx + FirstVSSamplerSlot
+    : samplerIdx;
+
+  /* Load the spec constant for if the texture is unbound */
+
+  auto isNullSpecConst = m_specConstants.get(builder, getEntryPoint(), m_specConstUbo, SpecConstantId::SpecSamplerNull, specConstIdx, 1u);
+  auto isNull = builder.add(ir::Op::INe(ir::ScalarType::eBool, isNullSpecConst, builder.makeConstant(0u)));
+
+  /* Sample a color image of the given type */
+
+  auto emitSampleColorImageType = [this, &builder, texCoord, offset, lod, mipBias, dx, dy, isNull](SpecConstTextureType textureType, ir::SsaDef descriptor, ir::SsaDef sampler) {
+    uint32_t texCoordComponentCount = textureType == SpecConstTextureType::eTexture2D ? 2u : 3u;
+    std::array<ir::SsaDef, 4u> texCoordComponents;
+    for (uint32_t i = 0u; i < texCoordComponentCount; i++) {
+      texCoordComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(i)));
+    }
+    auto sizedTexCoord = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, texCoordComponents.data());
+
+    auto color = builder.add(ir::Op::ImageSample(
+      ir::ScalarType::eF32,
+      descriptor,
+      sampler,
+      ir::SsaDef(),
+      sizedTexCoord,
+      offset,
+      lod,
+      mipBias,
+      ir::SsaDef(),
+      dx,
+      dy,
+      ir::SsaDef()
+    ));
+
+    return builder.add(ir::Op::Select(
+      makeVectorType(ir::ScalarType::eF32, WriteMask(ComponentBit::eAll)),
+      broadcastScalar(builder, isNull, WriteMask(ComponentBit::eAll)),
+      builder.makeConstant(0.0f, 0.0f, 0.0f, 1.0f),
+      color));
+  };
+
+  /* Sample depth comparison */
+
+  auto emitSampleDref = [this, &builder, texCoord, offset, lod, mipBias, dx, dy](SpecConstTextureType textureType, ir::SsaDef descriptor, ir::SsaDef sampler) {
+    /* We don't check for NULL here because if there's no texture bound, we always end up in the color path. */
+
+    uint32_t texCoordComponentCount = textureType == SpecConstTextureType::eTexture2D ? 2u : 3u;
+    auto referenceComponentIdx = builder.makeConstant(texCoordComponentCount);
+    auto reference = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, referenceComponentIdx));
+
+    // [D3D8] Scale Dref from [0..(2^N - 1)] for D24S8 and D16 if Dref scaling is enabled
+    auto drefScaleShift = m_specConstants.get(builder, getEntryPoint(), m_specConstUbo, SpecConstantId::SpecDrefScaling);
+    auto drefScale = builder.add(ir::Op::IShl(ir::ScalarType::eU32, builder.makeConstant(1u), drefScaleShift));
+    drefScale      = builder.add(ir::Op::ConvertItoF(ir::ScalarType::eF32, drefScale));
+    drefScale      = builder.add(ir::Op::FSub(ir::ScalarType::eF32, drefScale, builder.makeConstant(1.0f)));
+    drefScale      = builder.add(ir::Op::FDiv(ir::ScalarType::eF32, builder.makeConstant(1.0f), drefScale));
+    reference      = builder.add(ir::Op::Select(ir::ScalarType::eF32,
+      builder.add(ir::Op::INe(ir::ScalarType::eBool, drefScaleShift, builder.makeConstant(0u))),
+      builder.add(ir::Op::FMul(ir::ScalarType::eF32, reference, drefScale)),
+      reference
+    ));
+
+    // Clamp Dref to [0..1] for D32F emulating UNORM textures
+    auto clampDref = m_specConstants.get(builder, getEntryPoint(), m_specConstUbo, SpecConstantId::SpecSamplerDrefClamp);
+    clampDref      = builder.add(ir::Op::INe(ir::ScalarType::eBool, clampDref, builder.makeConstant(0u)));
+    auto clampedDref = builder.add(ir::Op::FClamp(ir::ScalarType::eF32, reference, builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
+    reference = builder.add(ir::Op::Select(ir::ScalarType::eF32, clampDref, clampedDref, reference));
+
+    std::array<ir::SsaDef, 4u> texCoordComponents;
+    for (uint32_t i = 0u; i < texCoordComponentCount; i++) {
+      texCoordComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(i)));
+    }
+    auto sizedTexCoord = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, texCoordComponents.data());
+    auto drefResult = builder.add(ir::Op::ImageSample(
+      ir::ScalarType::eF32,
+      descriptor,
+      sampler,
+      ir::SsaDef(),
+      sizedTexCoord,
+      offset,
+      lod,
+      mipBias,
+      ir::SsaDef(),
+      dx,
+      dy,
+      reference
+    ));
+    return broadcastScalar(builder, drefResult, WriteMask(ComponentBit::eAll));
+  };
+
+  /* Sample an image of the given type.
+   * Does either sample it as a color image or do depth comparison based on a spec constant. */
+
+  auto emitSampleImageType = [this, resourceInfo, &builder, &emitSampleColorImageType, &emitSampleDref, specConstIdx, &samplerInfo](SpecConstTextureType textureType) {
+    auto info = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(textureType));
+
+    if (textureType != SpecConstTextureType::eTexture3D) {
+      auto resultTmp = builder.add(ir::Op::DclTmp(makeVectorType(ir::ScalarType::eF32, WriteMask(ComponentBit::eAll)), getEntryPoint()));
+      auto isDepth = m_specConstants.get(builder, getEntryPoint(), m_specConstUbo, SpecConstantId::SpecSamplerDepthMode, specConstIdx, 1u);
+      auto isDepthCondition = builder.add(ir::Op::INe(ir::ScalarType::eBool, isDepth, builder.makeConstant(0u)));
+
+      /* if (SpecSamplerDepthMode & (1u << slot)) */
+      auto isDepthIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), isDepthCondition));
+      auto depthResult = emitSampleDref(textureType, info.descriptor, samplerInfo.descriptor);
+      builder.add(ir::Op::TmpStore(resultTmp, depthResult));
+
+      /* else */
+      builder.add(ir::Op::ScopedElse(isDepthIf));
+      auto colorResult = emitSampleColorImageType(textureType, info.descriptor, samplerInfo.descriptor);
+      builder.add(ir::Op::TmpStore(resultTmp, colorResult));
+
+      auto isDepthEnd = builder.add(ir::Op::ScopedEndIf(isDepthIf));
+      builder.rewriteOp(isDepthIf, ir::Op(builder.getOp(isDepthIf)).setOperand(0u, isDepthEnd));
+      return builder.add(ir::Op::TmpLoad(makeVectorType(ir::ScalarType::eF32, WriteMask(ComponentBit::eAll)), resultTmp));
+    } else {
+      return emitSampleColorImageType(textureType, info.descriptor, samplerInfo.descriptor);
+    }
+  };
+
+  if (getShaderInfo().getVersion().first >= 2) {
+    /* Shader model 2+ requires declaring samplers/textures with a DCL instruction first. */
+    auto specConstTextureType = specConstTextureTypeFromResourceKind(resourceInfo->kind);
+    return emitSampleImageType(specConstTextureType);
+  } else {
+    /* Shader model 1 does not require declaring samplers/textures with a DCL instruction.
+     * We emit a switch() block with one case for each texture type. Decide based on a spec constant. */
+    auto resultTmp = builder.add(ir::Op::DclTmp(makeVectorType(ir::ScalarType::eF32, WriteMask(ComponentBit::eAll)), getEntryPoint()));
+    auto samplerTypeSpecConst = m_specConstants.get(builder, getEntryPoint(), m_specConstUbo, SpecConstantId::SpecSamplerType, 2u * specConstIdx, 2u);
+    auto textureTypeSwitch = builder.add(ir::Op::ScopedSwitch(ir::SsaDef(), samplerTypeSpecConst));
+
+    for (uint32_t i = 0; i <= uint32_t(SpecConstTextureType::eTexture3D); i++) {
+      builder.add(ir::Op::ScopedSwitchCase(textureTypeSwitch, i));
+      auto typeResult = emitSampleImageType(SpecConstTextureType(i));
+      builder.add(ir::Op::TmpStore(resultTmp, typeResult));
+      builder.add(ir::Op::ScopedSwitchBreak(textureTypeSwitch));
+    }
+
+    auto textureTypeSwitchEnd = builder.add(ir::Op::ScopedEndSwitch(textureTypeSwitch));
+    builder.rewriteOp(textureTypeSwitch, ir::Op(builder.getOp(textureTypeSwitch)).setOperand(0u, textureTypeSwitchEnd));
+    return builder.add(ir::Op::TmpLoad(makeVectorType(ir::ScalarType::eF32, WriteMask(ComponentBit::eAll)), resultTmp));
+  }
+
+  return ir::SsaDef();
 }
 
 
