@@ -55,7 +55,7 @@ enum class OpCode : uint32_t {
   eRep          = 38u,
   eEndRep       = 39u,
   eIf           = 40u,
-  eIfc          = 41u,
+  eIfC          = 41u,
   eElse         = 42u,
   eEndIf        = 43u,
   eBreak        = 44u,
