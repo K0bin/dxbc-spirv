@@ -154,7 +154,7 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eTexDepth:
     case OpCode::eTexLdd:
     case OpCode::eTexLdl:
-      break;
+      return handleTextureSample(builder, op);
 
     case OpCode::eDst:
     case OpCode::eLrp:
@@ -612,9 +612,50 @@ bool Converter::handleTexCoord(ir::Builder &builder, const Instruction &op) {
 }
 
 
-bool Converter::handleSample(ir::Builder& builder, const Instruction& op) {
+bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op) {
   switch (op.getOpCode()) {
+    case OpCode::eTexKill:
+    case OpCode::eTexBem:
+    case OpCode::eTexBemL:
+    case OpCode::eTexReg2Ar:
+    case OpCode::eTexReg2Gb:
+    case OpCode::eTexM3x2Tex:
+    case OpCode::eTexM3x3Tex:
+    case OpCode::eTexM3x3Spec:
+    case OpCode::eTexM3x3VSpec:
+    case OpCode::eTexReg2Rgb:
+    case OpCode::eTexDp3Tex:
+    case OpCode::eTexM3x2Depth:
+    case OpCode::eTexDp3:
+    case OpCode::eTexM3x3:
+    case OpCode::eTexDepth:
+      break;
 
+    case OpCode::eTexLd:
+    case OpCode::eTexLdd:
+    case OpCode::eTexLdl: {
+      auto dst = op.getDst();
+      uint32_t samplerIdx;
+      ir::SsaDef texCoord;
+      if (op.getOpCode() == OpCode::eTexLd && getShaderInfo().getVersion().first < 2u) {
+        dxbc_spv_assert(getShaderInfo().getType() == ShaderType::ePixel);
+        samplerIdx = dst.getIndex();
+        if (getShaderInfo().getVersion().second >= 4u) {
+          /* texld - ps_1_4 */
+          auto src0 = op.getSrc(0u);
+          texCoord = loadSrcModified(builder, op, src0, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+        } else {
+          /* tex */
+          //texCoord = loadSrcModified()
+        }
+      } else {
+        /* texld - sm_2_0 and up */
+        auto src0 = op.getSrc(0u);
+        auto src1 = op.getSrc(1u);
+        samplerIdx = src1.getIndex();
+        texCoord = loadSrcModified(builder, op, src0, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+      }
+    } break;
   }
   const auto& dst = op.getDst();
   const auto& texture = op.getSrc(0u);
@@ -897,18 +938,24 @@ ir::SsaDef Converter::sampleImage(
   dxbc_spv_assert(resourceInfo != nullptr);
   auto samplerInfo = m_resources.emitDescriptorLoad(builder, resourceInfo, std::nullopt);
 
+  const uint32_t FirstVSSamplerSlot = 16u;
   uint32_t specConstIdx = getShaderInfo().getType() == ShaderType::eVertex
     ? samplerIdx + FirstVSSamplerSlot
     : samplerIdx;
 
-  /* Load the spec constant for if the texture is unbound */
+  /* Load the spec constant that tells us if the texture is unbound. */
 
   auto isNullSpecConst = m_specConstants.get(builder, getEntryPoint(), m_specConstUbo, SpecConstantId::SpecSamplerNull, specConstIdx, 1u);
   auto isNull = builder.add(ir::Op::INe(ir::ScalarType::eBool, isNullSpecConst, builder.makeConstant(0u)));
 
-  /* Sample a color image of the given type */
+  /* Load the spec constant that tells us if fetch4 (gather) is enabled for the sampler. */
 
-  auto emitSampleColorImageType = [this, &builder, texCoord, offset, lod, mipBias, dx, dy, isNull](SpecConstTextureType textureType, ir::SsaDef descriptor, ir::SsaDef sampler) {
+  auto fetch4EnabledSpecConst = m_specConstants.get(builder, getEntryPoint(), m_specConstUbo, SpecConstantId::SpecSamplerFetch4, specConstIdx, 1u);
+  auto fetch4Enabled = builder.add(ir::Op::INe(ir::ScalarType::eBool, fetch4EnabledSpecConst, builder.makeConstant(0u)));
+
+  /* Sample a color image of the given type. */
+
+  auto emitSampleColorImageType = [this, &builder, texCoord, offset, lod, mipBias, dx, dy, isNull, fetch4Enabled](SpecConstTextureType textureType, ir::SsaDef descriptor, ir::SsaDef sampler) {
     uint32_t texCoordComponentCount = textureType == SpecConstTextureType::eTexture2D ? 2u : 3u;
     std::array<ir::SsaDef, 4u> texCoordComponents;
     for (uint32_t i = 0u; i < texCoordComponentCount; i++) {
@@ -917,7 +964,7 @@ ir::SsaDef Converter::sampleImage(
     auto sizedTexCoord = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, texCoordComponents.data());
 
     auto color = builder.add(ir::Op::ImageSample(
-      ir::ScalarType::eF32,
+      ir::BasicType(ir::ScalarType::eF32, 4u),
       descriptor,
       sampler,
       ir::SsaDef(),
@@ -931,8 +978,61 @@ ir::SsaDef Converter::sampleImage(
       ir::SsaDef()
     ));
 
+    /* Fetch4 */
+    if (getShaderInfo().getType() == ShaderType::ePixel && textureType != SpecConstTextureType::eTexture3D) {
+      /* Doesn't really work for cubes...
+       * D3D9 does support gather on 3D but we cannot :<
+       * Nothing probably relies on that though.
+       * If we come back to this ever, make sure to handle cube/3d differences. */
+      if (textureType == SpecConstTextureType::eTexture2D) {
+        /* Account for half texel offset...
+         * texcoord += (1.0f - 1.0f / 256.0f) / float(2 * textureSize(sampler, 0)) */
+
+        /* scaledTextureSizeF = float(2 * textureSize(sampler, 0)) */
+        auto coordDims = ir::resourceDimensions(resourceKindFromTextureType(textureTypeFromSpecConstTextureType(textureType)));
+        auto sizeType = ir::Type()
+          .addStructMember(ir::ScalarType::eU32, coordDims)    /* size   */
+          .addStructMember(ir::ScalarType::eU32);           /* layers */
+        auto textureSizeStruct = builder.add(ir::Op::ImageQuerySize(sizeType, descriptor, builder.makeConstant(0u)));
+        auto textureSizeTypeI = ir::BasicType(ir::ScalarType::eU32, coordDims);
+        auto textureSizeI = builder.add(ir::Op::CompositeExtract(textureSizeTypeI, textureSizeStruct, builder.makeConstant(0u)));
+        auto const2vec = broadcastScalar(builder, builder.makeConstant(2u), util::makeWriteMaskForComponents(coordDims));
+        auto scaledTextureSizeI = builder.add(ir::Op::IMul(textureSizeTypeI, textureSizeI, const2vec));
+        auto textureSizeType = ir::BasicType(ir::ScalarType::eF32, coordDims);
+        auto scaledTextureSizeF = builder.add(ir::Op::ConvertFtoI(textureSizeType, scaledTextureSizeI));
+
+        /* invTextureSize = (1.0f - 1.0f / 256.0f) / scaledTextureSizeF */
+        float numerator = 1.0f;
+        /* HACK: Bias fetch4 half-texel offset to avoid a "grid" effect.
+         * Technically we should only do that for non-powers of two
+         * as only then does the imprecision need to be biased
+         * towards infinity -- but that's not really worth doing... */
+        numerator -= 1.0f / 256.0f;
+        auto numeratorVec = broadcastScalar(builder, builder.makeConstant(numerator), util::makeWriteMaskForComponents(coordDims));
+        auto invTextureSize = builder.add(ir::Op::FDiv(textureSizeType, numeratorVec, scaledTextureSizeF));
+
+        /* texcoord += invTextureSize */
+        sizedTexCoord = builder.add(ir::Op::FAdd(textureSizeType, sizedTexCoord, invTextureSize));
+      }
+
+      auto fetch4Val = builder.add(ir::Op::ImageGather(
+        ir::BasicType(ir::ScalarType::eF32, 4u),
+        descriptor,
+        sampler,
+        ir::SsaDef(),
+        sizedTexCoord,
+        offset,
+        ir::SsaDef(),
+        0u
+      ));
+      /* Shuffle the vector to match the funny D3D9 order: B R G A */
+      fetch4Val = swizzleVector(builder, fetch4Val, Swizzle(Component::eY, Component::eX, Component::eZ, Component::eW), WriteMask(ComponentBit::eAll));
+      /* Use Fetch4 value if spec constant bit is set and regular sampled color if not. */
+      color = builder.add(ir::Op::Select(ir::BasicType(ir::ScalarType::eF32, 4u), fetch4Enabled, fetch4Val, color));
+    }
+
     return builder.add(ir::Op::Select(
-      makeVectorType(ir::ScalarType::eF32, WriteMask(ComponentBit::eAll)),
+      ir::BasicType(ir::ScalarType::eF32, 4u),
       broadcastScalar(builder, isNull, WriteMask(ComponentBit::eAll)),
       builder.makeConstant(0.0f, 0.0f, 0.0f, 1.0f),
       color));
@@ -994,7 +1094,7 @@ ir::SsaDef Converter::sampleImage(
     auto info = m_resources.emitDescriptorLoad(builder, resourceInfo, std::make_optional(textureType));
 
     if (textureType != SpecConstTextureType::eTexture3D) {
-      auto resultTmp = builder.add(ir::Op::DclTmp(makeVectorType(ir::ScalarType::eF32, WriteMask(ComponentBit::eAll)), getEntryPoint()));
+      auto resultTmp = builder.add(ir::Op::DclTmp(ir::BasicType(ir::ScalarType::eF32, 4u), getEntryPoint()));
       auto isDepth = m_specConstants.get(builder, getEntryPoint(), m_specConstUbo, SpecConstantId::SpecSamplerDepthMode, specConstIdx, 1u);
       auto isDepthCondition = builder.add(ir::Op::INe(ir::ScalarType::eBool, isDepth, builder.makeConstant(0u)));
 
@@ -1010,7 +1110,7 @@ ir::SsaDef Converter::sampleImage(
 
       auto isDepthEnd = builder.add(ir::Op::ScopedEndIf(isDepthIf));
       builder.rewriteOp(isDepthIf, ir::Op(builder.getOp(isDepthIf)).setOperand(0u, isDepthEnd));
-      return builder.add(ir::Op::TmpLoad(makeVectorType(ir::ScalarType::eF32, WriteMask(ComponentBit::eAll)), resultTmp));
+      return builder.add(ir::Op::TmpLoad(ir::BasicType(ir::ScalarType::eF32, 4u), resultTmp));
     } else {
       return emitSampleColorImageType(textureType, info.descriptor, samplerInfo.descriptor);
     }
@@ -1023,7 +1123,7 @@ ir::SsaDef Converter::sampleImage(
   } else {
     /* Shader model 1 does not require declaring samplers/textures with a DCL instruction.
      * We emit a switch() block with one case for each texture type. Decide based on a spec constant. */
-    auto resultTmp = builder.add(ir::Op::DclTmp(makeVectorType(ir::ScalarType::eF32, WriteMask(ComponentBit::eAll)), getEntryPoint()));
+    auto resultTmp = builder.add(ir::Op::DclTmp(ir::BasicType(ir::ScalarType::eF32, 4u), getEntryPoint()));
     auto samplerTypeSpecConst = m_specConstants.get(builder, getEntryPoint(), m_specConstUbo, SpecConstantId::SpecSamplerType, 2u * specConstIdx, 2u);
     auto textureTypeSwitch = builder.add(ir::Op::ScopedSwitch(ir::SsaDef(), samplerTypeSpecConst));
 
@@ -1036,10 +1136,8 @@ ir::SsaDef Converter::sampleImage(
 
     auto textureTypeSwitchEnd = builder.add(ir::Op::ScopedEndSwitch(textureTypeSwitch));
     builder.rewriteOp(textureTypeSwitch, ir::Op(builder.getOp(textureTypeSwitch)).setOperand(0u, textureTypeSwitchEnd));
-    return builder.add(ir::Op::TmpLoad(makeVectorType(ir::ScalarType::eF32, WriteMask(ComponentBit::eAll)), resultTmp));
+    return builder.add(ir::Op::TmpLoad(ir::BasicType(ir::ScalarType::eF32, 4u), resultTmp));
   }
-
-  return ir::SsaDef();
 }
 
 
