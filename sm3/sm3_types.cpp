@@ -54,7 +54,7 @@ std::ostream& operator << (std::ostream& os, OpCode op) {
     case OpCode::eRep:          return os << "rep";
     case OpCode::eEndRep:       return os << "endrep";
     case OpCode::eIf:           return os << "if";
-    case OpCode::eIfc:          return os << "if";
+    case OpCode::eIfC:          return os << "if";
     case OpCode::eElse:         return os << "else";
     case OpCode::eEndIf:        return os << "endif";
     case OpCode::eBreak:        return os << "break";

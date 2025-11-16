@@ -173,7 +173,7 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eRep:
     case OpCode::eEndRep:
     case OpCode::eIf:
-    case OpCode::eIfc:
+    case OpCode::eIfC:
     case OpCode::eElse:
     case OpCode::eEndIf:
     case OpCode::eBreak:

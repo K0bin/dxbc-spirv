@@ -129,7 +129,7 @@ void Disassembler::disassembleOpcodeToken(std::ostream& stream, const Instructio
     }
   }
 
-  if (op.getOpCode() == OpCode::eIfc
+  if (op.getOpCode() == OpCode::eIfC
     || op.getOpCode() == OpCode::eBreakC
     || op.getOpCode() == OpCode::eSetP) {
     switch (op.getComparisonMode()) {
@@ -478,7 +478,7 @@ bool Disassembler::opBeginsNestedBlock(const Instruction& op) {
   auto opCode = op.getOpCode();
 
   return opCode == OpCode::eIf ||
-         opCode == OpCode::eIfc ||
+         opCode == OpCode::eIfC ||
          opCode == OpCode::eElse ||
          opCode == OpCode::eLoop ||
          opCode == OpCode::eRep;
