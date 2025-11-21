@@ -117,6 +117,12 @@ public:
   sm3::SpecializationConstantBits getSpecConstantLayout(sm3::SpecConstantId id) const override {
     return { 0u, 0u, 32u };
   }
+
+  uint32_t getSamplerSpecConstIndex(sm3::ShaderType shaderType, uint32_t perShaderSamplerIndex) override {
+    constexpr uint32_t MaxTexturesPS      = 16u;
+    constexpr uint32_t FirstVSSamplerSlot = MaxTexturesPS + 1u;
+    return shaderType == sm3::ShaderType::eVertex ? FirstVSSamplerSlot + perShaderSamplerIndex : perShaderSamplerIndex;
+  }
 };
 
 

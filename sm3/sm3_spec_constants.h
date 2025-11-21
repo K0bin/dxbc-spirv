@@ -42,6 +42,8 @@ public:
 
   virtual uint32_t getOptimizedDwordOffset() const = 0;
 
+  virtual uint32_t getSamplerSpecConstIndex(ShaderType shaderType, uint32_t perShaderSamplerIndex) = 0;
+
 };
 
 class SpecializationConstantsMap {
@@ -72,6 +74,10 @@ public:
     return builder.add(ir::Op::UBitExtract(ir::ScalarType::eU32, val,
       builder.makeConstant(bitOffset + layout.bitOffset),
       builder.makeConstant(bitCount)));
+  }
+
+  uint32_t getSamplerSpecConstIndex(ShaderType shaderType, uint32_t perShaderSamplerIndex) {
+    return m_layout.getSamplerSpecConstIndex(shaderType, perShaderSamplerIndex);
   }
 
 private:
