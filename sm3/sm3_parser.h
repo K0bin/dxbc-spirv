@@ -225,8 +225,8 @@ public:
 
   /** Creates operand and sets up the operand type.
    * Other properties need to be set manually. */
-  Operand(OperandInfo info, RegisterType type)
-    : m_token(((uint32_t(type) & 0b11000) << 11u) | (uint32_t(type) & 0b111) << 28u),
+  Operand(OperandInfo info, RegisterType type, uint32_t index)
+    : m_token(((uint32_t(type) & 0b11000) << 11u) | ((uint32_t(type) & 0b111) << 28u) | index << 11u),
       m_info(info) { }
 
   /** Recursively parses operand in byte stream, index operands. */

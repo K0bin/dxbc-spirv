@@ -10,8 +10,6 @@ ir::SsaDef ResourceMap::emitSample(
             ir::Builder& builder,
             uint32_t     samplerIndex,
             ir::SsaDef   texCoord,
-            bool         project,
-            bool         controlProjectWithSpecConst,
             ir::SsaDef   lod,
             ir::SsaDef   lodBias,
             ir::SsaDef   dx,
@@ -32,27 +30,6 @@ ir::SsaDef ResourceMap::emitSample(
   if (dx || dy)
     samplingConfig |= SamplingConfigBit::eExplicitDerivatives;
 
-  if (project || controlProjectWithSpecConst) {
-    auto texCoordType = ir::BasicType(ir::ScalarType::eF32, 4u);
-    auto texCoordW = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(3u)));
-    auto projectedTexCoord = builder.add(ir::Op::FDiv(
-      texCoordType,
-      texCoord,
-      m_converter.broadcastScalar(builder, texCoordW, ComponentBit::eAll)
-    ));
-
-    if (controlProjectWithSpecConst) {
-      uint32_t specConstIdx = m_converter.m_specConstants.getSamplerSpecConstIndex(
-        m_converter.getShaderInfo().getType(), samplerIndex);
-      auto isProjectedSpecConst = m_converter.m_specConstants.get(builder, m_converter.getEntryPoint(), m_converter.m_specConstUbo, SpecConstantId::SpecSamplerProjected, specConstIdx, 1u);
-      auto isProjectedBool = builder.add(ir::Op::INe(ir::ScalarType::eBool, isProjectedSpecConst, builder.makeConstant(0u)));
-      texCoord = builder.add(ir::Op::Select(texCoordType, m_converter.broadcastScalar(builder, isProjectedBool, WriteMask(ComponentBit::eAll)),
-        projectedTexCoord, texCoord));
-    } else {
-      texCoord = projectedTexCoord;
-    }
-  }
-
   auto& samplingFunction = samplerInfo.samplingFunctions.at(uint32_t(samplingConfig));
   if (!samplingFunction) {
     samplingFunction = emitSampleImageFunction(builder, samplerIndex, samplingConfig);
@@ -71,6 +48,28 @@ ir::SsaDef ResourceMap::emitSample(
   }
 
   return builder.add(funcCall);
+}
+
+
+ir::SsaDef ResourceMap::projectTexCoord(ir::Builder& builder, uint32_t samplerIndex, ir::SsaDef texCoord, bool controlWithSpecConst) {
+  auto texCoordType = ir::BasicType(ir::ScalarType::eF32, 4u);
+  auto texCoordW = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(3u)));
+  auto projectedTexCoord = builder.add(ir::Op::FDiv(
+    texCoordType,
+    texCoord,
+    m_converter.broadcastScalar(builder, texCoordW, ComponentBit::eAll)
+  ));
+
+  if (controlWithSpecConst) {
+    uint32_t specConstIdx = m_converter.m_specConstants.getSamplerSpecConstIndex(
+      m_converter.getShaderInfo().getType(), samplerIndex);
+    auto isProjectedSpecConst = m_converter.m_specConstants.get(builder, m_converter.getEntryPoint(), m_converter.m_specConstUbo, SpecConstantId::SpecSamplerProjected, specConstIdx, 1u);
+    auto isProjectedBool = builder.add(ir::Op::INe(ir::ScalarType::eBool, isProjectedSpecConst, builder.makeConstant(0u)));
+    return builder.add(ir::Op::Select(texCoordType, m_converter.broadcastScalar(builder, isProjectedBool, WriteMask(ComponentBit::eAll)),
+      projectedTexCoord, texCoord));
+  } else {
+    return projectedTexCoord;
+  }
 }
 
 
