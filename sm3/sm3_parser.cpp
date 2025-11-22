@@ -469,7 +469,7 @@ void ShaderInfo::resetOnError() {
 
 
 Operand::Operand(util::ByteReader& reader, const OperandInfo& info, Instruction& op, const ShaderInfo& shaderInfo)
-  : Operand(info, RegisterType::eConst) {
+  : Operand(info, RegisterType::eConst, 0u) {
   if (!reader.read(m_token)) {
     Logger::err("Failed to read operand token.");
     resetOnError();

@@ -132,16 +132,6 @@ private:
 
   bool storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::SsaDef value);
 
-  ir::SsaDef sampleImage(
-    ir::Builder& builder,
-    uint32_t     samplerIdx,
-    ir::SsaDef   texCoord,
-    ir::SsaDef   offset,
-    ir::SsaDef   lod,
-    ir::SsaDef   mipBias,
-    ir::SsaDef   dx,
-    ir::SsaDef   dy);
-
   ir::SsaDef broadcastScalar(ir::Builder& builder, ir::SsaDef def, WriteMask mask);
 
   ir::SsaDef swizzleVector(ir::Builder& builder, ir::SsaDef value, Swizzle swizzle, WriteMask writeMask);
@@ -155,6 +145,8 @@ private:
 
   template<typename T>
   ir::SsaDef makeTypedConstant(ir::Builder& builder, ir::BasicType type, T value);
+
+  ir::SsaDef normalizeVector(ir::Builder& builder, ir::SsaDef def);
 
   void logOp(LogLevel severity, const Instruction& op) const;
 

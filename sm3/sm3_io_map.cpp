@@ -84,6 +84,7 @@ void IoMap::initialize(ir::Builder& builder) {
   }
 }
 
+
 void IoMap::finalize(ir::Builder& builder) {
   // Now that all dcl instructions are processed, we can emit the functions containing the switch statements.
   auto inputSwitchFunction = emitDynamicLoadFunction(builder);
@@ -92,6 +93,7 @@ void IoMap::finalize(ir::Builder& builder) {
   auto outputSwitchFunction = emitDynamicStoreFunction(builder);
   builder.rewriteDef(m_outputSwitchFunction, outputSwitchFunction);
 }
+
 
 bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
   const auto& dst = op.getDst();
@@ -150,6 +152,8 @@ void IoMap::dclIoVar(
       ? ir::OpCode::eDclInputBuiltIn
       : ir::OpCode::eDclOutputBuiltIn;
     builtIn = ir::BuiltIn::ePosition;
+  } else if (registerType == RegisterType::eDepthOut) {
+    builtIn = ir::BuiltIn::eDepth;
   } else if (registerType == RegisterType::eMiscType) {
     opCode = ir::OpCode::eDclInputBuiltIn;
     if (registerIndex == uint32_t(MiscTypeIndex(MiscTypeIndex::eMiscTypeFace))) {
@@ -300,11 +304,10 @@ bool IoMap::determineSemanticForRegister(RegisterType regType, uint32_t regIndex
             break;
       }
       break;
+
+    default: return false;
   }
-
-  return false;
 }
-
 
 
 ir::SsaDef IoMap::emitLoad(
@@ -377,6 +380,43 @@ ir::SsaDef IoMap::emitLoad(
 }
 
 
+ir::SsaDef IoMap::emitTexCoordLoad(
+       ir::Builder&            builder,
+ const Instruction&            op,
+       uint32_t                regIdx,
+       WriteMask               componentMask,
+       Swizzle                 swizzle,
+       ir::ScalarType          type) {
+  std::array<ir::SsaDef, 4u> components = { };
+  const IoVarInfo* ioVar = findIoVar(m_variables, RegisterType::ePixelTexCoord, regIdx);
+  if (ioVar == nullptr) {
+    Semantic semantic;
+    bool foundSemantic = determineSemanticForRegister(RegisterType::ePixelTexCoord, regIdx, &semantic);
+    if (!foundSemantic) {
+      m_converter.logOpError(op, "Failed to process I/O load.");
+    } else {
+      dclIoVar(builder, RegisterType::ePixelTexCoord, regIdx, semantic,  WriteMask(ComponentBit::eAll));
+      ioVar = &m_variables.back();
+    }
+  }
+
+  for (auto c : swizzle.getReadMask(componentMask)) {
+    auto componentIndex = uint8_t(util::componentFromBit(c));
+
+    if (!ioVar) {
+      components[componentIndex] = builder.add(ir::Op::Undef(type));
+      continue;
+    }
+
+    ir::SsaDef addressConstant = builder.makeConstant(componentIndex);
+    auto varScalarType = ioVar->baseType.getBaseType(0u).getBaseType();
+    auto value = builder.add(ir::Op::InputLoad(varScalarType, ioVar->baseDef, addressConstant));
+    components[componentIndex] = convertScalar(builder, type, value);
+  }
+
+  return m_converter.composite(builder, ir::BasicType(type, util::popcnt(uint8_t(componentMask))), components.data(), swizzle, componentMask);
+}
+
 
 bool IoMap::emitStore(
         ir::Builder&            builder,
@@ -399,7 +439,8 @@ bool IoMap::emitStore(
 
     bool isOutput = ioVar->registerType == RegisterType::eOutput
       || ioVar->registerType == RegisterType::eAttributeOut
-      || ioVar->registerType == RegisterType::eColorOut;
+      || ioVar->registerType == RegisterType::eColorOut
+      || ioVar->registerType == RegisterType::eDepthOut;
     dxbc_spv_assert(isOutput);
     ir::Type scalarType = ioVar->baseType.isVectorType() ? ioVar->baseType.getBaseType(0u) : ioVar->baseType;
     uint32_t componentIndex = 0u;
@@ -483,6 +524,7 @@ ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
   return function;
 }
 
+
 ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
   auto indexParameter = builder.add(ir::Op::DclParam(ir::ScalarType::eU32));
   if (m_converter.m_options.includeDebugNames) {
@@ -540,13 +582,11 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
 }
 
 
-
 ir::SsaDef IoMap::emitFrontFaceFloat(ir::Builder &builder, ir::SsaDef isFrontFaceDef) const {
   auto frontFaceValue = builder.makeConstant(1.0f);
   auto backFaceValue = builder.makeConstant(-1.0f);
   return builder.add(ir::Op::Select(ir::ScalarType::eF32, isFrontFaceDef, frontFaceValue, backFaceValue));
 }
-
 
 
 IoVarInfo* IoMap::findIoVar(IoVarList& list, RegisterType regType, uint32_t regIndex) {
@@ -561,7 +601,6 @@ IoVarInfo* IoMap::findIoVar(IoVarList& list, RegisterType regType, uint32_t regI
 }
 
 
-
 ir::SsaDef IoMap::convertScalar(ir::Builder& builder, ir::ScalarType dstType, ir::SsaDef value) {
   const auto& srcType = builder.getOp(value).getType();
   dxbc_spv_assert(srcType.isScalarType());
@@ -573,7 +612,6 @@ ir::SsaDef IoMap::convertScalar(ir::Builder& builder, ir::ScalarType dstType, ir
 
   return builder.add(ir::Op::ConsumeAs(dstType, value));
 }
-
 
 
 void IoMap::emitDebugName(
