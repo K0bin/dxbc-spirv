@@ -6,6 +6,16 @@
 
 namespace dxbc_spv::sm3 {
 
+ResourceMap::ResourceMap(Converter& converter)
+: m_converter (converter) {
+
+}
+
+
+ResourceMap::~ResourceMap() {
+
+}
+
 ir::SsaDef ResourceMap::emitSample(
             ir::Builder& builder,
             uint32_t     samplerIndex,
@@ -30,7 +40,7 @@ ir::SsaDef ResourceMap::emitSample(
   if (dx || dy)
     samplingConfig |= SamplingConfigBit::eExplicitDerivatives;
 
-  auto& samplingFunction = samplerInfo.samplingFunctions.at(uint32_t(samplingConfig));
+  auto& samplingFunction = samplerInfo.samplingFunctions.at(uint8_t(samplingConfig));
   if (!samplingFunction) {
     samplingFunction = emitSampleImageFunction(builder, samplerIndex, samplingConfig);
   }

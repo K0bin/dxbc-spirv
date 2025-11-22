@@ -98,6 +98,14 @@ public:
           Swizzle                 swizzle,
           ir::ScalarType          type);
 
+ ir::SsaDef emitTexCoordLoad(
+          ir::Builder&            builder,
+    const Instruction&            op,
+          uint32_t                regIdx,
+          WriteMask               componentMask,
+          Swizzle                 swizzle,
+          ir::ScalarType          type);
+
   /** Stores a scalar or vector value to an output variable. The component
    *  type is ignored, but the component count must match that of the
    *  operand's write mask exactly.
