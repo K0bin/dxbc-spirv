@@ -136,7 +136,6 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eTexCrd:
       return handleTexCoord(builder, op);
 
-    case OpCode::eTexKill:
     case OpCode::eTexLd:
     case OpCode::eTexBem:
     case OpCode::eTexBemL:
@@ -151,10 +150,13 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eTexM3x2Depth:
     case OpCode::eTexDp3:
     case OpCode::eTexM3x3:
-    case OpCode::eTexDepth:
     case OpCode::eTexLdd:
     case OpCode::eTexLdl:
       return handleTextureSample(builder, op);
+
+    case OpCode::eTexKill:
+    case OpCode::eTexDepth:
+      break;
 
     case OpCode::eDst:
     case OpCode::eLrp:
@@ -617,21 +619,16 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
   auto dst = op.getDst();
 
   switch (op.getOpCode()) {
-    case OpCode::eTexKill:
     case OpCode::eTexBem:
     case OpCode::eTexBemL:
-    case OpCode::eTexReg2Ar:
-    case OpCode::eTexReg2Gb:
     case OpCode::eTexM3x2Tex:
     case OpCode::eTexM3x3Tex:
     case OpCode::eTexM3x3Spec:
     case OpCode::eTexM3x3VSpec:
-    case OpCode::eTexReg2Rgb:
     case OpCode::eTexDp3Tex:
     case OpCode::eTexM3x2Depth:
     case OpCode::eTexDp3:
     case OpCode::eTexM3x3:
-    case OpCode::eTexDepth:
       break;
 
     case OpCode::eTexLd: {
@@ -644,13 +641,13 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         lod = builder.makeConstant(0u);
       }
 
-      if (op.getOpCode() == OpCode::eTexLd && getShaderInfo().getVersion().first < 2u) {
+      if (getShaderInfo().getVersion().first <= 1u) {
         dxbc_spv_assert(getShaderInfo().getType() == ShaderType::ePixel);
         samplerIdx = dst.getIndex();
         if (getShaderInfo().getVersion().second >= 4u) {
           /* texld - ps_1_4 */
           auto src0 = op.getSrc(0u);
-          texCoord = loadSrcModified(builder, op, src0, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+          texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, ir::ScalarType::eF32);
         } else {
           /* tex - ps_1_1 - ps_1_3 */
           /* The destination register index decides the sampler and texture coord index. */
@@ -661,7 +658,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         /* texld - sm_2_0 and up */
         auto src0 = op.getSrc(0u);
         auto src1 = op.getSrc(1u);
-        texCoord = loadSrcModified(builder, op, src0, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+        texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, ir::ScalarType::eF32);
         samplerIdx = src1.getIndex();
 
         switch (op.getTexLdMode()) {
@@ -674,6 +671,10 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
           default: break;
         }
       }
+
+      if (m_parser.getShaderInfo().getVersion().first <= 1u && m_parser.getShaderInfo().getVersion().second < 4u)
+        texCoord = m_resources.projectTexCoord(builder, samplerIdx, texCoord, true);
+
       result = m_resources.emitSample(builder, samplerIdx, texCoord, lod, lodBias, ir::SsaDef(), ir::SsaDef());
     } break;
 
@@ -681,9 +682,9 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       auto src0 = op.getSrc(0u);
       auto src1 = op.getSrc(1u);
       auto src2 = op.getSrc(2u);
-      auto texCoord = loadSrcModified(builder, op, src0, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+      auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, ir::ScalarType::eF32);
       uint32_t samplerIdx = src1.getIndex();
-      auto lod = loadSrcModified(builder, op, src2, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+      auto lod = loadSrcModified(builder, op, src2, ComponentBit::eAll, ir::ScalarType::eF32);
       result = m_resources.emitSample(builder, samplerIdx, texCoord, lod, ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
     } break;
 
@@ -692,11 +693,33 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       auto src1 = op.getSrc(1u);
       auto src2 = op.getSrc(2u);
       auto src3 = op.getSrc(3u);
-      auto texCoord = loadSrcModified(builder, op, src0, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+      auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, ir::ScalarType::eF32);
       uint32_t samplerIdx = src1.getIndex();
-      auto dx = loadSrcModified(builder, op, src2, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
-      auto dy = loadSrcModified(builder, op, src3, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+      auto dx = loadSrcModified(builder, op, src2, ComponentBit::eAll, ir::ScalarType::eF32);
+      auto dy = loadSrcModified(builder, op, src3, ComponentBit::eAll, ir::ScalarType::eF32);
       result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), dx, dy);
+    } break;
+
+    case OpCode::eTexReg2Ar:
+    case OpCode::eTexReg2Gb:
+    case OpCode::eTexReg2Rgb: {
+      Swizzle swizzle = Swizzle::identity();
+      switch (op.getOpCode()) {
+        case OpCode::eTexReg2Ar:  swizzle = Swizzle(Component::eW, Component::eX, Component::eX, Component::eX); break;
+        case OpCode::eTexReg2Gb:  swizzle = Swizzle(Component::eY, Component::eZ, Component::eZ, Component::eZ); break;
+        case OpCode::eTexReg2Rgb: swizzle = Swizzle(Component::eX, Component::eY, Component::eZ, Component::eZ); break;
+        default: dxbc_spv_unreachable(); break;
+      }
+
+      auto src0 = op.getSrc(0u);
+      auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, ir::ScalarType::eF32);
+      texCoord = swizzleVector(builder, texCoord, swizzle, ComponentBit::eAll);
+      uint32_t samplerIdx = dst.getIndex();
+
+      if (m_parser.getShaderInfo().getVersion().first <= 1u && m_parser.getShaderInfo().getVersion().second < 4u)
+        texCoord = m_resources.projectTexCoord(builder, samplerIdx, texCoord, true);
+
+      result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
     } break;
   }
 
