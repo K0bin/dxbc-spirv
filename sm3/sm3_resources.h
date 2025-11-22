@@ -83,8 +83,6 @@ public:
             ir::Builder& builder,
             uint32_t     samplerIndex,
             ir::SsaDef   texCoord,
-            bool         project,
-            bool         controlProjectWithSpecConst,
             ir::SsaDef   lod,
             ir::SsaDef   lodBias,
             ir::SsaDef   dx,
@@ -103,6 +101,8 @@ public:
   bool handleDclSampler(ir::Builder& builder, const Instruction& op);
 
   bool dclSamplerAndAllTextureTypes(ir::Builder& builder, uint32_t samplerIndex);
+
+  ir::SsaDef projectTexCoord(ir::Builder& builder, uint32_t samplerIndex, ir::SsaDef texCoord, bool controlWithSpecConst);
 
 private:
 

@@ -613,6 +613,9 @@ bool Converter::handleTexCoord(ir::Builder &builder, const Instruction &op) {
 
 
 bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op) {
+  ir::SsaDef result = ir::SsaDef();
+  auto dst = op.getDst();
+
   switch (op.getOpCode()) {
     case OpCode::eTexKill:
     case OpCode::eTexBem:
@@ -631,12 +634,16 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     case OpCode::eTexDepth:
       break;
 
-    case OpCode::eTexLd:
-    case OpCode::eTexLdd:
-    case OpCode::eTexLdl: {
-      auto dst = op.getDst();
+    case OpCode::eTexLd: {
       uint32_t samplerIdx;
       ir::SsaDef texCoord;
+      ir::SsaDef lodBias = ir::SsaDef();
+      ir::SsaDef lod = ir::SsaDef();
+
+      if (getShaderInfo().getType() == ShaderType::eVertex) {
+        lod = builder.makeConstant(0u);
+      }
+
       if (op.getOpCode() == OpCode::eTexLd && getShaderInfo().getVersion().first < 2u) {
         dxbc_spv_assert(getShaderInfo().getType() == ShaderType::ePixel);
         samplerIdx = dst.getIndex();
@@ -645,21 +652,55 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
           auto src0 = op.getSrc(0u);
           texCoord = loadSrcModified(builder, op, src0, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
         } else {
-          /* tex */
-          //texCoord = loadSrcModified()
+          /* tex - ps_1_1 - ps_1_3 */
+          /* The destination register index decides the sampler and texture coord index. */
+          auto texCoordOperand = Operand(OperandInfo { OperandKind::eSrcReg, ir::ScalarType::eF32 }, RegisterType::eTexture, samplerIdx);
+          texCoord = m_ioMap.emitLoad(builder, op, texCoordOperand, ComponentBit::eAll, Swizzle::identity(), ir::ScalarType::eF32);
         }
       } else {
         /* texld - sm_2_0 and up */
         auto src0 = op.getSrc(0u);
         auto src1 = op.getSrc(1u);
-        samplerIdx = src1.getIndex();
         texCoord = loadSrcModified(builder, op, src0, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+        samplerIdx = src1.getIndex();
+
+        switch (op.getTexLdMode()) {
+          case TexLdMode::eProject:
+            texCoord = m_resources.projectTexCoord(builder, samplerIdx, texCoord, false);
+            break;
+          case TexLdMode::eBias:
+            lodBias = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(3u)));
+            break;
+          default: break;
+        }
       }
+      result = m_resources.emitSample(builder, samplerIdx, texCoord, lod, lodBias, ir::SsaDef(), ir::SsaDef());
+    } break;
+
+    case OpCode::eTexLdl: {
+      auto src0 = op.getSrc(0u);
+      auto src1 = op.getSrc(1u);
+      auto src2 = op.getSrc(2u);
+      auto texCoord = loadSrcModified(builder, op, src0, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+      uint32_t samplerIdx = src1.getIndex();
+      auto lod = loadSrcModified(builder, op, src2, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+      result = m_resources.emitSample(builder, samplerIdx, texCoord, lod, ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
+    } break;
+
+    case OpCode::eTexLdd: {
+      auto src0 = op.getSrc(0u);
+      auto src1 = op.getSrc(1u);
+      auto src2 = op.getSrc(2u);
+      auto src3 = op.getSrc(3u);
+      auto texCoord = loadSrcModified(builder, op, src0, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+      uint32_t samplerIdx = src1.getIndex();
+      auto dx = loadSrcModified(builder, op, src2, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+      auto dy = loadSrcModified(builder, op, src3, dst.getWriteMask(getShaderInfo()), ir::ScalarType::eF32);
+      result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), dx, dy);
     } break;
   }
-  const auto& dst = op.getDst();
-  const auto& texture = op.getSrc(0u);
-  uint32_t slot = dst.getIndex();
+
+  storeDstModifiedPredicated(builder, op, dst, dst.getWriteMask(getShaderInfo()), result);
 }
 
 
