@@ -98,6 +98,11 @@ public:
           Swizzle                 swizzle,
           ir::ScalarType          type);
 
+ /** Loads a texture coordinate register and returns a scalar or vector containing
+  *  one element for each component in the component mask. Applies swizzles,
+  *  but does not support modifiers in any capacity.
+  *
+  *  Returns a \c null def on error. */
  ir::SsaDef emitTexCoordLoad(
           ir::Builder&            builder,
     const Instruction&            op,
@@ -119,7 +124,16 @@ public:
     const Instruction&            op,
     const Operand&                operand,
           WriteMask               writeMask,
+          ir::SsaDef              predicateVec,
           ir::SsaDef              value);
+
+ /** Stores a scalar vector to the depth output register.
+  *
+  *  Returns \c false on error. */
+ bool emitDepthStore(
+         ir::Builder&            builder,
+   const Instruction&            op,
+         ir::SsaDef              value);
 
 private:
 

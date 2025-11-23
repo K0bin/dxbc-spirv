@@ -29,11 +29,17 @@ public:
           WriteMask               componentMask,
           ir::ScalarType          type);
 
+  ir::SsaDef emitLoadPredicate(
+          ir::Builder&            builder,
+          Swizzle                 swizzle,
+          WriteMask               componentMask);
+
   /** Stores temporary register. */
   bool emitStore(
           ir::Builder&            builder,
     const Operand&                operand,
           WriteMask               writeMask,
+          ir::SsaDef              predicateVec,
           ir::SsaDef              value);
 
 private:

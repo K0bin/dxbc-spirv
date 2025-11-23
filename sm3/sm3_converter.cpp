@@ -744,12 +744,12 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         /* TexM3x2Depth doesn't actually sample. */
         auto z = components.at(0u);
         auto w = components.at(1u);
+        result = buildVector(builder, scalarType, components.size(), components.data());
         auto isZero = builder.add(ir::Op::FEq(ir::ScalarType::eBool, w, builder.makeConstantZero(scalarType)));
         auto depth = builder.add(ir::Op::Select(scalarType, isZero,
           makeTypedConstant(builder, scalarType, 1.0f),
           builder.add(ir::Op::FDiv(scalarType, z, w))));
-        auto depthOutOperand = Operand(OperandInfo { OperandKind::eDstReg, ir::ScalarType::eF32 }, RegisterType::eDepthOut, 0u);
-        storeDst(builder, op, depthOutOperand, ComponentBit::eX, depth);
+        m_ioMap.emitDepthStore(builder, op, depth);
         /* Docs: After running texm3x2depth, register t(m+1) is no longer available for use in the shader. */
 
       } else if (opCode == OpCode::eTexM3x3) {
@@ -914,13 +914,6 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
       modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
     } break;
 
-    case OperandModifier::eNot: {
-      // TODO: Move this out of here because it can only be used with the predicate register.
-      // The NOT modifier can only be used with the predicate register which always stores a boolean.
-      dxbc_spv_assert(type.isBoolType());
-      modifiedDef = builder.add(ir::Op::BNot(type, modifiedDef));
-    }
-
     case OperandModifier::eNone:
       break;
 
@@ -1050,17 +1043,17 @@ ir::SsaDef Converter::loadSrcModified(ir::Builder& builder, const Instruction& o
 }
 
 
-bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask writeMask, ir::SsaDef value) {
+bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask writeMask, ir::SsaDef predicateVec, ir::SsaDef value) {
   switch (operand.getRegisterType()) {
     case RegisterType::eTemp:
-      return m_regFile.emitStore(builder, operand, writeMask, value);
+      return m_regFile.emitStore(builder, operand, writeMask, predicateVec, value);
 
     case RegisterType::eOutput:
     case RegisterType::eRasterizerOut:
     case RegisterType::eAttributeOut:
     case RegisterType::eColorOut:
     case RegisterType::eDepthOut:
-      return m_ioMap.emitStore(builder, op, operand, writeMask, value);
+      return m_ioMap.emitStore(builder, op, operand, writeMask, predicateVec, value);
 
     default: {
       auto name = makeRegisterDebugName(operand.getRegisterType(), 0u, writeMask);
@@ -1072,7 +1065,16 @@ bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Oper
 
 bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask writeMask, ir::SsaDef value) {
   value = applyDstModifiers(builder, value, op, operand, writeMask);
-  return storeDst(builder, op, operand, writeMask, value);
+  ir::SsaDef predicate = ir::SsaDef();
+  if (operand.isPredicated()) {
+    predicate = m_regFile.emitLoadPredicate(builder, operand.getPredicateSwizzle(), writeMask);
+    if (operand.getPredicateModifier() == OperandModifier::eNot) {
+      predicate = builder.add(ir::Op::BNot(makeVectorType(ir::ScalarType::eBool, writeMask), predicate));
+    } else if (operand.getPredicateModifier() != OperandModifier::eNone) {
+      Logger::log(LogLevel::eError, "Unknown predicate modifier: ", uint32_t(operand.getPredicateModifier()));
+    }
+  }
+  return storeDst(builder, op, operand, writeMask, predicate, value);
 }
 
 
