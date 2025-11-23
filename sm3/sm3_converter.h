@@ -128,7 +128,7 @@ private:
 
   ir::SsaDef loadSrcModified(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::ScalarType type);
 
-  bool storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::SsaDef value);
+  bool storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::SsaDef predicateVec, ir::SsaDef value);
 
   bool storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::SsaDef value);
 

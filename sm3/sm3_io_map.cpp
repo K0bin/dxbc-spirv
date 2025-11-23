@@ -280,6 +280,10 @@ bool IoMap::determineSemanticForRegister(RegisterType regType, uint32_t regIndex
       *semantic = Semantic { SemanticUsage::eTexCoord, regIndex };
       return true;
 
+    case RegisterType::eDepthOut:
+      *semantic = Semantic { SemanticUsage::eDepth, regIndex };
+      return true;
+
     case RegisterType::eAttributeOut:
       switch (regIndex) {
         case uint32_t(RasterizerOutIndex::eRasterOutFog):
@@ -305,8 +309,9 @@ bool IoMap::determineSemanticForRegister(RegisterType regType, uint32_t regIndex
       }
       break;
 
-    default: return false;
+    default: break;
   }
+  return false;
 }
 
 
@@ -423,6 +428,7 @@ bool IoMap::emitStore(
   const Instruction&            op,
   const Operand&                operand,
         WriteMask               writeMask,
+        ir::SsaDef              predicateVec,
         ir::SsaDef              value) {
   if (!operand.hasRelativeAddressing()) {
     const IoVarInfo* ioVar = findIoVar(m_variables, operand.getRegisterType(), operand.getIndex());
@@ -456,7 +462,19 @@ bool IoMap::emitStore(
         valueScalar = builder.add(ir::Op::FClamp(scalarType, valueScalar,
           builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
       }
+
+      ir::SsaDef predicateIf = ir::SsaDef();
+      if (predicateVec) {
+        /* Check if the matching component of the predicate register vector is true first. */
+        auto condComponent = m_converter.extractFromVector(builder, predicateVec, componentIndex);
+        predicateIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), condComponent));
+      }
       builder.add(ir::Op::OutputStore(ioVar->baseDef, dstComponentIndexConst, valueScalar));
+      if (predicateIf) {
+        auto predicateIfEnd = builder.add(ir::Op::ScopedEndIf(predicateIf));
+        builder.rewriteOp(predicateIf, ir::Op(builder.getOp(predicateIf)).setOperand(0u, predicateIfEnd));
+      }
+
       componentIndex++;
     }
   } else {
@@ -471,15 +489,46 @@ bool IoMap::emitStore(
       auto dstComponentIndexConst = builder.makeConstant(uint32_t(util::componentFromBit(c)));
       auto componentIndexConst = builder.makeConstant(componentIndex);
       auto valueScalar = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, value, componentIndexConst));
+
+      ir::SsaDef predicateIf = ir::SsaDef();
+      if (predicateVec) {
+        /* Check if the matching component of the predicate register vector is true first. */
+        auto condComponent = m_converter.extractFromVector(builder, predicateVec, componentIndex);
+        predicateIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), condComponent));
+      }
       builder.add(ir::Op::FunctionCall(ir::Type(ir::ScalarType::eF32, 4u), m_outputSwitchFunction)
         .addOperand(index)
         .addOperand(dstComponentIndexConst)
         .addOperand(valueScalar));
+      if (predicateIf) {
+        auto predicateIfEnd = builder.add(ir::Op::ScopedEndIf(predicateIf));
+        builder.rewriteOp(predicateIf, ir::Op(builder.getOp(predicateIf)).setOperand(0u, predicateIfEnd));
+      }
+
       componentIndex++;
     }
   }
   return true;
 }
+
+
+bool IoMap::emitDepthStore(ir::Builder &builder, const Instruction &op, ir::SsaDef value) {
+  const IoVarInfo* ioVar = findIoVar(m_variables, RegisterType::eDepthOut, 0u);
+  if (ioVar == nullptr) {
+    Semantic semantic;
+    bool foundSemantic = determineSemanticForRegister(RegisterType::eDepthOut, 0u, &semantic);
+    if (!foundSemantic) {
+      m_converter.logOpError(op, "Failed to process I/O store.");
+      return false;
+    }
+    dclIoVar(builder, RegisterType::eDepthOut, 0u, semantic,  WriteMask(ComponentBit::eAll));
+    ioVar = &m_variables.back();
+  }
+  ir::Type scalarType = ioVar->baseType.isVectorType() ? ioVar->baseType.getBaseType(0u) : ioVar->baseType;
+  builder.add(ir::Op::OutputStore(ioVar->baseDef, ir::SsaDef(), value));
+  return true;
+}
+
 
 
 ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {

@@ -41,6 +41,9 @@ ir::SsaDef RegisterFile::emitLoad(
   WriteMask componentMask,
   ir::ScalarType type
 ) {
+  /* The register types handled here do not support relative addressing. */
+  dxbc_spv_assert(!operand.hasRelativeAddressing());
+
   auto swizzle = operand.getSwizzle(m_converter.getShaderInfo());
   auto returnType = m_converter.makeVectorType(type, componentMask);
 
@@ -48,10 +51,10 @@ ir::SsaDef RegisterFile::emitLoad(
 
   std::array<ir::SsaDef, 4u> components = { };
 
-  ir::SsaDef scalar;
   for (auto c : swizzle.getReadMask(componentMask)) {
     auto component = componentFromBit(c);
 
+    ir::SsaDef scalar;
     ir::ScalarType loadType = type;
 
     switch (operand.getRegisterType()) {
@@ -84,7 +87,6 @@ ir::SsaDef RegisterFile::emitLoad(
       } break;
 
       case RegisterType::ePredicate: {
-        dxbc_spv_assert(c == ComponentBit::eX);
         dxbc_spv_assert(type == ir::ScalarType::eBool);
         scalar = builder.add(ir::Op::TmpLoad(ir::ScalarType::eBool, m_pReg));
       } break;
@@ -105,10 +107,28 @@ ir::SsaDef RegisterFile::emitLoad(
 }
 
 
+ir::SsaDef RegisterFile::emitLoadPredicate(
+          ir::Builder&            builder,
+          Swizzle                 swizzle,
+          WriteMask               componentMask) {
+  auto returnType = m_converter.makeVectorType(ir::ScalarType::eBool, componentMask);
+
+  std::array<ir::SsaDef, 4u> components = { };
+  for (auto c : swizzle.getReadMask(componentMask)) {
+    auto component = componentFromBit(c);
+    components[uint8_t(component)] = builder.add(ir::Op::TmpLoad(ir::ScalarType::eBool, m_pReg));
+  }
+
+  return m_converter.composite(builder, returnType, components.data(), swizzle, componentMask);
+}
+
+
+
 bool RegisterFile::emitStore(
           ir::Builder&            builder,
     const Operand&                operand,
           WriteMask               writeMask,
+          ir::SsaDef              predicateVec,
           ir::SsaDef              value) {
   const auto& valueDef = builder.getOp(value);
   auto valueType = valueDef.getType().getBaseType(0u);
@@ -121,7 +141,7 @@ bool RegisterFile::emitStore(
     auto component = componentFromBit(c);
 
     /* Extract scalar and 'convert' to unknown type */
-    auto scalar = m_converter.extractFromVector(builder, value, componentIndex++);
+    auto scalar = m_converter.extractFromVector(builder, value, componentIndex);
 
     ir::SsaDef reg;
     switch (operand.getRegisterType()) {
@@ -147,9 +167,23 @@ bool RegisterFile::emitStore(
         }
         reg = m_a0Reg[uint8_t(component)];
       } break;
+
+      default: dxbc_spv_assert(false); return false;
     }
 
+    ir::SsaDef predicateIf = ir::SsaDef();
+    if (predicateVec) {
+      /* Check if the matching component of the predicate register vector is true first. */
+      auto condComponent = m_converter.extractFromVector(builder, predicateVec, componentIndex);
+      predicateIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), condComponent));
+    }
     builder.add(ir::Op::TmpStore(reg, scalar));
+    if (predicateIf) {
+      auto predicateIfEnd = builder.add(ir::Op::ScopedEndIf(predicateIf));
+      builder.rewriteOp(predicateIf, ir::Op(builder.getOp(predicateIf)).setOperand(0u, predicateIfEnd));
+    }
+
+    componentIndex++;
   }
 
   return true;
