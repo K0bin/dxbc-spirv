@@ -121,7 +121,23 @@ bool ResourceMap::dclSamplerAndAllTextureTypes(ir::Builder& builder, uint32_t sa
 ir::SsaDef ResourceMap::dclSampler(ir::Builder& builder, uint32_t samplerIndex) {
   auto samplerDef = builder.add(ir::Op::DclSampler(m_converter.getEntryPoint(), 0u, samplerIndex, 1u));
   if (m_converter.m_options.includeDebugNames) {
-    std::string name = m_converter.makeRegisterDebugName(RegisterType::eSampler, samplerIndex, ComponentBit::eAll);
+    const ConstantInfo* ctabEntry = nullptr;
+    for (const auto& entry : m_converter.m_ctab.entries()[uint32_t(ConstantType::eSampler)]) {
+      if (entry.index <= samplerIndex && entry.index + entry.count > samplerIndex) {
+        ctabEntry = &entry;
+        break;
+      }
+    }
+
+    std::stringstream nameStream;
+    nameStream << "s_";
+    nameStream << samplerIndex;
+    if (ctabEntry) {
+      nameStream << "_";
+      nameStream << ctabEntry->name;
+    }
+
+    std::string name = nameStream.str();
     builder.add(ir::Op::DebugName(samplerDef, name.c_str()));
   }
   return samplerDef;
@@ -132,9 +148,21 @@ ir::SsaDef ResourceMap::dclTexture(ir::Builder& builder, SpecConstTextureType te
   auto textureDef = builder.add(ir::Op::DclSrv(ir::ScalarType::eF32, m_converter.getEntryPoint(), 0u,
     samplerIndex, 1u, resourceKindFromTextureType(textureTypeFromSpecConstTextureType(textureType))));
   if (m_converter.m_options.includeDebugNames) {
+    const ConstantInfo* ctabEntry = nullptr;
+    for (const auto& entry : m_converter.m_ctab.entries()[uint32_t(ConstantType::eSampler)]) {
+      if (entry.index <= samplerIndex && entry.index + entry.count > samplerIndex) {
+        ctabEntry = &entry;
+        break;
+      }
+    }
+
     std::stringstream nameStream;
     nameStream << "s_";
     nameStream << samplerIndex;
+    if (ctabEntry) {
+      nameStream << "_";
+      nameStream << ctabEntry->name;
+    }
     nameStream << "_";
     nameStream << textureTypeFromSpecConstTextureType(textureType);
 
@@ -208,9 +236,21 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
   builder.add(ir::Op::FunctionEnd());
 
   if (m_converter.m_options.includeDebugNames) {
+    const ConstantInfo* ctabEntry = nullptr;
+    for (const auto& entry : m_converter.m_ctab.entries()[uint32_t(ConstantType::eSampler)]) {
+      if (entry.index <= samplerIndex && entry.index + entry.count > samplerIndex) {
+        ctabEntry = &entry;
+        break;
+      }
+    }
+
     std::stringstream nameStream;
     nameStream << "sampleTexture_";
     nameStream << samplerIndex;
+    if (ctabEntry) {
+      nameStream << "_";
+      nameStream << ctabEntry->name;
+    }
     if (config & SamplingConfigBit::eExplicitLod)
       nameStream << "_explicit";
     if (config & SamplingConfigBit::eLodBias)
