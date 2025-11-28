@@ -53,17 +53,33 @@ struct SamplerRegister {
   std::array<ir::SsaDef, 6u> samplingFunctions = { };
 };
 
+struct ConstantRange {
+  /** Declaration of a function to read the data. */
+  ir::SsaDef functionDef = { };
 
-/** Retrieved typed resource parameters */
-struct ResourceProperties {
-  /* Resource kind */
-  ir::ResourceKind kind = { };
+  /** The constant register index of the element in this array. */
+  uint32_t startIndex = 0u;
 
-  /* Scalar sampled type */
-  ir::ScalarType type = { };
+  /** The amount of constants in this array. */
+  uint32_t count = 256u;
+};
 
-  /* Loaded descriptor */
-  ir::SsaDef descriptor = { };
+template<typename T>
+struct Constants {
+  /** All constant array ranges for this constant type. This will only contain more than
+   * one element if debug names are enabled. */
+  util::small_vector<ConstantRange, 8u> constantRanges;
+
+  /** The highest index of any constant of this type that gets read. */
+  uint32_t maxAccessedConstant = 0u;
+
+  /** All statically defined constants of this constant type. */
+  util::small_vector<std::pair<uint32_t, T>, 2u> definedConstants;
+
+  /** The highest index of any constant of this type that gets statically defined. */
+  uint32_t maxDefinedConstant = 0u;
+
+  ir::SsaDef bufferDef = { };
 };
 
 
@@ -76,6 +92,8 @@ public:
     explicit ResourceMap(Converter& converter);
 
     ~ResourceMap();
+
+    void initialize(ir::Builder& builder, bool isSwvp, bool useDebugNames);
 
     /** Loads a resource or sampler descriptor and retrieves basic
      *  properties required to perform any operations on typed resources. */
@@ -109,6 +127,10 @@ private:
   Converter& m_converter;
 
   std::array<SamplerRegister, 32> m_samplers;
+
+  Constants<float> m_floatConstants;
+  Constants<int32_t> m_intConstants;
+  Constants<bool> m_boolConstants;
 
   ir::SsaDef dclSampler(ir::Builder& builder, uint32_t samplerIndex);
 
@@ -156,6 +178,25 @@ private:
     ir::SsaDef lodBias,
     ir::SsaDef dx,
     ir::SsaDef dy
+  );
+
+  ir::SsaDef dclConstantAccessFunction(
+    ir::Builder&   builder,
+    ir::SsaDef     buffer,
+    ir::Type       bufferMemberType,
+    ir::Type       consumeAsType,
+    uint32_t       offset,
+    uint32_t       count,
+    const char*    name
+  );
+
+  ir::SsaDef dclConstantBuffer(
+    ir::Builder&   builder,
+    ir::ScalarType type,
+    uint32_t       vectorSize,
+    uint32_t       arrayLength,
+    uint32_t       regIdx,
+    const char*    name
   );
 
 };
