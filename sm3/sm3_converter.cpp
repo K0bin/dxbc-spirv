@@ -197,9 +197,6 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
 
 
 bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
-  m_ioMap.initialize(builder);
-  m_regFile.initialize(builder);
-
   /* A valid debug namee is required for the main function */
   m_entryPoint.mainFunc = builder.add(ir::Op::Function(ir::ScalarType::eVoid));
   builder.add(ir::Op::FunctionEnd());
@@ -217,6 +214,9 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
   /* Need to emit the shader name regardless of debug names as well */
   if (m_options.name)
     builder.add(ir::Op::DebugName(m_entryPoint.def, m_options.name));
+
+  m_ioMap.initialize(builder);
+  m_regFile.initialize(builder);
 
   /* Set cursor to main function so that instructions will be emitted
    * in the correct location */
