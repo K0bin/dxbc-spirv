@@ -174,7 +174,7 @@ void IoMap::dclIoVar(
     }
   }
 
-  bool isBuiltin = opCode == ir::OpCode::eDclInput || opCode == ir::OpCode::eDclOutput;
+  bool isBuiltin = opCode != ir::OpCode::eDclInput && opCode != ir::OpCode::eDclOutput;
 
   bool supportsRelativeAddressing = m_converter.getShaderInfo().getVersion().first == 3
     && (m_converter.getShaderInfo().getType() == ShaderType::eVertex || isInput);
