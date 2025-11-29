@@ -51,9 +51,9 @@ struct IoVarInfo {
    /* Variable definition. May be an input or an output. */
   ir::SsaDef baseDef = { };
 
-  /* Temp definition for outputs. Outputs can't be turned into SSA
-   * so work with this until the end of the shader. */
-  ir::SsaDef tempDef = { };
+  /* Scalar temp definitions for outputs. Outputs can't be turned into SSA
+   * so work with those until the end of the shader. */
+  std::array<ir::SsaDef, 4u> tempDefs = { };
 };
 
 /** I/O register map.
