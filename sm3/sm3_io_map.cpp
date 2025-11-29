@@ -607,8 +607,6 @@ ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
   auto switchDef = builder.add(ir::Op::ScopedSwitch(ir::SsaDef(), indexArg));
 
   for (uint32_t i = 0u; i < MaxIoArraySize; i++) {
-    builder.add(ir::Op::ScopedSwitchCase(switchDef, i));
-
     const IoVarInfo* ioVar = nullptr;
     for (const auto& variable : m_variables) {
       if (variable.registerType == RegisterType::eInput && variable.registerIndex == i) {
@@ -620,6 +618,7 @@ ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
       continue;
 
     dxbc_spv_assert(ioVar != nullptr);
+    builder.add(ir::Op::ScopedSwitchCase(switchDef, i));
 
     auto input = builder.add(ir::Op::InputLoad(ioVar->baseType, ioVar->baseDef, ir::SsaDef()));
     auto baseType = ioVar->baseType.getBaseType(0u);
@@ -641,6 +640,8 @@ ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
 
   auto switchEnd = builder.add(ir::Op::ScopedEndSwitch(switchDef));
   builder.rewriteOp(switchDef, ir::Op::ScopedSwitch(switchEnd, indexArg));
+
+  builder.add(ir::Op::Return(ir::Type(ir::ScalarType::eF32, 4u), builder.makeConstant(0.0f, 0.0f, 0.0f, 0.0f)));
 
   builder.add(ir::Op::FunctionEnd());
   return function;
@@ -680,8 +681,6 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
   auto switchDef = builder.add(switchDecl);
 
   for (uint32_t i = 0u; i < MaxIoArraySize; i++) {
-    builder.add(ir::Op::ScopedSwitchCase(switchDef, i));
-
     const IoVarInfo* ioVar = nullptr;
     for (const auto& variable : m_variables) {
       if (variable.registerType == RegisterType::eOutput && variable.registerIndex == i) {
@@ -693,6 +692,7 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
       continue;
 
     dxbc_spv_assert(ioVar != nullptr);
+    builder.add(ir::Op::ScopedSwitchCase(switchDef, i));
 
     auto baseType = ioVar->baseType.getBaseType(0u);
     if (!baseType.isScalar()) {
