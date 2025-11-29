@@ -48,8 +48,12 @@ struct IoVarInfo {
    * type of the base definition, unless that is a function. */
   ir::Type baseType = { };
 
-  /* Variable definition. May be an input or an output. */
+   /* Variable definition. May be an input or an output. */
   ir::SsaDef baseDef = { };
+
+  /* Temp definition for outputs. Outputs can't be turned into SSA
+   * so work with this until the end of the shader. */
+  ir::SsaDef tempDef = { };
 };
 
 /** I/O register map.
@@ -145,8 +149,13 @@ private:
   ir::SsaDef      m_inputSwitchFunction = { };
   ir::SsaDef      m_outputSwitchFunction = { };
 
+  ir::SsaDef      m_flushOutputsFunction = { };
+
   ir::SsaDef emitDynamicLoadFunction(ir::Builder& builder) const;
   ir::SsaDef emitDynamicStoreFunction(ir::Builder& builder) const;
+  ir::SsaDef emitFlushOutputsFunction(ir::Builder& builder) const;
+
+  void flushOutputs(ir::Builder& builder) const;
 
   void dclIoVar(
    ir::Builder& builder,
@@ -174,7 +183,8 @@ private:
     uint32_t registerIndex,
     WriteMask writeMask,
     Semantic semantic,
-    bool isInput) const;
+    bool isInput,
+    bool isTemp) const;
 };
 
 }
