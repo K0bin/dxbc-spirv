@@ -19,6 +19,9 @@ IoMap::~IoMap() {
 void IoMap::initialize(ir::Builder& builder) {
   const ShaderInfo& info = m_converter.getShaderInfo();
 
+  // Emit placeholder
+  m_flushOutputsFunction = builder.add(ir::Op::Function(ir::Type()));
+
   if (info.getVersion().first >= 3u) {
     // Emit functions that pick a register using
     // a switch statement to allow relative addressing
@@ -100,6 +103,13 @@ void IoMap::finalize(ir::Builder& builder) {
     builder.rewriteDef(m_outputSwitchFunction, outputSwitchFunction);
     builder.setCursor(cursor);
   }
+
+  ir::SsaDef cursor = builder.setCursor(m_flushOutputsFunction);
+  auto flushOutputFunction = emitFlushOutputsFunction(builder);
+  builder.rewriteDef(m_flushOutputsFunction, flushOutputFunction);
+  builder.setCursor(cursor);
+
+  flushOutputs(builder);
 }
 
 
@@ -186,9 +196,10 @@ void IoMap::dclIoVar(
     || registerIndex == uint32_t(RasterizerOutIndex::eRasterOutPointSize));
   isScalar |= registerType == RegisterType::eMiscType && registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace);
 
+  uint32_t typeVectorSize = isScalar ? 1u : util::popcnt(uint8_t(componentMask));
   ir::Type type(
     builtIn == ir::BuiltIn::eIsFrontFace ? ir::ScalarType::eBool : ir::ScalarType::eF32,
-    isScalar ? 1u : util::popcnt(uint8_t(componentMask))
+    typeVectorSize
   );
 
   ir::Op declaration = ir::Op(opCode, type)
@@ -222,7 +233,10 @@ void IoMap::dclIoVar(
   mapping.componentMask = componentMask;
   mapping.baseType = declaration.getType();
   mapping.baseDef = builder.add(std::move(declaration));
-
+  mapping.tempDef = ir::SsaDef();
+  if (!isInput) {
+    mapping.tempDef = builder.add(ir::Op::DclTmp(type, m_converter.getEntryPoint()));
+  }
 
   if (!isInput) {
     if (semantic == Semantic { SemanticUsage::eColor, 0u }) {
@@ -231,8 +245,8 @@ void IoMap::dclIoVar(
         builder.makeConstant(1.0f), builder.makeConstant(1.0f),
         builder.makeConstant(1.0f), builder.makeConstant(1.0f),
       };
-      builder.add(ir::Op::OutputStore(mapping.baseDef, ir::SsaDef(),
-        m_converter.buildVector(builder, ir::ScalarType::eF32, 4u, components.data())));
+      builder.add(ir::Op::TmpStore(mapping.tempDef,
+        m_converter.buildVector(builder, ir::ScalarType::eF32, typeVectorSize, components.data())));
     } else if (semantic.usage == SemanticUsage::eColor) {
       /* The default for other color registers is 0.0, 0.0, 0.0, 1.0.
        * TODO: If it's used with a SM3 PS, we need to export 0,0,0,0 as the default for color1.
@@ -241,11 +255,11 @@ void IoMap::dclIoVar(
         builder.makeConstant(0.0f), builder.makeConstant(0.0f),
         builder.makeConstant(0.0f), builder.makeConstant(1.0f),
       };
-      builder.add(ir::Op::OutputStore(mapping.baseDef, ir::SsaDef(),
-        m_converter.buildVector(builder, ir::ScalarType::eF32, 4u, components.data())));
+      builder.add(ir::Op::TmpStore(mapping.tempDef,
+        m_converter.buildVector(builder, ir::ScalarType::eF32, typeVectorSize, components.data())));
     } else if (semantic.usage == SemanticUsage::eFog || isScalar) {
       /* The default for the fog register is 0.0 */
-      builder.add(ir::Op::OutputStore(mapping.baseDef, ir::SsaDef(),
+      builder.add(ir::Op::TmpStore(mapping.tempDef,
         builder.makeConstant(0.0f)));
     } else {
       /* The default for other registers is 0.0, 0.0, 0.0, 0.0 */
@@ -253,8 +267,8 @@ void IoMap::dclIoVar(
         builder.makeConstant(0.0f), builder.makeConstant(0.0f),
         builder.makeConstant(0.0f), builder.makeConstant(0.0f),
       };
-      builder.add(ir::Op::OutputStore(mapping.baseDef, ir::SsaDef(),
-        m_converter.buildVector(builder, ir::ScalarType::eF32, 4u, components.data())));
+      builder.add(ir::Op::TmpStore(mapping.tempDef,
+        m_converter.buildVector(builder, ir::ScalarType::eF32, typeVectorSize, components.data())));
     }
   }
 
@@ -265,8 +279,21 @@ void IoMap::dclIoVar(
     registerIndex,
     componentMask,
     mapping.semantic,
-    isInput
+    isInput,
+    false
   );
+
+  if (mapping.tempDef)
+    emitDebugName(
+      builder,
+      mapping.tempDef,
+      registerType,
+      registerIndex,
+      componentMask,
+      mapping.semantic,
+      isInput,
+      true
+    );
 }
 
 
@@ -460,7 +487,14 @@ bool IoMap::emitStore(
       || ioVar->registerType == RegisterType::eColorOut
       || ioVar->registerType == RegisterType::eDepthOut;
     dxbc_spv_assert(isOutput);
-    ir::Type scalarType = ioVar->baseType.isVectorType() ? ioVar->baseType.getBaseType(0u) : ioVar->baseType;
+    auto baseType = ioVar->baseType.getBaseType(0u);
+    ir::Type scalarType = ioVar->baseType.isScalarType() ? baseType : ioVar->baseType;
+
+    ir::SsaDef tmpVec = ir::SsaDef();
+    if (!ioVar->baseType.isScalarType()) {
+      tmpVec = builder.add(ir::Op::TmpLoad(ioVar->baseType, ioVar->tempDef));
+    }
+
     uint32_t componentIndex = 0u;
     for (auto c : writeMask) {
       auto dstComponentIndexConst = builder.makeConstant(uint32_t(util::componentFromBit(c)));
@@ -481,13 +515,22 @@ bool IoMap::emitStore(
         auto condComponent = m_converter.extractFromVector(builder, predicateVec, componentIndex);
         predicateIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), condComponent));
       }
-      builder.add(ir::Op::OutputStore(ioVar->baseDef, dstComponentIndexConst, valueScalar));
+
+      if (tmpVec) {
+        builder.add(ir::Op::CompositeInsert(ioVar->baseType, tmpVec, dstComponentIndexConst, valueScalar));
+      } else {
+        builder.add(ir::Op::TmpStore(ioVar->tempDef, valueScalar));
+      }
+
       if (predicateIf) {
         auto predicateIfEnd = builder.add(ir::Op::ScopedEndIf(predicateIf));
         builder.rewriteOp(predicateIf, ir::Op(builder.getOp(predicateIf)).setOperand(0u, predicateIfEnd));
       }
 
       componentIndex++;
+    }
+    if (tmpVec) {
+        builder.add(ir::Op::TmpStore(ioVar->tempDef, tmpVec));
     }
   } else {
     dxbc_spv_assert(operand.getRegisterType() == RegisterType::eOutput);
@@ -508,7 +551,7 @@ bool IoMap::emitStore(
         auto condComponent = m_converter.extractFromVector(builder, predicateVec, componentIndex);
         predicateIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), condComponent));
       }
-      builder.add(ir::Op::FunctionCall(ir::Type(ir::ScalarType::eF32, 4u), m_outputSwitchFunction)
+      builder.add(ir::Op::FunctionCall(ir::Type(), m_outputSwitchFunction)
         .addOperand(index)
         .addOperand(dstComponentIndexConst)
         .addOperand(valueScalar));
@@ -537,10 +580,9 @@ bool IoMap::emitDepthStore(ir::Builder &builder, const Instruction &op, ir::SsaD
     ioVar = &m_variables.back();
   }
   ir::Type scalarType = ioVar->baseType.isVectorType() ? ioVar->baseType.getBaseType(0u) : ioVar->baseType;
-  builder.add(ir::Op::OutputStore(ioVar->baseDef, ir::SsaDef(), value));
+  builder.add(ir::Op::TmpStore(ioVar->tempDef, value));
   return true;
 }
-
 
 
 ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
@@ -649,12 +691,14 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
     dxbc_spv_assert(ioVar != nullptr);
 
     auto baseType = ioVar->baseType.getBaseType(0u);
-    ir::SsaDef value = valueArg;
-    if (baseType.getVectorSize() != 4u) {
-      value = m_converter.swizzleVector(builder, valueArg, Swizzle::identity(), util::makeWriteMaskForComponents(baseType.getVectorSize()));
+    if (!baseType.isScalar()) {
+      auto tmpVec = builder.add(ir::Op::TmpLoad(ioVar->baseType, ioVar->tempDef));
+      builder.add(ir::Op::CompositeInsert(ioVar->baseType, tmpVec, componentArg, valueArg));
+      builder.add(ir::Op::TmpStore(ioVar->tempDef, tmpVec));
+    } else {
+      builder.add(ir::Op::TmpStore(ioVar->tempDef, valueArg));
     }
 
-    builder.add(ir::Op::OutputStore(ioVar->baseDef, componentArg, value));
     builder.add(ir::Op::ScopedSwitchBreak(switchDef));
   }
 
@@ -663,6 +707,30 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
 
   builder.add(ir::Op::FunctionEnd());
   return function;
+}
+
+
+ir::SsaDef IoMap::emitFlushOutputsFunction(ir::Builder& builder) const {
+  auto function = builder.add(ir::Op::Function(ir::Type()));
+  if (m_converter.m_options.includeDebugNames) {
+    builder.add(ir::Op::DebugName(function, "flushOutputs"));
+  }
+
+  for (const auto& variable : m_variables) {
+    if (!variable.tempDef)
+      continue;
+
+    auto temp = builder.add(ir::Op::TmpLoad(variable.baseType, variable.tempDef));
+    builder.add(ir::Op::OutputStore(variable.baseDef, ir::SsaDef(), temp));
+  }
+
+  builder.add(ir::Op::FunctionEnd());
+  return function;
+}
+
+
+void IoMap::flushOutputs(ir::Builder& builder) const {
+  builder.add(ir::Op::FunctionCall(ir::Type(), m_flushOutputsFunction));
 }
 
 
@@ -705,7 +773,8 @@ void IoMap::emitDebugName(
   uint32_t registerIndex,
   WriteMask writeMask,
   Semantic semantic,
-  bool isInput) const {
+  bool isInput,
+  bool isTemp) const {
   if (!m_converter.m_options.includeDebugNames)
     return;
 
@@ -733,6 +802,9 @@ void IoMap::emitDebugName(
       nameStream << semantic.index;
     }
   }
+
+  if (isTemp)
+    nameStream << "_temp";
 
   std::string name = nameStream.str();
   builder.add(ir::Op::DebugName(def, name.c_str()));

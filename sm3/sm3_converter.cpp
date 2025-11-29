@@ -1264,7 +1264,7 @@ std::string Converter::makeRegisterDebugName(RegisterType type, uint32_t index, 
     } else if (type != RegisterType::eLoop) {
       name << index;
     }
-    if (mask) {
+    if (mask && mask != WriteMask(ComponentBit::eAll)) {
       name << "_" << mask;
     }
   }
