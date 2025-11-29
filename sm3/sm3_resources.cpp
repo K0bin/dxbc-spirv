@@ -170,11 +170,13 @@ ir::SsaDef ResourceMap::dclConstantAccessFunction(
     dxbc_spv_assert(offset < 32u && count <= 32u);
 
     /* There's no buffer, load the spec constant. */
-    value = m_converter.m_specConstants.get(builder,
+    value = m_converter.m_specConstants.get(
+      builder,
       m_converter.getEntryPoint(), m_converter.m_specConstUbo,
       m_converter.getShaderInfo().getType() == ShaderType::eVertex
-      ? SpecConstantId::SpecVertexShaderBools
-      : SpecConstantId::SpecPixelShaderBools);
+      ? SpecConstantId::eSpecVertexShaderBools
+      : SpecConstantId::eSpecPixelShaderBools
+    );
   }
 
   if (bufferMemberType != consumeAsType) {
@@ -288,7 +290,14 @@ ir::SsaDef ResourceMap::projectTexCoord(ir::Builder& builder, uint32_t samplerIn
   if (controlWithSpecConst) {
     uint32_t specConstIdx = m_converter.m_specConstants.getSamplerSpecConstIndex(
       m_converter.getShaderInfo().getType(), samplerIndex);
-    auto isProjectedSpecConst = m_converter.m_specConstants.get(builder, m_converter.getEntryPoint(), m_converter.m_specConstUbo, SpecConstantId::SpecSamplerProjected, specConstIdx, 1u);
+    auto isProjectedSpecConst = m_converter.m_specConstants.get(
+      builder,
+      m_converter.getEntryPoint(),
+      m_converter.m_specConstUbo,
+      SpecConstantId::eSpecSamplerProjected,
+      builder.makeConstant(specConstIdx),
+      builder.makeConstant(1u)
+    );
     auto isProjectedBool = builder.add(ir::Op::INe(ir::ScalarType::eBool, isProjectedSpecConst, builder.makeConstant(0u)));
     return builder.add(ir::Op::Select(texCoordType, m_converter.broadcastScalar(builder, isProjectedBool, WriteMask(ComponentBit::eAll)),
       projectedTexCoord, texCoord));
@@ -433,7 +442,14 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
     /* Shader model 1 does not require declaring samplers/textures with a DCL instruction.
      * We emit a switch() block with one case for each texture type. Decide based on a spec constant. */
     auto resultTmp = builder.add(ir::Op::DclTmp(ir::BasicType(ir::ScalarType::eF32, 4u), m_converter.getEntryPoint()));
-    auto samplerTypeSpecConst = m_converter.m_specConstants.get(builder, m_converter.getEntryPoint(), m_converter.m_specConstUbo, SpecConstantId::SpecSamplerType, 2u * specConstIdx, 2u);
+    auto samplerTypeSpecConst = m_converter.m_specConstants.get(
+      builder,
+      m_converter.getEntryPoint(),
+      m_converter.m_specConstUbo,
+      SpecConstantId::eSpecSamplerType,
+      builder.makeConstant(2u * specConstIdx),
+      builder.makeConstant(2u)
+    );
     auto textureTypeSwitch = builder.add(ir::Op::ScopedSwitch(ir::SsaDef(), samplerTypeSpecConst));
 
     for (uint32_t i = 0; i <= uint32_t(SpecConstTextureType::eTexture3D); i++) {
@@ -498,7 +514,14 @@ ir::SsaDef ResourceMap::emitSampleColorOrDref(
 
   if (textureType != SpecConstTextureType::eTexture3D) {
     auto resultTmp = builder.add(ir::Op::DclTmp(ir::BasicType(ir::ScalarType::eF32, 4u), m_converter.getEntryPoint()));
-    auto isDepth = m_converter.m_specConstants.get(builder, m_converter.getEntryPoint(), m_converter.m_specConstUbo, SpecConstantId::SpecSamplerDepthMode, specConstIdx, 1u);
+    auto isDepth = m_converter.m_specConstants.get(
+      builder,
+      m_converter.getEntryPoint(),
+      m_converter.m_specConstUbo,
+      SpecConstantId::eSpecSamplerDepthMode,
+      builder.makeConstant(specConstIdx),
+      builder.makeConstant(1u)
+    );
     auto isDepthCondition = builder.add(ir::Op::INe(ir::ScalarType::eBool, isDepth, builder.makeConstant(0u)));
 
     /* if (SpecSamplerDepthMode & (1u << samplerIndex)) */
@@ -559,7 +582,14 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
 
   /* Load the spec constant that tells us if fetch4 (gather) is enabled for the sampler. */
 
-  auto fetch4EnabledSpecConst = m_converter.m_specConstants.get(builder, m_converter.getEntryPoint(), m_converter.m_specConstUbo, SpecConstantId::SpecSamplerFetch4, specConstIdx, 1u);
+  auto fetch4EnabledSpecConst = m_converter.m_specConstants.get(
+    builder,
+    m_converter.getEntryPoint(),
+    m_converter.m_specConstUbo,
+    SpecConstantId::eSpecSamplerFetch4,
+    builder.makeConstant(specConstIdx),
+    builder.makeConstant(1u)
+  );
   auto fetch4Enabled = builder.add(ir::Op::INe(ir::ScalarType::eBool, fetch4EnabledSpecConst, builder.makeConstant(0u)));
 
   /* Fetch4 */
@@ -619,7 +649,14 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
 
   /* Load the spec constant that tells us if the texture is unbound. */
 
-  auto isNullSpecConst = m_converter.m_specConstants.get(builder, m_converter.getEntryPoint(), m_converter.m_specConstUbo, SpecConstantId::SpecSamplerNull, specConstIdx, 1u);
+  auto isNullSpecConst = m_converter.m_specConstants.get(
+    builder,
+    m_converter.getEntryPoint(),
+    m_converter.m_specConstUbo,
+    SpecConstantId::eSpecSamplerNull,
+    builder.makeConstant(specConstIdx),
+    builder.makeConstant(1u)
+  );
   auto isNull = builder.add(ir::Op::INe(ir::ScalarType::eBool, isNullSpecConst, builder.makeConstant(0u)));
 
   return builder.add(ir::Op::Select(
@@ -648,7 +685,12 @@ ir::SsaDef ResourceMap::emitSampleDref(
   auto reference = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, referenceComponentIdx));
 
   // [D3D8] Scale Dref from [0..(2^N - 1)] for D24S8 and D16 if Dref scaling is enabled
-  auto drefScaleShift = m_converter.m_specConstants.get(builder, m_converter.getEntryPoint(), m_converter.m_specConstUbo, SpecConstantId::SpecDrefScaling);
+  auto drefScaleShift = m_converter.m_specConstants.get(
+    builder,
+    m_converter.getEntryPoint(),
+    m_converter.m_specConstUbo,
+    SpecConstantId::eSpecDrefScaling
+  );
   auto drefScale = builder.add(ir::Op::IShl(ir::ScalarType::eU32, builder.makeConstant(1u), drefScaleShift));
   drefScale      = builder.add(ir::Op::ConvertItoF(ir::ScalarType::eF32, drefScale));
   drefScale      = builder.add(ir::Op::FSub(ir::ScalarType::eF32, drefScale, builder.makeConstant(1.0f)));
@@ -660,7 +702,12 @@ ir::SsaDef ResourceMap::emitSampleDref(
   ));
 
   // Clamp Dref to [0..1] for D32F emulating UNORM textures
-  auto clampDref = m_converter.m_specConstants.get(builder, m_converter.getEntryPoint(), m_converter.m_specConstUbo, SpecConstantId::SpecSamplerDrefClamp);
+  auto clampDref = m_converter.m_specConstants.get(
+    builder,
+    m_converter.getEntryPoint(),
+    m_converter.m_specConstUbo,
+    SpecConstantId::eSpecSamplerDrefClamp
+  );
   clampDref      = builder.add(ir::Op::INe(ir::ScalarType::eBool, clampDref, builder.makeConstant(0u)));
   auto clampedDref = builder.add(ir::Op::FClamp(ir::ScalarType::eF32, reference, builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
   reference = builder.add(ir::Op::Select(ir::ScalarType::eF32, clampDref, clampedDref, reference));
