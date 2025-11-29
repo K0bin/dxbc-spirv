@@ -25,7 +25,7 @@ void IoMap::initialize(ir::Builder& builder) {
 
     // Emit placeholders
     m_inputSwitchFunction = builder.add(ir::Op::Function(ir::Type(ir::ScalarType::eF32, 4)));
-    m_outputSwitchFunction = builder.add(ir::Op::Function(ir::Type(ir::ScalarType::eF32, 4)));
+    m_outputSwitchFunction = builder.add(ir::Op::Function(ir::Type()));
   } else {
     // SM 1 & 2 have fixed VS output and PS input registers
     // that do not get explicitly declared.
@@ -87,11 +87,15 @@ void IoMap::initialize(ir::Builder& builder) {
 
 void IoMap::finalize(ir::Builder& builder) {
   // Now that all dcl instructions are processed, we can emit the functions containing the switch statements.
-  auto inputSwitchFunction = emitDynamicLoadFunction(builder);
-  builder.rewriteDef(m_inputSwitchFunction, inputSwitchFunction);
+  if (m_inputSwitchFunction) {
+    auto inputSwitchFunction = emitDynamicLoadFunction(builder);
+    builder.rewriteDef(m_inputSwitchFunction, inputSwitchFunction);
+  }
 
-  auto outputSwitchFunction = emitDynamicStoreFunction(builder);
-  builder.rewriteDef(m_outputSwitchFunction, outputSwitchFunction);
+  if (m_outputSwitchFunction) {
+    auto outputSwitchFunction = emitDynamicStoreFunction(builder);
+    builder.rewriteDef(m_outputSwitchFunction, outputSwitchFunction);
+  }
 }
 
 
