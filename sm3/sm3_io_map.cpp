@@ -28,7 +28,11 @@ void IoMap::initialize(ir::Builder& builder) {
 
     // Emit placeholders
     m_inputSwitchFunction = builder.add(ir::Op::Function(ir::Type(ir::ScalarType::eF32, 4)));
-    m_outputSwitchFunction = builder.add(ir::Op::Function(ir::Type()));
+
+    if (info.getType() == ShaderType::eVertex) {
+      /* Only VS outputs support relative addressing. */
+      m_outputSwitchFunction = builder.add(ir::Op::Function(ir::Type()));
+    }
   } else {
     // SM 1 & 2 have fixed VS output and PS input registers
     // that do not get explicitly declared.
@@ -607,7 +611,7 @@ ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
 
     const IoVarInfo* ioVar = nullptr;
     for (const auto& variable : m_variables) {
-      if (variable.registerIndex == i) {
+      if (variable.registerType == RegisterType::eInput && variable.registerIndex == i) {
         ioVar = &variable;
         break;
       }
@@ -680,7 +684,7 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
 
     const IoVarInfo* ioVar = nullptr;
     for (const auto& variable : m_variables) {
-      if (variable.registerIndex == i) {
+      if (variable.registerType == RegisterType::eOutput && variable.registerIndex == i) {
         ioVar = &variable;
         break;
       }
