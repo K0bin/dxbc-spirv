@@ -199,7 +199,7 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
 bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
   /* A valid debug namee is required for the main function */
   m_entryPoint.mainFunc = builder.add(ir::Op::Function(ir::ScalarType::eVoid));
-  builder.add(ir::Op::FunctionEnd());
+  ir::SsaDef afterMainFunc = builder.add(ir::Op::FunctionEnd());
   builder.add(ir::Op::DebugName(m_entryPoint.mainFunc, "main"));
 
   /* Emit entry point instruction as the first instruction of the
@@ -215,8 +215,11 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
   if (m_options.name)
     builder.add(ir::Op::DebugName(m_entryPoint.def, m_options.name));
 
+  m_specConstants.setInsertCursor(afterMainFunc);
   m_ioMap.initialize(builder);
   m_regFile.initialize(builder);
+  /* TODO: SWVP option */
+  m_resources.initialize(builder, false, m_options.includeDebugNames);
 
   /* Set cursor to main function so that instructions will be emitted
    * in the correct location */
