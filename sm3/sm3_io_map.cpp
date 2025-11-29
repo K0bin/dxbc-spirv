@@ -188,7 +188,7 @@ void IoMap::dclIoVar(
 
   ir::Type type(
     builtIn == ir::BuiltIn::eIsFrontFace ? ir::ScalarType::eBool : ir::ScalarType::eF32,
-    isScalar ? 1u : 4u
+    isScalar ? 1u : util::popcnt(uint8_t(componentMask))
   );
 
   ir::Op declaration = ir::Op(opCode, type)
@@ -355,8 +355,12 @@ ir::SsaDef IoMap::emitLoad(
       bool isFrontFaceBuiltin = ioVar->registerType == RegisterType::eMiscType && ioVar->registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace);
       ir::SsaDef value;
       if (!isFrontFaceBuiltin) {
-        ir::SsaDef addressConstant = builder.makeConstant(componentIndex);
-        auto varScalarType = ioVar->baseType.getBaseType(0u).getBaseType();
+        auto baseType = ioVar->baseType.getBaseType(0u);
+        ir::ScalarType varScalarType = ioVar->baseType.getBaseType(0u).getBaseType();
+        ir::SsaDef addressConstant = ir::SsaDef();
+        if (!baseType.isScalar()) {
+          addressConstant = builder.makeConstant(uint32_t(componentIndex));
+        }
         value = builder.add(ir::Op::InputLoad(varScalarType, ioVar->baseDef, addressConstant));
       } else {
         // The front face needs to be transformed from a bool to 1.0/-1.0.
@@ -570,10 +574,22 @@ ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
       continue;
 
     dxbc_spv_assert(ioVar != nullptr);
-    dxbc_spv_assert(ioVar->baseType == ir::Type(ir::ScalarType::eF32, 4u));
 
     auto input = builder.add(ir::Op::InputLoad(ioVar->baseType, ioVar->baseDef, ir::SsaDef()));
-    builder.add(ir::Op::Return(ir::Type(ir::ScalarType::eF32, 4u), input));
+    auto baseType = ioVar->baseType.getBaseType(0u);
+    ir::SsaDef vec4 = input;
+    if (baseType.getVectorSize() != 4u) {
+      std::array<ir::SsaDef, 4u> components;
+      for (uint32_t j = 0u; j < 4u; j++) {
+        if ((baseType.isScalar() && j == 0) || j < baseType.getVectorSize()) {
+          components[j] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, input, builder.makeConstant(i)));;
+        } else {
+          components[j] = builder.makeConstant(0.0f);
+        }
+      }
+      vec4 = m_converter.buildVector(builder, ir::ScalarType::eF32, components.size(), components.data());
+    }
+    builder.add(ir::Op::Return(ir::Type(ir::ScalarType::eF32, 4u), vec4));
     builder.add(ir::Op::ScopedSwitchBreak(switchDef));
   }
 
@@ -631,9 +647,14 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
       continue;
 
     dxbc_spv_assert(ioVar != nullptr);
-    dxbc_spv_assert(ioVar->baseType == ir::Type(ir::ScalarType::eF32, 4u));
 
-    builder.add(ir::Op::OutputStore(ioVar->baseDef, componentArg, valueArg));
+    auto baseType = ioVar->baseType.getBaseType(0u);
+    ir::SsaDef value = valueArg;
+    if (baseType.getVectorSize() != 4u) {
+      value = m_converter.swizzleVector(builder, valueArg, Swizzle::identity(), util::makeWriteMaskForComponents(baseType.getVectorSize()));
+    }
+
+    builder.add(ir::Op::OutputStore(ioVar->baseDef, componentArg, value));
     builder.add(ir::Op::ScopedSwitchBreak(switchDef));
   }
 
