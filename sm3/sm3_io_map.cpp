@@ -98,6 +98,7 @@ void IoMap::finalize(ir::Builder& builder) {
     ir::SsaDef cursor = builder.setCursor(m_inputSwitchFunction);
     auto inputSwitchFunction = emitDynamicLoadFunction(builder);
     builder.rewriteDef(m_inputSwitchFunction, inputSwitchFunction);
+    m_inputSwitchFunction = inputSwitchFunction;
     builder.setCursor(cursor);
   }
 
@@ -105,12 +106,14 @@ void IoMap::finalize(ir::Builder& builder) {
     ir::SsaDef cursor = builder.setCursor(m_outputSwitchFunction);
     auto outputSwitchFunction = emitDynamicStoreFunction(builder);
     builder.rewriteDef(m_outputSwitchFunction, outputSwitchFunction);
+    m_outputSwitchFunction = outputSwitchFunction;
     builder.setCursor(cursor);
   }
 
   ir::SsaDef cursor = builder.setCursor(m_flushOutputsFunction);
   auto flushOutputFunction = emitFlushOutputsFunction(builder);
   builder.rewriteDef(m_flushOutputsFunction, flushOutputFunction);
+  m_flushOutputsFunction = flushOutputFunction;
   builder.setCursor(cursor);
 
   flushOutputs(builder);
