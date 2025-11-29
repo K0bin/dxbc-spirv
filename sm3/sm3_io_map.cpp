@@ -88,13 +88,17 @@ void IoMap::initialize(ir::Builder& builder) {
 void IoMap::finalize(ir::Builder& builder) {
   // Now that all dcl instructions are processed, we can emit the functions containing the switch statements.
   if (m_inputSwitchFunction) {
+    ir::SsaDef cursor = builder.setCursor(m_inputSwitchFunction);
     auto inputSwitchFunction = emitDynamicLoadFunction(builder);
     builder.rewriteDef(m_inputSwitchFunction, inputSwitchFunction);
+    builder.setCursor(cursor);
   }
 
   if (m_outputSwitchFunction) {
+    ir::SsaDef cursor = builder.setCursor(m_outputSwitchFunction);
     auto outputSwitchFunction = emitDynamicStoreFunction(builder);
     builder.rewriteDef(m_outputSwitchFunction, outputSwitchFunction);
+    builder.setCursor(cursor);
   }
 }
 
@@ -634,7 +638,7 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
   }
 
   auto switchEnd = builder.add(ir::Op::ScopedEndSwitch(switchDef));
-  switchDecl.setOperand(0u, switchEnd);
+  builder.rewriteOp(switchDef, ir::Op::ScopedSwitch(switchEnd, indexArg));
 
   builder.add(ir::Op::FunctionEnd());
   return function;
