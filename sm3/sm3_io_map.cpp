@@ -487,7 +487,6 @@ bool IoMap::emitStore(
 
     uint32_t componentIndex = 0u;
     for (auto c : writeMask) {
-      auto dstComponentIndexConst = builder.makeConstant(uint32_t(util::componentFromBit(c)));
       ir::SsaDef valueScalar = value;
       if (ioVar->baseType.isVectorType()) {
         auto componentIndexConst = builder.makeConstant(componentIndex);
@@ -506,7 +505,7 @@ bool IoMap::emitStore(
         predicateIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), condComponent));
       }
 
-      builder.add(ir::Op::TmpStore(ioVar->tempDefs[componentIndex], valueScalar));
+      builder.add(ir::Op::TmpStore(ioVar->tempDefs[uint32_t(util::componentFromBit(c))], valueScalar));
 
       if (predicateIf) {
         auto predicateIfEnd = builder.add(ir::Op::ScopedEndIf(predicateIf));
