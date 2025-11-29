@@ -219,16 +219,10 @@ void IoMap::dclIoVar(
     if (isInput && shaderType == ShaderType::ePixel) {
       if (semantic.usage == SemanticUsage::eColor) {
         declaration.addOperand(ir::InterpolationModes(ir::InterpolationMode::eCentroid));
-      } else {
-        declaration.addOperand(ir::InterpolationModes(ir::InterpolationMode::eSample));
       }
     }
   } else {
     declaration.addOperand(builtIn);
-
-    if (isInput && shaderType == ShaderType::ePixel) {
-      declaration.addOperand(ir::InterpolationModes(ir::InterpolationMode::eSample));
-    }
   }
 
   auto& mapping = m_variables.emplace_back();
