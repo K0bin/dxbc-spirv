@@ -558,6 +558,9 @@ ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
         break;
       }
     }
+    if (ioVar == nullptr)
+      continue;
+
     dxbc_spv_assert(ioVar != nullptr);
     dxbc_spv_assert(ioVar->baseType == ir::Type(ir::ScalarType::eF32, 4u));
 
@@ -616,6 +619,9 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
         break;
       }
     }
+    if (ioVar == nullptr)
+      continue;
+
     dxbc_spv_assert(ioVar != nullptr);
     dxbc_spv_assert(ioVar->baseType == ir::Type(ir::ScalarType::eF32, 4u));
 
