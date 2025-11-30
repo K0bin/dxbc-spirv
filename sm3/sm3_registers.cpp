@@ -20,7 +20,9 @@ void RegisterFile::initialize(ir::Builder& builder) {
 
   m_aLReg = builder.add(ir::Op::DclTmp(ir::ScalarType::eI32, m_converter.getEntryPoint()));
 
-  m_pReg = builder.add(ir::Op::DclTmp(ir::ScalarType::eBool, m_converter.getEntryPoint()));
+  for (uint32_t i = 0u; i < 4u; i++) {
+    m_pReg[i] = builder.add(ir::Op::DclTmp(ir::ScalarType::eBool, m_converter.getEntryPoint()));
+  }
 }
 
 ir::SsaDef RegisterFile::getOrDeclareTemp(ir::Builder& builder, uint32_t index, Component component) {
@@ -35,7 +37,7 @@ ir::SsaDef RegisterFile::getOrDeclareTemp(ir::Builder& builder, uint32_t index, 
   return m_rRegs[tempIndex];
 }
 
-ir::SsaDef RegisterFile::emitLoad(
+ir::SsaDef RegisterFile::emitTempLoad(
   ir::Builder& builder,
   const Operand& operand,
   WriteMask componentMask,
@@ -43,6 +45,7 @@ ir::SsaDef RegisterFile::emitLoad(
 ) {
   /* The register types handled here do not support relative addressing. */
   dxbc_spv_assert(!operand.hasRelativeAddressing());
+  dxbc_spv_assert(operand.getRegisterType() == RegisterType::eTemp);
 
   auto swizzle = operand.getSwizzle(m_converter.getShaderInfo());
   auto returnType = m_converter.makeVectorType(type, componentMask);
@@ -54,51 +57,11 @@ ir::SsaDef RegisterFile::emitLoad(
   for (auto c : swizzle.getReadMask(componentMask)) {
     auto component = componentFromBit(c);
 
-    ir::SsaDef scalar;
-    ir::ScalarType loadType = type;
-
-    switch (operand.getRegisterType()) {
-      case RegisterType::eTemp: {
-        loadType = ir::ScalarType::eUnknown;
-        auto tmpReg = getOrDeclareTemp(builder, regIndex, component);
-        scalar = builder.add(ir::Op::TmpLoad(loadType, tmpReg));
-      } break;
-
-      case RegisterType::eAddr: {
-        dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 2u
-            || c == ComponentBit::eX); // The a0 register only has a single component on SM1.1
-        dxbc_spv_assert(type == ir::ScalarType::eI32
-          || type == ir::ScalarType::eU32
-          || type == ir::ScalarType::eMinI16
-          || type == ir::ScalarType::eMinU16);
-        dxbc_spv_assert(m_a0Reg[uint8_t(component)]);
-        loadType = ir::ScalarType::eUnknown;
-        scalar = builder.add(ir::Op::TmpLoad(loadType, m_a0Reg[regIndex]));
-      } break;
-
-      case RegisterType::eLoop: {
-        dxbc_spv_assert(c == ComponentBit::eX);
-        dxbc_spv_assert(type == ir::ScalarType::eI32
-          || type == ir::ScalarType::eU32
-          || type == ir::ScalarType::eMinI16
-          || type == ir::ScalarType::eMinU16);
-        loadType = ir::ScalarType::eUnknown;
-        scalar = builder.add(ir::Op::TmpLoad(loadType, m_aLReg));
-      } break;
-
-      case RegisterType::ePredicate: {
-        dxbc_spv_assert(type == ir::ScalarType::eBool);
-        scalar = builder.add(ir::Op::TmpLoad(ir::ScalarType::eBool, m_pReg));
-      } break;
-
-      default:
-        dxbc_spv_unreachable();
-        return ir::SsaDef();
-    }
+    auto tmpReg = getOrDeclareTemp(builder, regIndex, component);
+    auto scalar = builder.add(ir::Op::TmpLoad(ir::ScalarType::eUnknown, tmpReg));
 
     /* Convert to requested type */
-    if (loadType != type && type != ir::ScalarType::eUnknown)
-      scalar = builder.add(ir::Op::ConsumeAs(type, scalar));
+    scalar = builder.add(ir::Op::ConsumeAs(type, scalar));
 
     components[uint8_t(component)] = scalar;
   }
@@ -107,7 +70,7 @@ ir::SsaDef RegisterFile::emitLoad(
 }
 
 
-ir::SsaDef RegisterFile::emitLoadPredicate(
+ir::SsaDef RegisterFile::emitPredicateLoad(
           ir::Builder&            builder,
           Swizzle                 swizzle,
           WriteMask               componentMask) {
@@ -116,12 +79,36 @@ ir::SsaDef RegisterFile::emitLoadPredicate(
   std::array<ir::SsaDef, 4u> components = { };
   for (auto c : swizzle.getReadMask(componentMask)) {
     auto component = componentFromBit(c);
-    components[uint8_t(component)] = builder.add(ir::Op::TmpLoad(ir::ScalarType::eBool, m_pReg));
+    components[uint8_t(component)] = builder.add(ir::Op::TmpLoad(ir::ScalarType::eBool, m_pReg[uint8_t(component)]));
   }
 
   return m_converter.composite(builder, returnType, components.data(), swizzle, componentMask);
 }
 
+
+ir::SsaDef RegisterFile::emitAddressLoad(
+          ir::Builder&            builder,
+          RegisterType            registerType,
+          Swizzle                 swizzle) {
+  Component component = swizzle.get(0u);
+
+  if (registerType == RegisterType::eAddr) {
+    dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 2u
+        || component == Component::eX); // The a0 register only has a single component on SM1.1
+    dxbc_spv_assert(m_a0Reg[uint8_t(component)]);
+    return builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, m_a0Reg[uint8_t(component)]));
+  } else if (registerType == RegisterType::eLoop) {
+    dxbc_spv_assert(component == Component::eX);
+    return builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, m_aLReg));
+  } else {
+    ShaderInfo info = m_converter.getShaderInfo();
+    Logger::err("Register type: ",
+      UnambiguousRegisterType { registerType, info.getType(), info.getVersion().first },
+      " not supported as a relative index");
+    dxbc_spv_unreachable();
+    return ir::SsaDef();
+  }
+}
 
 
 bool RegisterFile::emitStore(
@@ -166,6 +153,11 @@ bool RegisterFile::emitStore(
           scalar = builder.add(ir::Op::ConvertFtoI(ir::ScalarType::eI32, scalar));
         }
         reg = m_a0Reg[uint8_t(component)];
+      } break;
+
+      case RegisterType::ePredicate: {
+        dxbc_spv_assert(valueType.isBoolType());
+        reg = m_pReg[uint8_t(component)];
       } break;
 
       default: dxbc_spv_assert(false); return false;

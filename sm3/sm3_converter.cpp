@@ -1011,7 +1011,7 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
     case RegisterType::eAddr:
     // case RegisterType::eTexture: Same Value
       if (getShaderInfo().getType() == ShaderType::eVertex)
-        loadDef = m_regFile.emitLoad(builder, operand, mask, type); // RegisterType::eAddr
+        loadDef = m_regFile.emitTempLoad(builder, operand, mask, type); // RegisterType::eAddr
       else
         loadDef = m_ioMap.emitLoad(builder, op, operand, mask, swizzle, type); // RegisterType::eTexture
       break;
@@ -1019,7 +1019,7 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
     case RegisterType::eTemp:
     case RegisterType::eLoop:
     case RegisterType::ePredicate:
-      loadDef = m_regFile.emitLoad(builder, operand, mask, type);
+      loadDef = m_regFile.emitTempLoad(builder, operand, mask, type);
       break;
 
 
@@ -1071,6 +1071,11 @@ ir::SsaDef Converter::loadSrcModified(ir::Builder& builder, const Instruction& o
 }
 
 
+ir::SsaDef Converter::loadAddress(ir::Builder& builder, RegisterType registerType, Swizzle swizzle) {
+  return m_regFile.emitAddressLoad(builder, registerType, swizzle);
+}
+
+
 bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef predicateVec, ir::SsaDef value) {
   WriteMask writeMask = operand.getWriteMask(getShaderInfo());
   writeMask = fixupWriteMask(builder, writeMask, value);
@@ -1101,7 +1106,7 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
     WriteMask writeMask = operand.getWriteMask(getShaderInfo());
     writeMask = fixupWriteMask(builder, writeMask, value);
 
-    predicate = m_regFile.emitLoadPredicate(builder, operand.getPredicateSwizzle(), writeMask);
+    predicate = m_regFile.emitPredicateLoad(builder, operand.getPredicateSwizzle(), writeMask);
     if (operand.getPredicateModifier() == OperandModifier::eNot) {
       std::array<ir::SsaDef, 4u> components = { };
       for (auto c : writeMask) {

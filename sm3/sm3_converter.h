@@ -137,6 +137,8 @@ private:
 
   ir::SsaDef loadSrcModified(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::ScalarType type);
 
+  ir::SsaDef loadAddress(ir::Builder& builder, RegisterType registerType, Swizzle swizzle);
+
   bool storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef predicateVec, ir::SsaDef value);
 
   bool storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef value);

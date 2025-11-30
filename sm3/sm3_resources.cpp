@@ -201,13 +201,26 @@ ir::SsaDef ResourceMap::emitConstantLoad(
 
   uint32_t arrayIndex = constantTypeOffset;
   arrayIndex += registerType == RegisterType::eConstBool ? (operand.getIndex() / 32u) : operand.getIndex();
-  auto offset = builder.makeConstant(arrayIndex);
-  // TODO: Relative addressing
+  ir::SsaDef offset;
+  if (!operand.hasRelativeAddressing()) {
+    offset = builder.makeConstant(arrayIndex);
+  } else {
+    dxbc_spv_assert(registerType == RegisterType::eConst
+      || registerType == RegisterType::eConst2
+      || registerType == RegisterType::eConst3
+      || registerType == RegisterType::eConst4);
+    auto relAddr = m_converter.loadAddress(builder,
+      operand.getRelativeAddressingRegisterType(),
+      operand.getRelativeAddressingSwizzle());
+    offset = builder.makeConstant(int32_t(arrayIndex));
+    offset = builder.add(ir::Op::IAdd(ir::ScalarType::eI32, offset, relAddr));
+    offset = builder.add(ir::Op::Cast(ir::ScalarType::eU32, offset));
+  }
   auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, bestRange->namedBufferDef, builder.makeConstant(0u)));
 
   if (registerType == RegisterType::eConstBool) {
     /* Bool constants are not an array of vec4s unlike float & int.
-     * Instead they are set as an arrray of scalar bools on the API side and we store them as bit masks. */
+     * Instead they are set as an array of scalar bools on the API side and we store them as bit masks. */
     dxbc_spv_assert(scalarType == ir::ScalarType::eBool);
     auto dword = builder.add(ir::Op::BufferLoad(
       ir::ScalarType::eU32, descriptor, offset, 4u));

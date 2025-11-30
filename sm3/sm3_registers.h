@@ -23,18 +23,23 @@ public:
   void initialize(ir::Builder& builder);
 
   /** Loads temporary register. */
-  ir::SsaDef emitLoad(
+  ir::SsaDef emitTempLoad(
           ir::Builder&            builder,
     const Operand&                operand,
           WriteMask               componentMask,
           ir::ScalarType          type);
 
-  ir::SsaDef emitLoadPredicate(
+  ir::SsaDef emitPredicateLoad(
           ir::Builder&            builder,
           Swizzle                 swizzle,
           WriteMask               componentMask);
 
-  /** Stores temporary register. */
+  ir::SsaDef emitAddressLoad(
+          ir::Builder&            builder,
+          RegisterType            registerType,
+          Swizzle                 swizzle);
+
+  /** Stores temporary register or address register. */
   bool emitStore(
           ir::Builder&            builder,
     const Operand&                operand,
@@ -58,7 +63,7 @@ private:
   ir::SsaDef m_aLReg = { };
 
   // Predicate register
-  ir::SsaDef m_pReg = { };
+  std::array<ir::SsaDef, 4u> m_pReg = { };
 
 };
 

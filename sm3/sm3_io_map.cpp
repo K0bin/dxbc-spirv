@@ -397,9 +397,12 @@ ir::SsaDef IoMap::emitLoad(
   } else {
     dxbc_spv_assert(operand.getRegisterType() == RegisterType::eInput);
     dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 3);
-    auto index = builder.makeConstant(operand.getIndex());
-    ir::SsaDef registerValue = { }; // TODO
-    index = builder.add(ir::Op::IAdd(ir::Type(ir::ScalarType::eU32), index, registerValue));
+    auto index = builder.makeConstant(int32_t(operand.getIndex()));
+    auto relAddr = m_converter.loadAddress(builder,
+      operand.getRelativeAddressingRegisterType(),
+      operand.getRelativeAddressingSwizzle());
+    index = builder.add(ir::Op::IAdd(ir::ScalarType::eI32, index, relAddr));
+    index = builder.add(ir::Op::Cast(ir::ScalarType::eU32, index));
     dxbc_spv_assert(m_inputSwitchFunction);
     auto vec4Value = builder.add(ir::Op::FunctionCall(ir::Type(ir::ScalarType::eF32, 4u), m_inputSwitchFunction)
         .addOperand(index));
