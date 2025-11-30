@@ -30,6 +30,7 @@ class Converter {
   friend IoMap;
   friend RegisterFile;
   friend ResourceMap;
+  friend SpecializationConstantsMap;
 
 public:
 
@@ -41,6 +42,10 @@ public:
      *  includes resources, scratch and shared variables, as well as
      *  semantic names for I/O variables. */
     bool includeDebugNames = false;
+
+    /** Whether the shader uses the software vertex processing
+     * limits. Only applies to vertex shaders. */
+    bool isSWVP = false;
 
     FloatEmulation floatEmulation;
   };
@@ -75,8 +80,6 @@ private:
 
   SpecializationConstantsMap m_specConstants;
 
-  ir::SsaDef m_specConstUbo = { }; // TODO
-
   /* Entry point definition and function definitions. */
   struct {
     ir::SsaDef def;
@@ -98,6 +101,10 @@ private:
 
   ShaderInfo getShaderInfo() const {
     return m_parser.getShaderInfo();
+  }
+
+  const Options& getOptions() const {
+    return m_options;
   }
 
   bool handleDcl(ir::Builder& builder, const Instruction& op);

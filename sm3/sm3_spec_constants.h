@@ -9,18 +9,22 @@
 
 namespace dxbc_spv::sm3 {
 
+class Converter;
+
 class SpecializationConstantsMap {
 
 public:
 
-  SpecializationConstantsMap(SpecializationConstantLayout& layout)
-  : m_layout(layout) { }
+  explicit SpecializationConstantsMap(Converter& converter, SpecializationConstantLayout& layout)
+  : m_converter(converter), m_layout(layout) { }
 
-  ir::SsaDef get(ir::Builder& builder, ir::SsaDef entryPoint, ir::SsaDef specUbo, SpecConstantId id);
+  ir::SsaDef get(ir::Builder& builder, SpecConstantId id);
 
-  ir::SsaDef get(ir::Builder& builder, ir::SsaDef entryPoint, ir::SsaDef specUbo, SpecConstantId id, ir::SsaDef bitOffset, ir::SsaDef bitCount, ir::SsaDef uboOverride = { });
+  ir::SsaDef get(ir::Builder& builder, SpecConstantId id, ir::SsaDef bitOffset, ir::SsaDef bitCount, ir::SsaDef uboOverride = { });
 
   uint32_t getSamplerSpecConstIndex(ShaderType shaderType, uint32_t perShaderSamplerIndex);
+
+  void dclBuffer(ir::Builder& builder, uint32_t regIdx);
 
   void setInsertCursor(ir::SsaDef cursor) {
     m_functionInsertPoint = cursor;
@@ -28,17 +32,21 @@ public:
 
 private:
 
-  ir::SsaDef getSpecConstDword(ir::Builder& builder, ir::SsaDef entryPoint, uint32_t idx);
+  ir::SsaDef getSpecConstDword(ir::Builder& builder, uint32_t idx);
 
-  ir::SsaDef getSpecUBODword(ir::Builder& builder, ir::SsaDef specUbo, uint32_t idx) const;
+  ir::SsaDef getSpecUBODword(ir::Builder& builder, uint32_t idx) const;
 
-  ir::SsaDef getOptimizedBool(ir::Builder& builder, ir::SsaDef entryPoint);
+  ir::SsaDef getOptimizedBool(ir::Builder& builder);
+
+  Converter& m_converter;
 
   std::array<ir::SsaDef, 32u> m_specConstantIds = { };
 
   std::array<ir::SsaDef, uint32_t(SpecConstantId::eSpecDrefScaling) + 1u> m_specConstFunctions = { };
 
   ir::SsaDef m_functionInsertPoint = { };
+
+  ir::SsaDef m_bufferDef = { };
 
   SpecializationConstantLayout& m_layout;
 
