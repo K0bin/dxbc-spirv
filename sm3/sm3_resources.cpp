@@ -225,9 +225,11 @@ ir::SsaDef ResourceMap::emitConstantLoad(
     }
   }
 
+  auto readMask = operand.getSwizzle(info).getReadMask(componentMask);
+
   std::array<ir::SsaDef, 4u> components = { };
 
-  if (componentMask == ComponentBit::eAll) {
+  if (readMask == ComponentBit::eAll) {
     /* Read entire vector in one go, no need to addres into scalars */
     auto result = builder.add(ir::Op::BufferLoad(
       ir::BasicType(bufferElementScalarType, 4u), descriptor, offset, 16u));
@@ -238,9 +240,9 @@ ir::SsaDef ResourceMap::emitConstantLoad(
     /* Absolute component alignment, in dwords */
     constexpr uint32_t ComponentAlignments = 0x1214;
 
-    while (componentMask) {
+    while (readMask) {
       /* Consecutive blocks of components to read */
-      auto block = util::extractConsecutiveComponents(componentMask);
+      auto block = util::extractConsecutiveComponents(readMask);
       auto blockType = ir::BasicType(bufferElementScalarType, util::popcnt(uint8_t(block)));
 
       /* First component in the block */
@@ -258,7 +260,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
       for (uint32_t i = 0u; i < blockType.getVectorSize(); i++)
         components[componentIndex + i] = m_converter.extractFromVector(builder, result, i);
 
-      componentMask -= block;
+      readMask -= block;
     }
   }
 
