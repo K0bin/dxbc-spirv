@@ -131,15 +131,15 @@ private:
 
   ir::SsaDef applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask);
 
-  ir::SsaDef applyDstModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask);
+  ir::SsaDef applyDstModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand);
 
   ir::SsaDef loadSrc(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, Swizzle swizzle, ir::ScalarType type);
 
   ir::SsaDef loadSrcModified(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::ScalarType type);
 
-  bool storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::SsaDef predicateVec, ir::SsaDef value);
+  bool storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef predicateVec, ir::SsaDef value);
 
-  bool storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, ir::SsaDef value);
+  bool storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef value);
 
   ir::SsaDef broadcastScalar(ir::Builder& builder, ir::SsaDef def, WriteMask mask);
 
@@ -156,6 +156,8 @@ private:
   ir::SsaDef makeTypedConstant(ir::Builder& builder, ir::BasicType type, T value);
 
   ir::SsaDef normalizeVector(ir::Builder& builder, ir::SsaDef def);
+
+  WriteMask fixupWriteMask(ir::Builder& builder, WriteMask writeMask, ir::SsaDef value);
 
   void logOp(LogLevel severity, const Instruction& op) const;
 
