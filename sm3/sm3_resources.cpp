@@ -406,6 +406,7 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
     m_converter.getShaderInfo().getType(), samplerIndex);
 
   auto vec4FType = ir::BasicType(ir::ScalarType::eF32, 4u);
+  auto cursor = builder.setCursor(m_functionInsertPoint);
   auto function = builder.add(ir::Op::Function(vec4FType));
 
   auto texCoordParam = builder.add(ir::Op::DclParam(vec4FType)); // TexCoord
@@ -493,6 +494,7 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
     builder.add(ir::Op::DebugName(function, name.c_str()));
   }
 
+  builder.setCursor(cursor);
   return function;
 }
 

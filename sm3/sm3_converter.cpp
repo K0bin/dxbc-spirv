@@ -216,6 +216,7 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
     builder.add(ir::Op::DebugName(m_entryPoint.def, m_options.name));
 
   m_specConstants.setInsertCursor(afterMainFunc);
+  m_resources.setInsertCursor(afterMainFunc);
   m_ioMap.initialize(builder);
   m_regFile.initialize(builder);
   /* TODO: SWVP option */
