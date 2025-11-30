@@ -41,7 +41,7 @@ Converter::Converter(util::ByteReader code,
 , m_regFile(*this)
 , m_ioMap(*this)
 , m_resources(*this)
-, m_specConstants(specConstantsLayout) {
+, m_specConstants(*this, specConstantsLayout) {
 
 }
 
@@ -217,10 +217,10 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
 
   m_specConstants.setInsertCursor(afterMainFunc);
   m_resources.setInsertCursor(afterMainFunc);
+  m_specConstants.dclBuffer(builder, 0u); // TODO: Reg idx
   m_ioMap.initialize(builder);
   m_regFile.initialize(builder);
-  /* TODO: SWVP option */
-  m_resources.initialize(builder, false, m_options.includeDebugNames);
+  m_resources.initialize(builder, m_options.includeDebugNames); // TODO: Separate option for Ctab names?
 
   /* Set cursor to main function so that instructions will be emitted
    * in the correct location */
@@ -1005,7 +1005,7 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
     case RegisterType::eConst4:
     case RegisterType::eConstInt:
     case RegisterType::eConstBool:
-      logOpError(op, "Shader constants are not implemented yet.");
+      loadDef = m_resources.emitConstantLoad(builder, op, operand, mask, type);
       break;
 
     default:

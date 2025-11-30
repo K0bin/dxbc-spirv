@@ -7,7 +7,7 @@
 namespace dxbc_spv::sm3 {
 
 constexpr uint32_t MaxFloatConstantsVS       = 256;
-constexpr uint32_t MaxSM3FloatConstantsPS    = 224;
+constexpr uint32_t MaxFloatConstantsPS       = 224;
 constexpr uint32_t MaxOtherConstants         = 16;
 constexpr uint32_t MaxFloatConstantsSoftware = 8192;
 constexpr uint32_t MaxOtherConstantsSoftware = 2048;
@@ -27,210 +27,253 @@ ResourceMap::~ResourceMap() {
 }
 
 
-void ResourceMap::initialize(ir::Builder& builder, bool isSwvp, bool useDebugNames) {
+void ResourceMap::initialize(ir::Builder& builder, bool useCTabNames) {
   ShaderType shaderType = m_converter.getShaderInfo().getType();
+  bool isSwvp = m_converter.getOptions().isSWVP;
   auto cbvStructType = ir::Type();
-  ir::Type floatBufferMemberType;
-  ir::Type intBufferMemberType;
-  ir::Type boolBufferMemberType = ir::Type(ir::ScalarType::eU32);
+  uint32_t hwvpFloatConstantsCount = (shaderType == ShaderType::ePixel ? MaxFloatConstantsPS : MaxFloatConstantsVS);
+  uint32_t hwvpConstantsArraySize = hwvpFloatConstantsCount + MaxOtherConstants;
   if (isSwvp) {
     /* SWVP allows using a lot of constants so we put each type in its own constant buffer to make optimal use of
      * robustness2 to keep them small. */
-    floatBufferMemberType = ir::Type(ir::ScalarType::eF32, 4u);
-    intBufferMemberType = ir::Type(ir::ScalarType::eI32, 4u);
-    auto floatArrayType = ir::Type(floatBufferMemberType).addArrayDimension(MaxFloatConstantsSoftware);
+    auto floatVec4Type = ir::Type(ir::ScalarType::eF32, 4u);
+    auto floatArrayType = ir::Type(floatVec4Type).addArrayDimension(MaxFloatConstantsSoftware);
     m_floatConstants.bufferDef = builder.add(ir::Op::DclCbv(floatArrayType, m_converter.getEntryPoint(), 0u, FloatCbvRegIdx, 1u));
-    auto intArrayType = ir::Type(intBufferMemberType).addArrayDimension(MaxOtherConstantsSoftware);
+    auto intVec4Type = ir::Type(ir::ScalarType::eI32, 4u);
+    auto intArrayType = ir::Type(intVec4Type).addArrayDimension(MaxOtherConstantsSoftware);
     m_intConstants.bufferDef = builder.add(ir::Op::DclCbv(intArrayType, m_converter.getEntryPoint(), 0u, IntCbvRegIdx, 1u));
-    auto boolArrayType = ir::Type(boolBufferMemberType).addArrayDimension(MaxOtherConstantsSoftware / 32u);
-    m_boolConstants.bufferDef = builder.add(ir::Op::DclCbv(boolArrayType, m_converter.getEntryPoint(), 0u, BoolCbvRegIdx, 1u));
+    auto boolBitMasksArrayType = ir::Type(ir::ScalarType::eU32).addArrayDimension((MaxOtherConstantsSoftware + 31u) / 32u);
+    m_boolConstants.bufferDef = builder.add(ir::Op::DclCbv(boolBitMasksArrayType, m_converter.getEntryPoint(), 0u, BoolCbvRegIdx, 1u));
+
+    if (m_converter.m_options.includeDebugNames) {
+      builder.add(ir::Op::DebugName(m_floatConstants.bufferDef, "cF"));
+      builder.add(ir::Op::DebugName(m_intConstants.bufferDef, "cI"));
+      builder.add(ir::Op::DebugName(m_boolConstants.bufferDef, "cB"));
+    }
   } else {
     /* HWVP allows using a lot of float constants but only few int and bool constants.
      * Bool constants get turned into specialization constants.
      * Int and float constants get put into the same constant buffer with int constants at the beginning so
      * float constants that weren't defined by the application can use robustness2 and the buffer stays small. */
-    floatBufferMemberType = ir::Type(ir::ScalarType::eUnknown, 4u);
-    intBufferMemberType = ir::Type(ir::ScalarType::eUnknown, 4u);
-    auto constantsArrayType = ir::Type(floatBufferMemberType).addArrayDimension(
-      (shaderType == ShaderType::ePixel ? MaxSM3FloatConstantsPS : MaxFloatConstantsVS)
-      + MaxOtherConstants
-    );
-    auto constantsBufferDef = builder.add(ir::Op::DclCbv(constantsArrayType, m_converter.getEntryPoint(), 0u, BoolCbvRegIdx, 1u));
+    auto floatBufferMemberType = ir::Type(ir::ScalarType::eUnknown, 4u);
+    auto constantsArrayType = ir::Type(floatBufferMemberType).addArrayDimension(hwvpConstantsArraySize);
+    auto constantsBufferDef = builder.add(ir::Op::DclCbv(constantsArrayType, m_converter.getEntryPoint(), 0u, FloatCbvRegIdx, 1u));
     m_floatConstants.bufferDef = constantsBufferDef;
     m_intConstants.bufferDef = constantsBufferDef;
+
+    if (m_converter.m_options.includeDebugNames) {
+      builder.add(ir::Op::DebugName(m_floatConstants.bufferDef, "cI_F"));
+    }
   }
 
-  /* Implement functions to read constants. One for floats, ints and bools each. Those functions have 1 argument for
-   * the constant register index. That's used to index into the array inside the relevant constant buffer. */
   auto& floatRange = m_floatConstants.constantRanges.emplace_back();
   floatRange.startIndex = 0u;
-  floatRange.count = isSwvp ? MaxFloatConstantsSoftware : (shaderType == ShaderType::ePixel ? MaxSM3FloatConstantsPS : MaxFloatConstantsVS);
-  floatRange.functionDef = dclConstantAccessFunction(builder, m_floatConstants.bufferDef, floatBufferMemberType, ir::Type(ir::ScalarType::eF32, 4u), floatRange.startIndex, floatRange.count, "cF");
+  floatRange.count = isSwvp ? MaxFloatConstantsSoftware : hwvpFloatConstantsCount;
+  floatRange.namedBufferDef = m_floatConstants.bufferDef;
 
   auto& intRange = m_intConstants.constantRanges.emplace_back();
-  uint32_t intOffset = isSwvp ? 0u : floatRange.count;
-  intRange.startIndex = intOffset;
+  intRange.startIndex = 0u;
   intRange.count = isSwvp ? MaxOtherConstantsSoftware : MaxOtherConstants;
-  intRange.functionDef = dclConstantAccessFunction(builder, m_intConstants.bufferDef, intBufferMemberType, ir::Type(ir::ScalarType::eI32, 4u), intRange.startIndex, intRange.count, "cI");
+  intRange.namedBufferDef = m_intConstants.bufferDef;
 
   if (isSwvp) {
-    /* Load from buffer. */
     auto& boolRange = m_boolConstants.constantRanges.emplace_back();
     boolRange.startIndex = 0u;
-    boolRange.count = MaxOtherConstantsSoftware;
-    boolRange.functionDef = dclConstantAccessFunction(builder, m_boolConstants.bufferDef, boolBufferMemberType, ir::ScalarType::eBool, boolRange.startIndex, boolRange.count, "cB");
-  } else {
-    /* Load from spec constant. */
-    auto& boolRange = m_boolConstants.constantRanges.emplace_back();
-    boolRange.startIndex = 0u;
-    boolRange.count = MaxOtherConstants;
-    boolRange.functionDef = dclConstantAccessFunction(builder, ir::SsaDef(), boolBufferMemberType, ir::ScalarType::eBool, boolRange.startIndex, boolRange.count, "cB");
+    boolRange.count = (MaxOtherConstantsSoftware + 31u) / 32u;
+    boolRange.namedBufferDef = m_boolConstants.bufferDef;
   }
 
-  if (useDebugNames) {
-    /* If debug names are enabled, generate one function per named constant. Those will only have the index argument if
-     * the name applies to a range of constants. When reading the constants we'll try to prefer those functions and only
-     * fall back to the large prior one if needed. */
+  if (useCTabNames) {
+    /* If debug names are enabled, generate one buffer per named constant. They will all have the same regIdx. */
     const ConstantTable& ctab = m_converter.m_ctab;
     const auto& ctabFloatEntries = ctab.entries()[uint32_t(ConstantType::eFloat4)];
     for (const auto& entry : ctabFloatEntries) {
       auto& range = m_floatConstants.constantRanges.emplace_back();
       range.startIndex = entry.index;
       range.count = entry.count;
-      range.functionDef = dclConstantAccessFunction(builder, m_floatConstants.bufferDef, floatBufferMemberType, ir::Type(ir::ScalarType::eF32, 4u), range.startIndex, range.count, entry.name.c_str());
+      auto floatVec4Type = ir::Type(ir::ScalarType::eF32, 4u);
+      auto floatArrayType = ir::Type(floatVec4Type).addArrayDimension(isSwvp ? MaxFloatConstantsSoftware : hwvpConstantsArraySize);
+      range.namedBufferDef = builder.add(ir::Op::DclCbv(floatArrayType, m_converter.getEntryPoint(), 0u, FloatCbvRegIdx, 1u));
+      builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
     }
     const auto& ctabIntEntries = ctab.entries()[uint32_t(ConstantType::eInt4)];
     for (const auto& entry : ctabIntEntries) {
       auto& range = m_intConstants.constantRanges.emplace_back();
-      range.startIndex = entry.index + intOffset;
+      range.startIndex = entry.index;
       range.count      = entry.count;
-      range.functionDef = dclConstantAccessFunction(builder, m_intConstants.bufferDef, intBufferMemberType, ir::Type(ir::ScalarType::eI32, 4u), range.startIndex, range.count, entry.name.c_str());
+      auto intVec4Type = ir::Type(ir::ScalarType::eI32, 4u);
+      auto intArrayType = ir::Type(intVec4Type).addArrayDimension(isSwvp ? MaxOtherConstantsSoftware : hwvpConstantsArraySize);
+      range.namedBufferDef = builder.add(ir::Op::DclCbv(intArrayType, m_converter.getEntryPoint(), 0u, isSwvp ? IntCbvRegIdx : FloatCbvRegIdx, 1u));
+      builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
     }
-    const auto& ctabBoolEntries = ctab.entries()[uint32_t(ConstantType::eBool)];
-    for (const auto& entry : ctabBoolEntries) {
-      auto& range = m_boolConstants.constantRanges.emplace_back();
-      range.startIndex = entry.index + intOffset;
-      range.count      = entry.count;
-      if (isSwvp) {
-        /* Load from buffer. */
-        range.functionDef = dclConstantAccessFunction(builder, m_boolConstants.bufferDef, boolBufferMemberType, ir::ScalarType::eBool, range.startIndex, range.count, entry.name.c_str());
-      } else {
-        /* Load from spec constant. */
-        range.functionDef = dclConstantAccessFunction(builder, ir::SsaDef(), boolBufferMemberType, ir::ScalarType::eBool, range.startIndex, range.count, entry.name.c_str());
+    if (isSwvp) {
+      const auto& ctabBoolEntries = ctab.entries()[uint32_t(ConstantType::eBool)];
+      for (const auto& entry : ctabBoolEntries) {
+        auto& range = m_boolConstants.constantRanges.emplace_back();
+        range.startIndex = entry.index;
+        range.count      = entry.count;
+        auto boolBitMasksArrayType = ir::Type(ir::ScalarType::eU32).addArrayDimension(MaxOtherConstantsSoftware);
+        range.namedBufferDef = builder.add(ir::Op::DclCbv(boolBitMasksArrayType, m_converter.getEntryPoint(), 0u, BoolCbvRegIdx, 1u));
+        builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
       }
     }
   }
 }
 
 
-ir::SsaDef ResourceMap::dclConstantAccessFunction(
-    ir::Builder&   builder,
-    ir::SsaDef     buffer,
-    ir::Type       bufferMemberType,
-    ir::Type       consumeAsType,
-    uint32_t       offset,
-    uint32_t       count,
-    const char*    name) {
-  bool bitmask = consumeAsType == ir::Type(ir::ScalarType::eBool)
-    && bufferMemberType == ir::Type(ir::ScalarType::eU32);
+ir::SsaDef ResourceMap::emitConstantLoad(
+          ir::Builder&            builder,
+    const Instruction&            op,
+    const Operand&                operand,
+          WriteMask               componentMask,
+          ir::ScalarType          scalarType) {
 
-  auto functionOp = ir::Op::Function(consumeAsType);
-  ir::SsaDef indexParam = ir::SsaDef();
-  if (count > 1u) {
-    indexParam = builder.add(ir::Op::DclParam(ir::ScalarType::eU16));
-    functionOp.addParam(indexParam);
-  }
-  auto function = builder.add(std::move(functionOp));
-  ir::SsaDef index;
-  if (!bitmask) {
-    /* Index is a simple array index. */
-    index = builder.makeConstant(uint16_t(offset));
-    if (indexParam) {
-      auto argument = builder.add(ir::Op::ParamLoad(ir::ScalarType::eU16, function, indexParam));
-      argument = builder.add(ir::Op::Cast(ir::ScalarType::eU32, argument));
-      index = builder.add(ir::Op::IAdd(ir::ScalarType::eU32, index, argument));
-    }
-  } else {
-    /* The index consists of dword array index and bit index. */
-    index = builder.makeConstant(uint16_t(offset / 32u));
-    if (indexParam) {
-      auto argument = builder.add(ir::Op::ParamLoad(ir::ScalarType::eU16, function, indexParam));
-      argument = builder.add(ir::Op::Cast(ir::ScalarType::eU32, argument));
-      argument = builder.add(ir::Op::UDiv(ir::ScalarType::eU32, argument, builder.makeConstant(32u)));
-      index = builder.add(ir::Op::IAdd(ir::ScalarType::eU32, index, argument));
-    }
-  }
+  ShaderInfo info = m_converter.getShaderInfo();
+  bool isSwvp = m_converter.getOptions().isSWVP;
+  RegisterType registerType = operand.getRegisterType();
+  uint32_t registerIndex = operand.getIndex();
 
-  ir::SsaDef value;
-  if (buffer) {
-    /* Load from the buffer. */
-    value = builder.add(ir::Op::BufferLoad(bufferMemberType, buffer, index,
-      bufferMemberType.isVectorType() ? 16u : 4u));
-  } else {
-    dxbc_spv_assert(offset < 32u && count <= 32u);
-
-    /* There's no buffer, load the spec constant. */
-    value = m_converter.m_specConstants.get(
-      builder,
-      m_converter.getEntryPoint(), m_converter.m_specConstUbo,
-      m_converter.getShaderInfo().getType() == ShaderType::eVertex
-      ? SpecConstantId::eSpecVertexShaderBools
-      : SpecConstantId::eSpecPixelShaderBools
-    );
-  }
-
-  if (bufferMemberType != consumeAsType) {
-    if (!bitmask) {
-      /* Cast to the expected type. */
-      value = builder.add(ir::Op::ConsumeAs(consumeAsType, value));
+  if (registerType == RegisterType::eConstBool && !isSwvp) {
+    dxbc_spv_assert(scalarType == ir::ScalarType::eBool);
+    auto bit = m_converter.m_specConstants.get(builder,
+      info.getType() == ShaderType::eVertex ? SpecConstantId::eSpecVertexShaderBools : SpecConstantId::eSpecPixelShaderBools,
+      builder.makeConstant(operand.getIndex()), builder.makeConstant(1u));
+    auto boolVal = builder.add(ir::Op::INe(ir::ScalarType::eU32, bit, builder.makeConstant(0u)));
+    if (util::popcnt(uint8_t(componentMask)) == 1u) {
+      return boolVal;
     } else {
-      /* Extract the expected bit and check if it's 0. */
-      auto bitOffset = builder.makeConstant(offset % 24u);
-      if (indexParam) {
-        auto argument = builder.add(ir::Op::ParamLoad(ir::ScalarType::eU16, function, indexParam));
-        argument = builder.add(ir::Op::Cast(ir::ScalarType::eU32, argument));
-        argument = builder.add(ir::Op::UMod(ir::ScalarType::eU32, argument, builder.makeConstant(32u)));
-        bitOffset = builder.add(ir::Op::IAdd(ir::ScalarType::eU32, bitOffset, argument));
-      }
-
-      value = builder.add(ir::Op::UBitExtract(
-        bufferMemberType,
-        value,
-        bitOffset,
-        builder.makeConstant(1u)
-      ));
-      value = builder.add(ir::Op::INe(
-        bufferMemberType,
-        value,
-        builder.makeConstant(0u)
-      ));
+      return m_converter.broadcastScalar(builder, boolVal, componentMask);
     }
   }
 
-  builder.add(ir::Op::Return(consumeAsType, value));
-  builder.add(ir::Op::FunctionEnd());
+  const util::small_vector<ConstantRange, 8u>* ranges = nullptr;
+  uint32_t constantTypeOffset = 0u;
+  ir::ScalarType bufferElementScalarType = ir::ScalarType::eUnknown;
+  switch (registerType) {
+    case RegisterType::eConst:
+    case RegisterType::eConst2:
+    case RegisterType::eConst3:
+    case RegisterType::eConst4:
+      ranges = &m_floatConstants.constantRanges;
+      if (isSwvp) {
+        bufferElementScalarType = ir::ScalarType::eF32;
+      }
+      /* In HWVP float constants and int constants are packed into the same buffer and the int constants come first. */
+      constantTypeOffset = isSwvp ? 0u : MaxOtherConstants;
+      break;
 
-  if (name)
-    builder.add(ir::Op::DebugName(function, name));
+    case RegisterType::eConstInt:
+      ranges = &m_intConstants.constantRanges;
+      if (isSwvp) {
+        bufferElementScalarType = ir::ScalarType::eI32;
+      }
+      break;
 
-  return function;
+    case RegisterType::eConstBool:
+      ranges = &m_boolConstants.constantRanges;
+      break;
+
+    default:
+      dxbc_spv_unreachable();
+
+      Logger::err("Register type: ",
+        UnambiguousRegisterType { registerType, info.getType(), info.getVersion().first },
+        " is not a constant register type.");
+  }
+
+  if (ranges == nullptr)
+    return ir::SsaDef();
+
+  const ConstantRange* bestRange = nullptr;
+  for (const auto& range : *ranges) {
+    if (registerIndex >= range.startIndex
+      && registerIndex < range.startIndex + range.count
+      && (bestRange == nullptr || range.count < bestRange->count)) {
+      bestRange = &range;
+    }
+  }
+
+  if (bestRange == nullptr) {
+    dxbc_spv_unreachable();
+    Logger::err("Cannot find constant: ", registerIndex, " in ranges.");
+    return ir::SsaDef();
+  }
+
+  uint32_t arrayIndex = constantTypeOffset;
+  arrayIndex += registerType == RegisterType::eConstBool ? (operand.getIndex() / 32u) : operand.getIndex();
+  auto offset = builder.makeConstant(arrayIndex);
+  // TODO: Relative addressing
+  auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, bestRange->namedBufferDef, builder.makeConstant(0u)));
+
+  if (registerType == RegisterType::eConstBool) {
+    /* Bool constants are not an array of vec4s unlike float & int.
+     * Instead they are set as an arrray of scalar bools on the API side and we store them as bit masks. */
+    dxbc_spv_assert(scalarType == ir::ScalarType::eBool);
+    auto dword = builder.add(ir::Op::BufferLoad(
+      ir::ScalarType::eU32, descriptor, offset, 4u));
+
+    auto bit = builder.add(ir::Op::UBitExtract(
+      ir::ScalarType::eU32,
+      dword,
+      builder.makeConstant(operand.getIndex() % 32u),
+      builder.makeConstant(1u)));
+    auto boolVal = builder.add(ir::Op::INe(ir::ScalarType::eU32, bit, builder.makeConstant(0u)));
+    if (util::popcnt(uint8_t(componentMask)) == 1u) {
+      return boolVal;
+    } else {
+      return m_converter.broadcastScalar(builder, boolVal, componentMask);
+    }
+  }
+
+  std::array<ir::SsaDef, 4u> components = { };
+
+  if (componentMask == ComponentBit::eAll) {
+    /* Read entire vector in one go, no need to addres into scalars */
+    auto result = builder.add(ir::Op::BufferLoad(
+      ir::BasicType(bufferElementScalarType, 4u), descriptor, offset, 16u));
+
+    for (uint32_t i = 0u; i < components.size(); i++)
+      components[i] = m_converter.extractFromVector(builder, result, i);
+  } else {
+    /* Absolute component alignment, in dwords */
+    constexpr uint32_t ComponentAlignments = 0x1214;
+
+    while (componentMask) {
+      /* Consecutive blocks of components to read */
+      auto block = util::extractConsecutiveComponents(componentMask);
+      auto blockType = ir::BasicType(bufferElementScalarType, util::popcnt(uint8_t(block)));
+
+      /* First component in the block */
+      auto componentIndex = uint8_t(componentFromBit(block.first()));
+      auto blockAlignment = 4u * util::bextract(ComponentAlignments, 4u * componentIndex, 4u);
+
+      /* Build address vector with the component index */
+      auto address = builder.add(ir::Op::CompositeConstruct(
+        ir::BasicType(ir::ScalarType::eU32, 2u), offset,
+        builder.makeConstant(uint32_t(componentIndex))));
+
+      /* Emit actual buffer load for the block and write back scalars */
+      auto result = builder.add(ir::Op::BufferLoad(blockType, descriptor, address, blockAlignment));
+
+      for (uint32_t i = 0u; i < blockType.getVectorSize(); i++)
+        components[componentIndex + i] = m_converter.extractFromVector(builder, result, i);
+
+      componentMask -= block;
+    }
+  }
+
+  /* Convert scalars to the requested type */
+  for (auto& scalar : components) {
+    if (scalar && scalarType != bufferElementScalarType)
+      scalar = builder.add(ir::Op::ConsumeAs(scalarType, scalar));
+  }
+
+  /* Build result vector */
+  return m_converter.composite(builder,
+    m_converter.makeVectorType(scalarType, componentMask),
+    components.data(), operand.getSwizzle(info), componentMask);
 }
 
-
-ir::SsaDef ResourceMap::dclConstantBuffer(
-            ir::Builder&   builder,
-            ir::ScalarType type,
-            uint32_t       vectorSize,
-            uint32_t       arrayLength,
-            uint32_t       regIdx,
-      const char*          name) {
-  auto arrayType = ir::Type(type, vectorSize).addArrayDimension(arrayLength);
-  auto cbv = builder.add(ir::Op::DclCbv(arrayType, m_converter.getEntryPoint(), 0u, regIdx, 1u));
-  if (name)
-    builder.add(ir::Op::DebugName(cbv, name));
-
-  return cbv;
-}
 
 
 ir::SsaDef ResourceMap::emitSample(
@@ -292,8 +335,6 @@ ir::SsaDef ResourceMap::projectTexCoord(ir::Builder& builder, uint32_t samplerIn
       m_converter.getShaderInfo().getType(), samplerIndex);
     auto isProjectedSpecConst = m_converter.m_specConstants.get(
       builder,
-      m_converter.getEntryPoint(),
-      m_converter.m_specConstUbo,
       SpecConstantId::eSpecSamplerProjected,
       builder.makeConstant(specConstIdx),
       builder.makeConstant(1u)
@@ -445,8 +486,6 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
     auto resultTmp = builder.add(ir::Op::DclTmp(ir::BasicType(ir::ScalarType::eF32, 4u), m_converter.getEntryPoint()));
     auto samplerTypeSpecConst = m_converter.m_specConstants.get(
       builder,
-      m_converter.getEntryPoint(),
-      m_converter.m_specConstUbo,
       SpecConstantId::eSpecSamplerType,
       builder.makeConstant(2u * specConstIdx),
       builder.makeConstant(2u)
@@ -518,8 +557,6 @@ ir::SsaDef ResourceMap::emitSampleColorOrDref(
     auto resultTmp = builder.add(ir::Op::DclTmp(ir::BasicType(ir::ScalarType::eF32, 4u), m_converter.getEntryPoint()));
     auto isDepth = m_converter.m_specConstants.get(
       builder,
-      m_converter.getEntryPoint(),
-      m_converter.m_specConstUbo,
       SpecConstantId::eSpecSamplerDepthMode,
       builder.makeConstant(specConstIdx),
       builder.makeConstant(1u)
@@ -586,8 +623,6 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
 
   auto fetch4EnabledSpecConst = m_converter.m_specConstants.get(
     builder,
-    m_converter.getEntryPoint(),
-    m_converter.m_specConstUbo,
     SpecConstantId::eSpecSamplerFetch4,
     builder.makeConstant(specConstIdx),
     builder.makeConstant(1u)
@@ -653,8 +688,6 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
 
   auto isNullSpecConst = m_converter.m_specConstants.get(
     builder,
-    m_converter.getEntryPoint(),
-    m_converter.m_specConstUbo,
     SpecConstantId::eSpecSamplerNull,
     builder.makeConstant(specConstIdx),
     builder.makeConstant(1u)
@@ -689,8 +722,6 @@ ir::SsaDef ResourceMap::emitSampleDref(
   // [D3D8] Scale Dref from [0..(2^N - 1)] for D24S8 and D16 if Dref scaling is enabled
   auto drefScaleShift = m_converter.m_specConstants.get(
     builder,
-    m_converter.getEntryPoint(),
-    m_converter.m_specConstUbo,
     SpecConstantId::eSpecDrefScaling
   );
   auto drefScale = builder.add(ir::Op::IShl(ir::ScalarType::eU32, builder.makeConstant(1u), drefScaleShift));
@@ -706,8 +737,6 @@ ir::SsaDef ResourceMap::emitSampleDref(
   // Clamp Dref to [0..1] for D32F emulating UNORM textures
   auto clampDref = m_converter.m_specConstants.get(
     builder,
-    m_converter.getEntryPoint(),
-    m_converter.m_specConstUbo,
     SpecConstantId::eSpecSamplerDrefClamp
   );
   clampDref      = builder.add(ir::Op::INe(ir::ScalarType::eBool, clampDref, builder.makeConstant(0u)));

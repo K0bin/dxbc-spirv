@@ -54,8 +54,8 @@ struct SamplerRegister {
 };
 
 struct ConstantRange {
-  /** Declaration of a function to read the data. */
-  ir::SsaDef functionDef = { };
+  /** Declaration of a buffer that has the debug CTAB name. (Only used for debugging.). */
+  ir::SsaDef namedBufferDef = { };
 
   /** The constant register index of the element in this array. */
   uint32_t startIndex = 0u;
@@ -93,7 +93,7 @@ public:
 
     ~ResourceMap();
 
-    void initialize(ir::Builder& builder, bool isSwvp, bool useDebugNames);
+    void initialize(ir::Builder& builder, bool useCTabNames);
 
     /** Loads a resource or sampler descriptor and retrieves basic
      *  properties required to perform any operations on typed resources. */
@@ -184,25 +184,6 @@ private:
     ir::SsaDef lodBias,
     ir::SsaDef dx,
     ir::SsaDef dy
-  );
-
-  ir::SsaDef dclConstantAccessFunction(
-    ir::Builder&   builder,
-    ir::SsaDef     buffer,
-    ir::Type       bufferMemberType,
-    ir::Type       consumeAsType,
-    uint32_t       offset,
-    uint32_t       count,
-    const char*    name
-  );
-
-  ir::SsaDef dclConstantBuffer(
-    ir::Builder&   builder,
-    ir::ScalarType type,
-    uint32_t       vectorSize,
-    uint32_t       arrayLength,
-    uint32_t       regIdx,
-    const char*    name
   );
 
 };
