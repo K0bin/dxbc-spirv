@@ -122,6 +122,10 @@ public:
 
   ir::SsaDef projectTexCoord(ir::Builder& builder, uint32_t samplerIndex, ir::SsaDef texCoord, bool controlWithSpecConst);
 
+  void setInsertCursor(ir::SsaDef cursor) {
+    m_functionInsertPoint = cursor;
+  }
+
 private:
 
   Converter& m_converter;
@@ -131,6 +135,8 @@ private:
   Constants<float> m_floatConstants;
   Constants<int32_t> m_intConstants;
   Constants<bool> m_boolConstants;
+
+  ir::SsaDef m_functionInsertPoint = { };
 
   ir::SsaDef dclSampler(ir::Builder& builder, uint32_t samplerIndex);
 
