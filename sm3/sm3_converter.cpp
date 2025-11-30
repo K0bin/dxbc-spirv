@@ -1103,7 +1103,13 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
 
     predicate = m_regFile.emitLoadPredicate(builder, operand.getPredicateSwizzle(), writeMask);
     if (operand.getPredicateModifier() == OperandModifier::eNot) {
-      predicate = builder.add(ir::Op::BNot(makeVectorType(ir::ScalarType::eBool, writeMask), predicate));
+      std::array<ir::SsaDef, 4u> components = { };
+      for (auto c : writeMask) {
+        auto component = componentFromBit(c);
+        auto predicateComponent = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eBool, predicate, builder.makeConstant(uint32_t(component))));
+        components[uint8_t(component)] = builder.add(ir::Op::BNot(ir::ScalarType::eBool, predicateComponent));
+      }
+      predicate = composite(builder, makeVectorType(ir::ScalarType::eBool, writeMask), components.data(), Swizzle::identity(), writeMask);
     } else if (operand.getPredicateModifier() != OperandModifier::eNone) {
       Logger::log(LogLevel::eError, "Unknown predicate modifier: ", uint32_t(operand.getPredicateModifier()));
     }
