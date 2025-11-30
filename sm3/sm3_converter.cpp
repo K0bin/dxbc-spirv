@@ -316,7 +316,7 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
     value = buildVector(builder, ir::ScalarType::eI32, util::popcnt(uint8_t(writeMask)), components.data());
   }
 
-  return storeDstModifiedPredicated(builder, op, dst, writeMask, value);
+  return storeDstModifiedPredicated(builder, op, dst, value);
 }
 
 
@@ -366,7 +366,7 @@ bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
     return ir::Op();
   } ();
 
-  return storeDstModifiedPredicated(builder, op, dst, writeMask, builder.add(std::move(result)));
+  return storeDstModifiedPredicated(builder, op, dst, builder.add(std::move(result)));
 }
 
 
@@ -390,7 +390,7 @@ bool Converter::handleMad(ir::Builder& builder, const Instruction& op) {
 
   auto result = ir::Op::FMadLegacy(vectorType, src0, src1, src2);
 
-  return storeDstModifiedPredicated(builder, op, dst, writeMask, builder.add(std::move(result)));
+  return storeDstModifiedPredicated(builder, op, dst, builder.add(std::move(result)));
 }
 
 
@@ -437,7 +437,7 @@ bool Converter::handleDot(ir::Builder& builder, const Instruction& op) {
 
   WriteMask writeMask = dst.getWriteMask(getShaderInfo());
   result = broadcastScalar(builder, result, writeMask);
-  return storeDstModifiedPredicated(builder, op, dst, writeMask, result);
+  return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
 
@@ -468,7 +468,7 @@ bool Converter::handleCompare(ir::Builder& builder, const Instruction& op) {
   else
     result = ir::Op::FGe(boolType, src0, src1);
 
-  return storeDstModifiedPredicated(builder, op, dst, writeMask, builder.add(std::move(result)));
+  return storeDstModifiedPredicated(builder, op, dst, builder.add(std::move(result)));
 }
 
 
@@ -513,12 +513,6 @@ bool Converter::handleMatrixArithmetic(ir::Builder& builder, const Instruction& 
   /* Instruction type */
   const auto& dst = op.getDst();
 
-  WriteMask writeMask = dst.getWriteMask(getShaderInfo());
-
-  /* Fix the write mask if it writes more components than the matrix has rows. */
-  WriteMask maxWriteMask = WriteMask((1u << rowCount) - 1u);
-  writeMask &= maxWriteMask;
-
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
 
   /* Build a write mask that determines how many components we'll load. */
@@ -540,7 +534,7 @@ bool Converter::handleMatrixArithmetic(ir::Builder& builder, const Instruction& 
   }
 
   auto result = buildVector(builder, scalarType, rowCount, components.data());
-  return storeDstModifiedPredicated(builder, op, dst, writeMask, result);
+  return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
 
@@ -582,7 +576,7 @@ bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
     components[2u] = builder.add(ir::Op::Select(scalarType, zTest, components[2u], zeroFConst));
 
   auto result = buildVector(builder, scalarType, util::popcnt(uint8_t(writeMask)), components.data());
-  return storeDstModifiedPredicated(builder, op, dst, writeMask, result);
+  return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
 
@@ -594,7 +588,7 @@ bool Converter::handleTexCoord(ir::Builder &builder, const Instruction &op) {
   if (getShaderInfo().getVersion().first >= 2 || getShaderInfo().getVersion().second >= 4) {
     /* TexCrd (SM 1.4) */
     auto src = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
-    return storeDstModifiedPredicated(builder, op, dst, writeMask, src);
+    return storeDstModifiedPredicated(builder, op, dst, src);
 
   } else {
     /* TexCoord (SM 1.1 - 1.3) */
@@ -613,7 +607,7 @@ bool Converter::handleTexCoord(ir::Builder &builder, const Instruction &op) {
     if (writeMask & ComponentBit::eW)
       src = builder.add(ir::Op::CompositeInsert(vectorType, src, builder.makeConstant(3u), builder.makeConstant(1.0f)));
 
-    return storeDstModifiedPredicated(builder, op, dst, writeMask, src);
+    return storeDstModifiedPredicated(builder, op, dst, src);
   }
 }
 
@@ -820,7 +814,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     default: dxbc_spv_unreachable(); break;
   }
 
-  return storeDstModifiedPredicated(builder, op, dst, dst.getWriteMask(getShaderInfo()), result);
+  return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
 
@@ -849,7 +843,7 @@ bool Converter::handleCmp(ir::Builder &builder, const Instruction &op) {
   }
 
   auto vec = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
-  return storeDstModifiedPredicated(builder, op, dst, writeMask, vec);
+  return storeDstModifiedPredicated(builder, op, dst, vec);
 }
 
 
@@ -965,14 +959,14 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
 }
 
 
-ir::SsaDef Converter::applyDstModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask writeMask) {
+ir::SsaDef Converter::applyDstModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand) {
   ir::Op op = builder.getOp(def);
   auto type = op.getType().getBaseType(0u);
   int8_t shift = operand.getShift();
 
   /* Handle unknown type */
   if (type.isUnknownType() && (shift != 0 || operand.isSaturated())) {
-    type = makeVectorType(ir::ScalarType::eF32, writeMask);
+    type = ir::BasicType(ir::ScalarType::eF32, type.getVectorSize());
     def = builder.add(ir::Op::ConsumeAs(type, def));
   }
 
@@ -1077,7 +1071,10 @@ ir::SsaDef Converter::loadSrcModified(ir::Builder& builder, const Instruction& o
 }
 
 
-bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask writeMask, ir::SsaDef predicateVec, ir::SsaDef value) {
+bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef predicateVec, ir::SsaDef value) {
+  WriteMask writeMask = operand.getWriteMask(getShaderInfo());
+  writeMask = fixupWriteMask(builder, writeMask, value);
+
   switch (operand.getRegisterType()) {
     case RegisterType::eTemp:
       return m_regFile.emitStore(builder, operand, writeMask, predicateVec, value);
@@ -1097,10 +1094,13 @@ bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Oper
 }
 
 
-bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask writeMask, ir::SsaDef value) {
-  value = applyDstModifiers(builder, value, op, operand, writeMask);
+bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef value) {
+  value = applyDstModifiers(builder, value, op, operand);
   ir::SsaDef predicate = ir::SsaDef();
   if (operand.isPredicated()) {
+    WriteMask writeMask = operand.getWriteMask(getShaderInfo());
+    writeMask = fixupWriteMask(builder, writeMask, value);
+
     predicate = m_regFile.emitLoadPredicate(builder, operand.getPredicateSwizzle(), writeMask);
     if (operand.getPredicateModifier() == OperandModifier::eNot) {
       predicate = builder.add(ir::Op::BNot(makeVectorType(ir::ScalarType::eBool, writeMask), predicate));
@@ -1108,7 +1108,21 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
       Logger::log(LogLevel::eError, "Unknown predicate modifier: ", uint32_t(operand.getPredicateModifier()));
     }
   }
-  return storeDst(builder, op, operand, writeMask, predicate, value);
+  return storeDst(builder, op, operand, predicate, value);
+}
+
+
+WriteMask Converter::fixupWriteMask(ir::Builder& builder, WriteMask writeMask, ir::SsaDef value) {
+  /* Fix the write mask if it writes more components than the value has. */
+  auto type = builder.getOp(value).getType().getBaseType(0u);
+  WriteMask maxWriteMask = WriteMask((1u << type.getVectorSize()) - 1u);
+  WriteMask oldWriteMask = writeMask;
+  writeMask &= maxWriteMask;
+  if (writeMask != oldWriteMask) {
+    Logger::warn("Disabling components in write mask because computed value does not have them: Before: ",
+      oldWriteMask, ", after: ", writeMask);
+  }
+  return writeMask;
 }
 
 
