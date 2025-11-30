@@ -158,6 +158,9 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eTexDepth:
       break;
 
+    case OpCode::eCmp:
+      return handleCmp(builder, op);
+
     case OpCode::eDst:
     case OpCode::eLrp:
     case OpCode::eCall:
@@ -183,7 +186,6 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eExpP:
     case OpCode::eLogP:
     case OpCode::eCnd:
-    case OpCode::eCmp:
     case OpCode::eBem:
     case OpCode::eDsX:
     case OpCode::eDsY:
@@ -821,6 +823,34 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
   return storeDstModifiedPredicated(builder, op, dst, dst.getWriteMask(getShaderInfo()), result);
 }
 
+
+bool Converter::handleCmp(ir::Builder &builder, const Instruction &op) {
+  auto dst = op.getDst();
+  auto src0 = op.getSrc(0u);
+  auto src1 = op.getSrc(1u);
+  auto src2 = op.getSrc(2u);
+
+  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
+  auto condition = loadSrcModified(builder, op, src0, writeMask, scalarType);
+  auto option1 = loadSrcModified(builder, op, src1, writeMask, scalarType);
+  auto option2 = loadSrcModified(builder, op, src2, writeMask, scalarType);
+
+  std::array<ir::SsaDef, 4u> components = { };
+
+  for (auto c : writeMask) {
+    auto component = componentFromBit(c);
+    auto conditionComponent = builder.add(ir::Op::CompositeExtract(scalarType, condition, builder.makeConstant(uint32_t(component))));
+    auto option1Component = builder.add(ir::Op::CompositeExtract(scalarType, option1, builder.makeConstant(uint32_t(component))));
+    auto option2Component = builder.add(ir::Op::CompositeExtract(scalarType, option2, builder.makeConstant(uint32_t(component))));
+    auto conditionBool = builder.add(ir::Op::FLe(scalarType, conditionComponent, makeTypedConstant(builder, scalarType, 0.0f)));
+    components[uint32_t(component)] = builder.add(ir::Op::Select(scalarType, conditionBool, option1Component, option2Component));
+  }
+
+  auto vec = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
+  return storeDstModifiedPredicated(builder, op, dst, writeMask, vec);
+}
 
 
 ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask) {
