@@ -448,21 +448,42 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
 
   auto vec4FType = ir::BasicType(ir::ScalarType::eF32, 4u);
   auto cursor = builder.setCursor(m_functionInsertPoint);
-  auto function = builder.add(ir::Op::Function(vec4FType));
+  auto functionOp = ir::Op::Function(vec4FType);
 
   auto texCoordParam = builder.add(ir::Op::DclParam(vec4FType)); // TexCoord
+  functionOp.addOperand(texCoordParam);
+  if (m_converter.getOptions().includeDebugNames) {
+    builder.add(ir::Op::DebugName(texCoordParam, "texCoord"));
+  }
   ir::SsaDef lodParam = { };
   ir::SsaDef lodBiasParam = { };
   ir::SsaDef dxParam = { };
   ir::SsaDef dyParam = { };
-  if (config & SamplingConfigBit::eExplicitLod)
+  if (config & SamplingConfigBit::eExplicitLod) {
     lodParam = builder.add(ir::Op::DclParam(ir::ScalarType::eU32)); // Lod
-  if (config & SamplingConfigBit::eLodBias)
+    functionOp.addOperand(lodParam);
+    if (m_converter.getOptions().includeDebugNames) {
+      builder.add(ir::Op::DebugName(lodParam, "lod"));
+    }
+  }
+  if (config & SamplingConfigBit::eLodBias) {
     lodBiasParam = builder.add(ir::Op::DclParam(ir::ScalarType::eF32)); // LodBias
+    functionOp.addOperand(lodBiasParam);
+    if (m_converter.getOptions().includeDebugNames) {
+      builder.add(ir::Op::DebugName(lodBiasParam, "lodBias"));
+    }
+  }
   if (config & SamplingConfigBit::eExplicitDerivatives) {
     dxParam = builder.add(ir::Op::DclParam(ir::ScalarType::eF32)); // Dx
     dyParam = builder.add(ir::Op::DclParam(ir::ScalarType::eF32)); // Dy
+    functionOp.addOperand(dxParam);
+    functionOp.addOperand(dyParam);
+    if (m_converter.getOptions().includeDebugNames) {
+      builder.add(ir::Op::DebugName(dxParam, "dxParam"));
+      builder.add(ir::Op::DebugName(dyParam, "dyParam"));
+    }
   }
+  auto function = builder.add(std::move(functionOp));
 
   auto texCoord = builder.add(ir::Op::ParamLoad(vec4FType, function, texCoordParam));
   auto lod = lodParam ? builder.add(ir::Op::ParamLoad(ir::ScalarType::eU32, function, lodParam)) : ir::SsaDef();
@@ -650,7 +671,7 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
       auto const2vec = m_converter.broadcastScalar(builder, builder.makeConstant(2u), util::makeWriteMaskForComponents(coordDims));
       auto scaledTextureSizeI = builder.add(ir::Op::IMul(textureSizeTypeI, textureSizeI, const2vec));
       auto textureSizeType = ir::BasicType(ir::ScalarType::eF32, coordDims);
-      auto scaledTextureSizeF = builder.add(ir::Op::ConvertFtoI(textureSizeType, scaledTextureSizeI));
+      auto scaledTextureSizeF = builder.add(ir::Op::ConvertItoF(textureSizeType, scaledTextureSizeI));
 
       /* invTextureSize = (1.0f - 1.0f / 256.0f) / scaledTextureSizeF */
       float numerator = 1.0f;
