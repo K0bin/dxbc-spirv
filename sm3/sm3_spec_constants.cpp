@@ -7,8 +7,17 @@
 namespace dxbc_spv::sm3 {
 
 ir::SsaDef SpecializationConstantsMap::getSpecConstDword(ir::Builder& builder, uint32_t idx) {
-  if (!m_specConstantIds[idx])
+  if (!m_specConstantIds[idx]) {
     m_specConstantIds[idx] = builder.add(ir::Op::DclSpecConstant(ir::ScalarType::eU32, m_converter.getEntryPoint(), idx, 0u));
+
+    if (m_converter.getOptions().includeDebugNames) {
+      std::stringstream namestream;
+      namestream << "SpecConst";
+      namestream << idx;
+      std::string name = namestream.str();
+      builder.add(ir::Op::DebugName(m_specConstantIds[idx], name.c_str()));
+    }
+  }
 
   return m_specConstantIds[idx];
 }
@@ -51,7 +60,7 @@ ir::SsaDef SpecializationConstantsMap::get(ir::Builder& builder, SpecConstantId 
       auto bitOffsetParam = builder.add(ir::Op::DclParam(ir::ScalarType::eU32));
       builder.add(ir::Op::DebugName(bitOffsetParam, "bitOffset"));
       auto bitCountParam = builder.add(ir::Op::DclParam(ir::ScalarType::eU32));
-      builder.add(ir::Op::DebugName(bitOffsetParam, "bitCount"));
+      builder.add(ir::Op::DebugName(bitCountParam, "bitCount"));
 
       function = builder.add(
           ir::Op::Function(ir::ScalarType::eU32)
