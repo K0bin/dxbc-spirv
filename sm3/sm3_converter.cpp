@@ -667,10 +667,9 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     case OpCode::eTexLdl: {
       auto src0 = op.getSrc(0u);
       auto src1 = op.getSrc(1u);
-      auto src2 = op.getSrc(2u);
       auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, ir::ScalarType::eF32);
       uint32_t samplerIdx = src1.getIndex();
-      auto lod = loadSrcModified(builder, op, src2, ComponentBit::eAll, ir::ScalarType::eF32);
+      auto lod = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(3u)));
       result = m_resources.emitSample(builder, samplerIdx, texCoord, lod, ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
     } break;
 
