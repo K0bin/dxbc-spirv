@@ -926,7 +926,6 @@ bool Converter::handlePow(ir::Builder &builder, const Instruction &op) {
 
 
 bool Converter::handleLrp(ir::Builder &builder, const Instruction &op) {
-  //return true;
   dxbc_spv_assert(op.getSrcCount() == 3u);
   dxbc_spv_assert(op.hasDst());
 
@@ -942,27 +941,14 @@ bool Converter::handleLrp(ir::Builder &builder, const Instruction &op) {
   auto src1Val = loadSrcModified(builder, op, src1, writeMask, scalarType);
   auto src2Val = loadSrcModified(builder, op, src2, writeMask, scalarType);
 
-  std::array<ir::SsaDef, 4u> components = { };
-  for (auto c : writeMask) {
-    uint32_t componentIndex = uint32_t(util::componentFromBit(c));
-    ir::SsaDef c0 = src0Val;
-    ir::SsaDef c1 = src1Val;
-    ir::SsaDef c2 = src2Val;
-    if (util::popcnt(uint8_t(writeMask)) != 1u) {
-      c0 = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(uint32_t(src0.getSwizzle(getShaderInfo()).get(componentIndex)))));
-      c1 = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(uint32_t(src1.getSwizzle(getShaderInfo()).get(componentIndex)))));
-      c2 = builder.add(ir::Op::CompositeExtract(scalarType, src2Val, builder.makeConstant(uint32_t(src2.getSwizzle(getShaderInfo()).get(componentIndex)))));
-    }
-    dxbc_spv_assert(c0 && c1 && c2);
-    /* dest = src0 * src1 + (1-src0) * src2 */
-    auto addend1 = builder.add(ir::Op::FMulLegacy(scalarType, c0, c1));
-    auto addend2 = builder.add(ir::Op::FSub(scalarType, makeTypedConstant(builder, scalarType, 1.0f), c0));
-    addend2 = builder.add(ir::Op::FMulLegacy(scalarType, addend2, c2));
-    components[componentIndex] = builder.add(ir::Op::FAdd(scalarType, addend1, addend2));
-  }
+  auto type = makeVectorType(scalarType, writeMask);
 
-  auto resVec = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
-  return storeDstModifiedPredicated(builder, op, dst, resVec);
+  /* dest = src0 * (src1 - src2) + src2 */
+  auto result = builder.add(ir::Op::FSub(type, src1Val, src2Val));
+  result = builder.add(ir::Op::FAdd(type, result, src2Val));
+  result = builder.add(ir::Op::FMulLegacy(type, src0Val, result));
+
+  return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
 
