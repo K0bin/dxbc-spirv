@@ -1125,7 +1125,7 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
 WriteMask Converter::fixupWriteMask(ir::Builder& builder, WriteMask writeMask, ir::SsaDef value) {
   /* Fix the write mask if it writes more components than the value has. */
   auto type = builder.getOp(value).getType().getBaseType(0u);
-  WriteMask maxWriteMask = WriteMask((1u << type.getVectorSize()) - 1u);
+  WriteMask maxWriteMask = WriteMask(uint8_t((1u << type.getVectorSize()) - 1u) << util::tzcnt(uint8_t(writeMask)));
   WriteMask oldWriteMask = writeMask;
   writeMask &= maxWriteMask;
   if (writeMask != oldWriteMask) {
