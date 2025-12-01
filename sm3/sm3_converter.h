@@ -129,6 +129,14 @@ private:
 
   bool handleCmp(ir::Builder& builder, const Instruction& op);
 
+  bool handleNrm(ir::Builder& builder, const Instruction& op);
+
+  bool handleSinCos(ir::Builder& builder, const Instruction& op);
+
+  bool handlePow(ir::Builder& builder, const Instruction& op);
+
+  bool handleLrp(ir::Builder& builder, const Instruction& op);
+
   ir::SsaDef applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask);
 
   ir::SsaDef applyDstModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand);
