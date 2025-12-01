@@ -1125,6 +1125,14 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
 WriteMask Converter::fixupWriteMask(ir::Builder& builder, WriteMask writeMask, ir::SsaDef value) {
   /* Fix the write mask if it writes more components than the value has. */
   auto type = builder.getOp(value).getType().getBaseType(0u);
+
+  if (util::popcnt(uint8_t(writeMask)) == type.getVectorSize()) {
+    return writeMask;
+  }
+
+  /* Scalar values should be turned into vectors with broadcastScalar instead. */
+  dxbc_spv_assert(type.getVectorSize() != 1u);
+
   WriteMask maxWriteMask = WriteMask(uint8_t((1u << type.getVectorSize()) - 1u) << util::tzcnt(uint8_t(writeMask)));
   WriteMask oldWriteMask = writeMask;
   writeMask &= maxWriteMask;
