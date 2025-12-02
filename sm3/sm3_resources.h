@@ -20,9 +20,9 @@ enum class SpecConstTextureType : uint32_t {
 
 
 enum class SamplingConfigBit : uint8_t {
-  eExplicitLod         = 1u,
-  eLodBias             = 2u,
-  eExplicitDerivatives = 3u,
+  eExplicitLod         = 1u << 1u,
+  eLodBias             = 1u << 2u,
+  eExplicitDerivatives = 1u << 3u,
 
   eFlagEnum            = 0u,
 };
