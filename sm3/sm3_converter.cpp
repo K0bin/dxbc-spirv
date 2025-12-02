@@ -298,30 +298,33 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
   WriteMask writeMask = dst.getWriteMask(getShaderInfo());
 
   /* Even when writing the address register, we need to load it as a float to round properly. */
-  auto type = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
 
-  auto value = loadSrcModified(builder, op, src, writeMask, type);
+  auto value = loadSrcModified(builder, op, src, writeMask, scalarType);
 
   if (!value)
     return false;
 
   /* Mova writes to the address register. On <= SM2.1 mov *can* write to the address register. */
   if (dst.getRegisterType() == RegisterType::eAddr) {
+    uint32_t componentCount = util::popcnt(uint8_t(writeMask));
     std::array<ir::SsaDef, 4u> components = { };
     for (auto c : writeMask) {
       auto componentIndex = uint8_t(util::componentFromBit(c));
       auto componentConstant = builder.makeConstant(componentIndex);
-      auto scalarValue = builder.add(ir::Op::CompositeExtract(type, value, componentConstant));
+      auto scalarValue = componentCount > 1u
+        ? builder.add(ir::Op::CompositeExtract(scalarType, value, componentConstant))
+        : value;
 
       ir::SsaDef roundedValue;
       if (getShaderInfo().getVersion().first < 2 && getShaderInfo().getVersion().second < 2)
-        roundedValue = builder.add(ir::Op::FRound(type, scalarValue, ir::RoundMode::eZero));
+        roundedValue = builder.add(ir::Op::FRound(scalarType, scalarValue, ir::RoundMode::eZero));
       else
-        roundedValue = builder.add(ir::Op::FRound(type, scalarValue, ir::RoundMode::eNearestEven));
+        roundedValue = builder.add(ir::Op::FRound(scalarType, scalarValue, ir::RoundMode::eNearestEven));
 
       components[componentIndex] = builder.add(ir::Op::Cast(ir::ScalarType::eI32, roundedValue));
     }
-    value = buildVector(builder, ir::ScalarType::eI32, util::popcnt(uint8_t(writeMask)), components.data());
+    value = buildVector(builder, ir::ScalarType::eI32, componentCount, components.data());
   }
 
   return storeDstModifiedPredicated(builder, op, dst, value);
@@ -841,19 +844,24 @@ bool Converter::handleCmp(ir::Builder &builder, const Instruction &op) {
   auto option1 = loadSrcModified(builder, op, src1, writeMask, scalarType);
   auto option2 = loadSrcModified(builder, op, src2, writeMask, scalarType);
 
-  std::array<ir::SsaDef, 4u> components = { };
-
-  for (auto c : writeMask) {
-    auto component = componentFromBit(c);
-    auto conditionComponent = builder.add(ir::Op::CompositeExtract(scalarType, condition, builder.makeConstant(uint32_t(component))));
-    auto option1Component = builder.add(ir::Op::CompositeExtract(scalarType, option1, builder.makeConstant(uint32_t(component))));
-    auto option2Component = builder.add(ir::Op::CompositeExtract(scalarType, option2, builder.makeConstant(uint32_t(component))));
-    auto conditionBool = builder.add(ir::Op::FLe(scalarType, conditionComponent, makeTypedConstant(builder, scalarType, 0.0f)));
-    components[uint32_t(component)] = builder.add(ir::Op::Select(scalarType, conditionBool, option1Component, option2Component));
+  ir::SsaDef res;
+  if (util::popcnt(uint8_t(writeMask)) > 1u) {
+    std::array<ir::SsaDef, 4u> components = { };
+    for (auto c : writeMask) {
+      auto component = componentFromBit(c);
+      auto conditionComponent = builder.add(ir::Op::CompositeExtract(scalarType, condition, builder.makeConstant(uint32_t(component))));
+      auto option1Component = builder.add(ir::Op::CompositeExtract(scalarType, option1, builder.makeConstant(uint32_t(component))));
+      auto option2Component = builder.add(ir::Op::CompositeExtract(scalarType, option2, builder.makeConstant(uint32_t(component))));
+      auto conditionBool = builder.add(ir::Op::FLe(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.0f)));
+      components[uint32_t(component)] = builder.add(ir::Op::Select(scalarType, conditionBool, option1Component, option2Component));
+    }
+    res = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
+  } else {
+    auto conditionBool = builder.add(ir::Op::FLe(ir::ScalarType::eBool, condition, makeTypedConstant(builder, scalarType, 0.0f)));
+    res = builder.add(ir::Op::Select(scalarType, conditionBool, option1, option2));
   }
 
-  auto vec = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
-  return storeDstModifiedPredicated(builder, op, dst, vec);
+  return storeDstModifiedPredicated(builder, op, dst, res);
 }
 
 
@@ -1216,7 +1224,9 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
       std::array<ir::SsaDef, 4u> components = { };
       for (auto c : writeMask) {
         auto component = componentFromBit(c);
-        auto predicateComponent = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eBool, predicate, builder.makeConstant(uint32_t(component))));
+        auto predicateComponent = util::popcnt(uint8_t(writeMask)) > 1u
+          ? builder.add(ir::Op::CompositeExtract(ir::ScalarType::eBool, predicate, builder.makeConstant(uint32_t(component))))
+          : predicate;
         components[uint8_t(component)] = builder.add(ir::Op::BNot(ir::ScalarType::eBool, predicateComponent));
       }
       predicate = composite(builder, makeVectorType(ir::ScalarType::eBool, writeMask), components.data(), Swizzle::identity(), writeMask);
