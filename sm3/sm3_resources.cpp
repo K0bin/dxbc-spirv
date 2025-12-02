@@ -12,10 +12,6 @@ constexpr uint32_t MaxOtherConstants         = 16;
 constexpr uint32_t MaxFloatConstantsSoftware = 8192;
 constexpr uint32_t MaxOtherConstantsSoftware = 2048;
 
-constexpr uint32_t FloatCbvRegIdx = 0u;
-constexpr uint32_t IntCbvRegIdx   = 0u;
-constexpr uint32_t BoolCbvRegIdx  = 0u;
-
 ResourceMap::ResourceMap(Converter& converter)
 : m_converter (converter) {
 
@@ -38,12 +34,12 @@ void ResourceMap::initialize(ir::Builder& builder, bool useCTabNames) {
      * robustness2 to keep them small. */
     auto floatVec4Type = ir::Type(ir::ScalarType::eF32, 4u);
     auto floatArrayType = ir::Type(floatVec4Type).addArrayDimension(MaxFloatConstantsSoftware);
-    m_floatConstants.bufferDef = builder.add(ir::Op::DclCbv(floatArrayType, m_converter.getEntryPoint(), 0u, FloatCbvRegIdx, 1u));
+    m_floatConstants.bufferDef = builder.add(ir::Op::DclCbv(floatArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, FloatSWVPCbvRegIdx, 1u));
     auto intVec4Type = ir::Type(ir::ScalarType::eI32, 4u);
     auto intArrayType = ir::Type(intVec4Type).addArrayDimension(MaxOtherConstantsSoftware);
-    m_intConstants.bufferDef = builder.add(ir::Op::DclCbv(intArrayType, m_converter.getEntryPoint(), 0u, IntCbvRegIdx, 1u));
+    m_intConstants.bufferDef = builder.add(ir::Op::DclCbv(intArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, IntSWVPCbvRegIdx, 1u));
     auto boolBitMasksArrayType = ir::Type(ir::ScalarType::eU32).addArrayDimension((MaxOtherConstantsSoftware + 31u) / 32u);
-    m_boolConstants.bufferDef = builder.add(ir::Op::DclCbv(boolBitMasksArrayType, m_converter.getEntryPoint(), 0u, BoolCbvRegIdx, 1u));
+    m_boolConstants.bufferDef = builder.add(ir::Op::DclCbv(boolBitMasksArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, BoolSWVPCbvRegIdx, 1u));
 
     if (m_converter.m_options.includeDebugNames) {
       builder.add(ir::Op::DebugName(m_floatConstants.bufferDef, "cF"));
@@ -57,7 +53,7 @@ void ResourceMap::initialize(ir::Builder& builder, bool useCTabNames) {
      * float constants that weren't defined by the application can use robustness2 and the buffer stays small. */
     auto floatBufferMemberType = ir::Type(ir::ScalarType::eUnknown, 4u);
     auto constantsArrayType = ir::Type(floatBufferMemberType).addArrayDimension(hwvpConstantsArraySize);
-    auto constantsBufferDef = builder.add(ir::Op::DclCbv(constantsArrayType, m_converter.getEntryPoint(), 0u, FloatCbvRegIdx, 1u));
+    auto constantsBufferDef = builder.add(ir::Op::DclCbv(constantsArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, FloatIntHWVPCbvRegIdx, 1u));
     m_floatConstants.bufferDef = constantsBufferDef;
     m_intConstants.bufferDef = constantsBufferDef;
 
@@ -93,7 +89,7 @@ void ResourceMap::initialize(ir::Builder& builder, bool useCTabNames) {
       range.count = entry.count;
       auto floatVec4Type = ir::Type(ir::ScalarType::eF32, 4u);
       auto floatArrayType = ir::Type(floatVec4Type).addArrayDimension(isSwvp ? MaxFloatConstantsSoftware : hwvpConstantsArraySize);
-      range.namedBufferDef = builder.add(ir::Op::DclCbv(floatArrayType, m_converter.getEntryPoint(), 0u, FloatCbvRegIdx, 1u));
+      range.namedBufferDef = builder.add(ir::Op::DclCbv(floatArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, isSwvp ? FloatSWVPCbvRegIdx : FloatIntHWVPCbvRegIdx, 1u));
       builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
     }
     const auto& ctabIntEntries = ctab.entries()[uint32_t(ConstantType::eInt4)];
@@ -103,7 +99,7 @@ void ResourceMap::initialize(ir::Builder& builder, bool useCTabNames) {
       range.count      = entry.count;
       auto intVec4Type = ir::Type(ir::ScalarType::eI32, 4u);
       auto intArrayType = ir::Type(intVec4Type).addArrayDimension(isSwvp ? MaxOtherConstantsSoftware : hwvpConstantsArraySize);
-      range.namedBufferDef = builder.add(ir::Op::DclCbv(intArrayType, m_converter.getEntryPoint(), 0u, isSwvp ? IntCbvRegIdx : FloatCbvRegIdx, 1u));
+      range.namedBufferDef = builder.add(ir::Op::DclCbv(intArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, isSwvp ? IntSWVPCbvRegIdx : FloatIntHWVPCbvRegIdx, 1u));
       builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
     }
     if (isSwvp) {
@@ -113,7 +109,7 @@ void ResourceMap::initialize(ir::Builder& builder, bool useCTabNames) {
         range.startIndex = entry.index;
         range.count      = entry.count;
         auto boolBitMasksArrayType = ir::Type(ir::ScalarType::eU32).addArrayDimension(MaxOtherConstantsSoftware);
-        range.namedBufferDef = builder.add(ir::Op::DclCbv(boolBitMasksArrayType, m_converter.getEntryPoint(), 0u, BoolCbvRegIdx, 1u));
+        range.namedBufferDef = builder.add(ir::Op::DclCbv(boolBitMasksArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, BoolSWVPCbvRegIdx, 1u));
         builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
       }
     }
@@ -398,7 +394,7 @@ bool ResourceMap::dclSamplerAndAllTextureTypes(ir::Builder& builder, uint32_t sa
 
 
 ir::SsaDef ResourceMap::dclSampler(ir::Builder& builder, uint32_t samplerIndex) {
-  auto samplerDef = builder.add(ir::Op::DclSampler(m_converter.getEntryPoint(), 0u, samplerIndex, 1u));
+  auto samplerDef = builder.add(ir::Op::DclSampler(m_converter.getEntryPoint(), SamplerBindingsRegSpace, samplerIndex, 1u));
   if (m_converter.m_options.includeDebugNames) {
     const ConstantInfo* ctabEntry = nullptr;
     for (const auto& entry : m_converter.m_ctab.entries()[uint32_t(ConstantType::eSampler)]) {
@@ -424,7 +420,7 @@ ir::SsaDef ResourceMap::dclSampler(ir::Builder& builder, uint32_t samplerIndex) 
 
 
 ir::SsaDef ResourceMap::dclTexture(ir::Builder& builder, SpecConstTextureType textureType, uint32_t samplerIndex) {
-  auto textureDef = builder.add(ir::Op::DclSrv(ir::ScalarType::eF32, m_converter.getEntryPoint(), 0u,
+  auto textureDef = builder.add(ir::Op::DclSrv(ir::ScalarType::eF32, m_converter.getEntryPoint(), TextureBindingsRegSpace,
     samplerIndex, 1u, resourceKindFromTextureType(textureTypeFromSpecConstTextureType(textureType))));
   if (m_converter.m_options.includeDebugNames) {
     const ConstantInfo* ctabEntry = nullptr;
