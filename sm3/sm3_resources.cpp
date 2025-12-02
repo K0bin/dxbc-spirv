@@ -290,7 +290,6 @@ ir::SsaDef ResourceMap::emitConstantLoad(
 }
 
 
-
 ir::SsaDef ResourceMap::emitSample(
             ir::Builder& builder,
             uint32_t     samplerIndex,
@@ -332,7 +331,7 @@ ir::SsaDef ResourceMap::emitSample(
     funcCall.addParam(dy);
   }
 
-  return builder.add(funcCall);
+  return builder.add(std::move(funcCall));
 }
 
 
@@ -475,7 +474,7 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
   ir::SsaDef dxParam = { };
   ir::SsaDef dyParam = { };
   if (config & SamplingConfigBit::eExplicitLod) {
-    lodParam = builder.add(ir::Op::DclParam(ir::ScalarType::eU32)); // Lod
+    lodParam = builder.add(ir::Op::DclParam(ir::ScalarType::eF32)); // Lod
     functionOp.addOperand(lodParam);
     if (m_converter.getOptions().includeDebugNames) {
       builder.add(ir::Op::DebugName(lodParam, "lod"));
@@ -501,7 +500,7 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
   auto function = builder.add(std::move(functionOp));
 
   auto texCoord = builder.add(ir::Op::ParamLoad(vec4FType, function, texCoordParam));
-  auto lod = lodParam ? builder.add(ir::Op::ParamLoad(ir::ScalarType::eU32, function, lodParam)) : ir::SsaDef();
+  auto lod = lodParam ? builder.add(ir::Op::ParamLoad(ir::ScalarType::eF32, function, lodParam)) : ir::SsaDef();
   auto lodBias = lodBiasParam ? builder.add(ir::Op::ParamLoad(ir::ScalarType::eF32, function, lodBiasParam)) : ir::SsaDef();
   auto dx = dxParam ? builder.add(ir::Op::ParamLoad(ir::ScalarType::eF32, function, dxParam)) : ir::SsaDef();
   auto dy = dyParam ? builder.add(ir::Op::ParamLoad(ir::ScalarType::eF32, function, dyParam)) : ir::SsaDef();
