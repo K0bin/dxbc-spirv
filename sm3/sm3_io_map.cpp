@@ -467,6 +467,10 @@ bool IoMap::emitStore(
         WriteMask               writeMask,
         ir::SsaDef              predicateVec,
         ir::SsaDef              value) {
+  auto srcType = builder.getOp(value).getType();
+  auto srcBaseType = srcType.getBaseType(0);
+  auto srcScalarType = srcBaseType.getBaseType();
+
   if (!operand.hasRelativeAddressing()) {
     const IoVarInfo* ioVar = findIoVar(m_variables, operand.getRegisterType(), operand.getIndex());
     if (ioVar == nullptr) {
@@ -485,19 +489,22 @@ bool IoMap::emitStore(
       || ioVar->registerType == RegisterType::eColorOut
       || ioVar->registerType == RegisterType::eDepthOut;
     dxbc_spv_assert(isOutput);
-    auto baseType = ioVar->baseType.getBaseType(0u);
-    ir::Type scalarType = ioVar->baseType.isScalarType() ? baseType : ioVar->baseType;
+    auto ioVarBaseType = ioVar->baseType.getBaseType(0u);
+    ir::ScalarType ioVarScalarType = ioVarBaseType.getBaseType();
 
     uint32_t componentIndex = 0u;
     for (auto c : writeMask) {
       ir::SsaDef valueScalar = value;
-      if (ioVar->baseType.isVectorType()) {
+      if (srcType.isVectorType()) {
         auto componentIndexConst = builder.makeConstant(componentIndex);
-        valueScalar = builder.add(ir::Op::CompositeExtract(scalarType, value, componentIndexConst));
+        valueScalar = builder.add(ir::Op::CompositeExtract(srcScalarType, value, componentIndexConst));
+        if (srcScalarType != ioVarScalarType) {
+          valueScalar = builder.add(ir::Op::Cast(ioVarScalarType, valueScalar));
+        }
       }
       if (ioVar->semantic.usage == SemanticUsage::eColor && ioVar->semantic.index < 2 && m_converter.getShaderInfo().getVersion().first < 3) {
         // The color register cannot be dynamically indexed, so there's no need to do this in the dynamic store function.
-        valueScalar = builder.add(ir::Op::FClamp(scalarType, valueScalar,
+        valueScalar = builder.add(ir::Op::FClamp(ioVarScalarType, valueScalar,
           builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
       }
 
@@ -528,7 +535,13 @@ bool IoMap::emitStore(
     for (auto c : writeMask) {
       auto dstComponentIndexConst = builder.makeConstant(uint32_t(util::componentFromBit(c)));
       auto componentIndexConst = builder.makeConstant(componentIndex);
-      auto valueScalar = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, value, componentIndexConst));
+      ir::SsaDef valueScalar = value;
+      if (srcType.isVectorType()) {
+        valueScalar = builder.add(ir::Op::CompositeExtract(srcScalarType, value, componentIndexConst));
+        if (srcScalarType != ir::ScalarType::eF32) {
+          valueScalar = builder.add(ir::Op::Cast(ir::ScalarType::eF32, valueScalar));
+        }
+      }
 
       ir::SsaDef predicateIf = ir::SsaDef();
       if (predicateVec) {
@@ -714,7 +727,7 @@ ir::SsaDef IoMap::emitFlushOutputsFunction(ir::Builder& builder) const {
     auto baseType = variable.baseType.getBaseType(0u);
     for (uint32_t i = 0u; i < baseType.getVectorSize(); i++) {
       auto temp = builder.add(ir::Op::TmpLoad(variable.baseType, variable.tempDefs[i]));
-      builder.add(ir::Op::OutputStore(variable.baseDef, ir::SsaDef(), temp));
+      builder.add(ir::Op::OutputStore(variable.baseDef, builder.makeConstant(i), temp));
     }
   }
 
