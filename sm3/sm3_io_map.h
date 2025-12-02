@@ -149,11 +149,8 @@ private:
   ir::SsaDef      m_inputSwitchFunction = { };
   ir::SsaDef      m_outputSwitchFunction = { };
 
-  ir::SsaDef      m_flushOutputsFunction = { };
-
   ir::SsaDef emitDynamicLoadFunction(ir::Builder& builder) const;
   ir::SsaDef emitDynamicStoreFunction(ir::Builder& builder) const;
-  ir::SsaDef emitFlushOutputsFunction(ir::Builder& builder) const;
 
   void flushOutputs(ir::Builder& builder) const;
 

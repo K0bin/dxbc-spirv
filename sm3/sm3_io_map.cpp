@@ -19,9 +19,6 @@ IoMap::~IoMap() {
 void IoMap::initialize(ir::Builder& builder) {
   const ShaderInfo& info = m_converter.getShaderInfo();
 
-  // Emit placeholder
-  m_flushOutputsFunction = builder.add(ir::Op::Function(ir::Type()));
-
   if (info.getVersion().first >= 3u) {
     // Emit functions that pick a register using
     // a switch statement to allow relative addressing
@@ -109,12 +106,6 @@ void IoMap::finalize(ir::Builder& builder) {
     m_outputSwitchFunction = outputSwitchFunction;
     builder.setCursor(cursor);
   }
-
-  ir::SsaDef cursor = builder.setCursor(m_flushOutputsFunction);
-  auto flushOutputFunction = emitFlushOutputsFunction(builder);
-  builder.rewriteDef(m_flushOutputsFunction, flushOutputFunction);
-  m_flushOutputsFunction = flushOutputFunction;
-  builder.setCursor(cursor);
 
   flushOutputs(builder);
 }
@@ -712,12 +703,7 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
 }
 
 
-ir::SsaDef IoMap::emitFlushOutputsFunction(ir::Builder& builder) const {
-  auto function = builder.add(ir::Op::Function(ir::Type()));
-  if (m_converter.m_options.includeDebugNames) {
-    builder.add(ir::Op::DebugName(function, "flushOutputs"));
-  }
-
+void IoMap::flushOutputs(ir::Builder& builder) const {
   for (const auto& variable : m_variables) {
     if (!variable.tempDefs[0u])
       continue;
@@ -728,14 +714,6 @@ ir::SsaDef IoMap::emitFlushOutputsFunction(ir::Builder& builder) const {
       builder.add(ir::Op::OutputStore(variable.baseDef, builder.makeConstant(i), temp));
     }
   }
-
-  builder.add(ir::Op::FunctionEnd());
-  return function;
-}
-
-
-void IoMap::flushOutputs(ir::Builder& builder) const {
-  builder.add(ir::Op::FunctionCall(ir::Type(), m_flushOutputsFunction));
 }
 
 
