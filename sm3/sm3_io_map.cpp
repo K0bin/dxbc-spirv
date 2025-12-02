@@ -498,10 +498,8 @@ bool IoMap::emitStore(
       if (srcType.isVectorType()) {
         auto componentIndexConst = builder.makeConstant(componentIndex);
         valueScalar = builder.add(ir::Op::CompositeExtract(srcScalarType, value, componentIndexConst));
-        if (srcScalarType != ioVarScalarType) {
-          valueScalar = builder.add(ir::Op::Cast(ioVarScalarType, valueScalar));
-        }
       }
+      valueScalar = convertScalar(builder, ioVarScalarType, valueScalar);
       if (ioVar->semantic.usage == SemanticUsage::eColor && ioVar->semantic.index < 2 && m_converter.getShaderInfo().getVersion().first < 3) {
         // The color register cannot be dynamically indexed, so there's no need to do this in the dynamic store function.
         valueScalar = builder.add(ir::Op::FClamp(ioVarScalarType, valueScalar,
@@ -538,10 +536,8 @@ bool IoMap::emitStore(
       ir::SsaDef valueScalar = value;
       if (srcType.isVectorType()) {
         valueScalar = builder.add(ir::Op::CompositeExtract(srcScalarType, value, componentIndexConst));
-        if (srcScalarType != ir::ScalarType::eF32) {
-          valueScalar = builder.add(ir::Op::Cast(ir::ScalarType::eF32, valueScalar));
-        }
       }
+      valueScalar = convertScalar(builder, ir::ScalarType::eF32, valueScalar);
 
       ir::SsaDef predicateIf = ir::SsaDef();
       if (predicateVec) {
