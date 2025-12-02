@@ -16,12 +16,24 @@ void RegisterFile::initialize(ir::Builder& builder) {
   uint32_t addressRegisterComponents = m_converter.getShaderInfo().getVersion().first >= 2u ? 4u : 1u;
   for (uint32_t i = 0u; i < addressRegisterComponents; i++) {
     m_a0Reg[i] = builder.add(ir::Op::DclTmp(ir::ScalarType::eI32, m_converter.getEntryPoint()));
+    if (m_converter.getOptions().includeDebugNames) {
+      std::string name = m_converter.makeRegisterDebugName(RegisterType::eAddr, 0u, util::componentBit(Component(i)));
+      builder.add(ir::Op::DebugName(m_a0Reg[i], name.c_str()));
+    }
   }
 
   m_aLReg = builder.add(ir::Op::DclTmp(ir::ScalarType::eI32, m_converter.getEntryPoint()));
+  if (m_converter.getOptions().includeDebugNames) {
+    std::string name = m_converter.makeRegisterDebugName(RegisterType::eLoop, 0u, ComponentBit::eAll);
+    builder.add(ir::Op::DebugName(m_aLReg, name.c_str()));
+  }
 
   for (uint32_t i = 0u; i < 4u; i++) {
     m_pReg[i] = builder.add(ir::Op::DclTmp(ir::ScalarType::eBool, m_converter.getEntryPoint()));
+    if (m_converter.getOptions().includeDebugNames) {
+      std::string name = m_converter.makeRegisterDebugName(RegisterType::ePredicate, 0u, util::componentBit(Component(i)));
+      builder.add(ir::Op::DebugName(m_rRegs[i], name.c_str()));
+    }
   }
 }
 
@@ -31,8 +43,13 @@ ir::SsaDef RegisterFile::getOrDeclareTemp(ir::Builder& builder, uint32_t index, 
   if (tempIndex >= m_rRegs.size())
     m_rRegs.resize(tempIndex + 1);
 
-  if (!m_rRegs[tempIndex])
+  if (!m_rRegs[tempIndex]) {
     m_rRegs[tempIndex] = builder.add(ir::Op::DclTmp(ir::ScalarType::eUnknown, m_converter.getEntryPoint()));
+    if (m_converter.getOptions().includeDebugNames) {
+      std::string name = m_converter.makeRegisterDebugName(RegisterType::eTemp, index, util::componentBit(component));
+      builder.add(ir::Op::DebugName(m_rRegs[tempIndex], name.c_str()));
+    }
+  }
 
   return m_rRegs[tempIndex];
 }
