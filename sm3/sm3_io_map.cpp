@@ -526,8 +526,10 @@ bool IoMap::emitStore(
     dxbc_spv_assert(operand.getRegisterType() == RegisterType::eOutput);
     dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 3);
     auto index = builder.makeConstant(operand.getIndex());
-    ir::SsaDef registerValue = { }; // TODO
-    index = builder.add(ir::Op::IAdd(ir::ScalarType::eU32, index, registerValue));
+    auto relAddr = m_converter.loadAddress(builder,
+      operand.getRelativeAddressingRegisterType(),
+      operand.getRelativeAddressingSwizzle());
+    index = builder.add(ir::Op::IAdd(ir::ScalarType::eU32, index, relAddr));
     dxbc_spv_assert(m_outputSwitchFunction);
     uint32_t componentIndex = 0u;
     for (auto c : writeMask) {
