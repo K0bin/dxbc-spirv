@@ -87,7 +87,7 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eDef:
     case OpCode::eDefI:
     case OpCode::eDefB:
-      return true;
+      return handleDef(builder, op);
 
     case OpCode::eDcl:
       return handleDcl(builder, op);
@@ -1081,6 +1081,19 @@ bool Converter::handleBem(ir::Builder &builder, const Instruction &op) {
   auto result = buildVector(builder, ir::ScalarType::eF32, components.size(), components.data());
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
+
+
+bool Converter::handleDef(ir::Builder &builder, const Instruction &op) {
+  dxbc_spv_assert(op.hasDst());
+  dxbc_spv_assert(op.hasImm());
+  auto dst = op.getDst();
+  auto imm = op.getImm();
+
+  m_resources.emitDefineConstant(builder, dst.getRegisterType(), dst.getIndex(), imm);
+
+  return true;
+}
+
 
 
 
