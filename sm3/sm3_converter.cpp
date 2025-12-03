@@ -4,6 +4,8 @@
 
 namespace dxbc_spv::sm3 {
 
+constexpr uint32_t TextureStageCount = 8u;
+
 /* Types in SM3
  * Integer:
  *   - Instructions:
@@ -128,6 +130,9 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eM3x2:
       return handleMatrixArithmetic(builder, op);
 
+    case OpCode::eBem:
+      return handleBem(builder, op);
+
     case OpCode::eTexM3x2Pad:
     case OpCode::eTexM3x3Pad:
       // We don't need to do anything here, these are just padding instructions
@@ -194,7 +199,6 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eExpP:
     case OpCode::eLogP:
     case OpCode::eCnd:
-    case OpCode::eBem:
     case OpCode::eDsX:
     case OpCode::eDsY:
     case OpCode::eSetP:
@@ -232,6 +236,10 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
   m_regFile.initialize(builder);
   m_resources.initialize(builder, m_options.includeDebugNames); // TODO: Separate option for Ctab names?
 
+  if (getShaderInfo().getType() == ShaderType::ePixel) {
+    m_psSharedData = emitSharedConstants(builder);
+  }
+
   /* Set cursor to main function so that instructions will be emitted
    * in the correct location */
   builder.setCursor(m_entryPoint.mainFunc);
@@ -258,6 +266,45 @@ bool Converter::initParser(Parser& parser, util::ByteReader reader) {
   }
 
   return true;
+}
+
+
+ir::SsaDef Converter::emitSharedConstants(ir::Builder& builder) {
+  ir::Type bufferStruct = ir::Type();
+
+  for (uint32_t i = 0u; i  < TextureStageCount; i++) {
+    bufferStruct.addStructMember(ir::BasicType(ir::ScalarType::eF32, 4u));
+    bufferStruct.addStructMember(ir::BasicType(ir::ScalarType::eF32, 2u));
+    bufferStruct.addStructMember(ir::BasicType(ir::ScalarType::eF32, 2u));
+    bufferStruct.addStructMember(ir::ScalarType::eF32);
+    bufferStruct.addStructMember(ir::ScalarType::eF32);
+  }
+
+  auto buffer = builder.add(ir::Op::DclCbv(bufferStruct, getEntryPoint(), SpecialBindingsRegSpace, PSSharedDataCbvRegIdx, 1u));
+
+  if (getOptions().includeDebugNames) {
+    builder.add(ir::Op::DebugName(buffer, "PSSharedData"));
+    for (uint32_t i = 0u; i  < TextureStageCount; i++) {
+      std::stringstream namestream;
+      namestream << "Constant" << i;
+      builder.add(ir::Op::DebugMemberName(buffer, i, namestream.str().c_str()));
+      namestream.clear();
+      namestream << "BumpEnvMat0_" << i;
+      builder.add(ir::Op::DebugMemberName(buffer, i + 1u, namestream.str().c_str()));
+      namestream.clear();
+      namestream << "BumpEnvMat1_" << i;
+      builder.add(ir::Op::DebugMemberName(buffer, i + 2u, namestream.str().c_str()));
+      namestream.clear();
+      namestream << "BumpEnvLScale" << i;
+      builder.add(ir::Op::DebugMemberName(buffer, i + 3u, namestream.str().c_str()));
+      namestream.clear();
+      namestream << "BumpEnvLOffset" << i;
+      builder.add(ir::Op::DebugMemberName(buffer, i + 4u, namestream.str().c_str()));
+      namestream.clear();
+    }
+  }
+
+  return buffer;
 }
 
 
@@ -818,8 +865,50 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     } break;
 
     case OpCode::eTexBem:
-    case OpCode::eTexBemL:
-      break;
+    case OpCode::eTexBemL: {
+      uint32_t samplerIdx = dst.getIndex();
+      auto texCoord = m_ioMap.emitTexCoordLoad(builder, op, samplerIdx, ComponentBit::eAll, Swizzle::identity(), ir::ScalarType::eF32);
+      auto src0 = op.getSrc(0u);
+      auto src0Val = loadSrcModified(builder, op, src0, WriteMask(ComponentBit::eX | ComponentBit::eY), ir::ScalarType::eF32);
+
+      dxbc_spv_assert(getShaderInfo().getVersion().first < 2u);
+      texCoord = m_resources.projectTexCoord(builder, samplerIdx, texCoord, true);
+
+      auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
+      std::array<ir::SsaDef, 2> components = {};
+      for (uint32_t i = 0u; i < components.size(); i++) {
+        auto bumpEnvMat0 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 1u), 16u));
+        auto bumpEnvMat1 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 2u), 8u));
+
+        auto src1r = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src0Val, builder.makeConstant(0u)));
+        auto bumped0 = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, bumpEnvMat0, src1r));
+        auto src1g = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src0Val, builder.makeConstant(1u)));
+        auto bumped1 = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, bumpEnvMat1, src1g));
+        auto bumpedSum = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, bumped0, bumped1));
+        auto src0Component = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(i)));
+        components[i] = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, src0Component, bumpedSum));
+      }
+
+      texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(ir::ScalarType::eF32, 4u), texCoord, builder.makeConstant(0u), components[0u]));
+      texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(ir::ScalarType::eF32, 4u), texCoord, builder.makeConstant(1u), components[1u]));
+
+      result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
+
+      if (opCode == OpCode::eTexBemL) {
+        auto bumpEnvLScale = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 3u), 16u));
+        auto bumpEnvLOffset = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 2u), 8u));
+        auto scale = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, result, builder.makeConstant(2u)));
+        scale = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, scale, bumpEnvLScale));
+        scale = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, scale, bumpEnvLOffset));
+        std::array<ir::SsaDef, 2> scaledComponents = {};
+        scale = builder.add(ir::Op::FClamp(ir::ScalarType::eF32, scale, builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
+        for (uint32_t i = 0u; i < 4u; i++) {
+          auto resultComponent = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, result, builder.makeConstant(i)));
+          scaledComponents[i] = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, resultComponent, scale));
+        }
+        result = buildVector(builder, ir::ScalarType::eF32, scaledComponents.size(), scaledComponents.data());
+      }
+    } break;
 
     default: dxbc_spv_unreachable(); break;
   }
@@ -958,6 +1047,41 @@ bool Converter::handleLrp(ir::Builder &builder, const Instruction &op) {
 
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
+
+
+bool Converter::handleBem(ir::Builder &builder, const Instruction &op) {
+  dxbc_spv_assert(op.getSrcCount() == 2u);
+  dxbc_spv_assert(op.hasDst());
+  dxbc_spv_assert(!!m_psSharedData);
+  auto dst = op.getDst();
+  auto src0 = op.getSrc(0u);
+  auto src1 = op.getSrc(1u);
+  auto stageIdx = dst.getIndex();
+  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  /* No point trying to use partial precision (FP16) here because we're loading the bump env matrices as FP32 anyway. */
+  auto src0Val = loadSrcModified(builder, op, src0, writeMask, ir::ScalarType::eF32);
+  auto src1Val = loadSrcModified(builder, op, src1, writeMask, ir::ScalarType::eF32);
+
+  auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
+  std::array<ir::SsaDef, 2> components = {};
+  for (uint32_t i = 0u; i < components.size(); i++) {
+    auto bumpEnvMat0 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 1u), 16u));
+    auto bumpEnvMat1 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 2u), 8u));
+
+    auto src1r = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src1Val, builder.makeConstant(0u)));
+    auto bumped0 = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, bumpEnvMat0, src1r));
+    auto src1g = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src1Val, builder.makeConstant(1u)));
+    auto bumped1 = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, bumpEnvMat1, src1g));
+    auto bumpedSum = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, bumped0, bumped1));
+    auto src0Component = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src0Val, builder.makeConstant(i)));
+    components[i] = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, src0Component, bumpedSum));
+  }
+
+  dxbc_spv_assert(writeMask == WriteMask(ComponentBit::eX | ComponentBit::eY));
+  auto result = buildVector(builder, ir::ScalarType::eF32, components.size(), components.data());
+  return storeDstModifiedPredicated(builder, op, dst, result);
+}
+
 
 
 ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask) {
