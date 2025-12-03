@@ -24,7 +24,7 @@ public:
 
   uint32_t getSamplerSpecConstIndex(ShaderType shaderType, uint32_t perShaderSamplerIndex);
 
-  void dclBuffer(ir::Builder& builder, uint32_t regIdx);
+  void dclBuffer(ir::Builder& builder);
 
   void setInsertCursor(ir::SsaDef cursor) {
     m_functionInsertPoint = cursor;

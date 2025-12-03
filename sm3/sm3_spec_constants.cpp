@@ -130,7 +130,7 @@ uint32_t SpecializationConstantsMap::getSamplerSpecConstIndex(ShaderType shaderT
 }
 
 
-void SpecializationConstantsMap::dclBuffer(ir::Builder& builder, uint32_t regIdx) {
+void SpecializationConstantsMap::dclBuffer(ir::Builder& builder) {
   auto arrayType = ir::Type(ir::ScalarType::eU32).addArrayDimension(m_specConstantIds.size());
   m_bufferDef = builder.add(ir::Op::DclCbv(arrayType, m_converter.getEntryPoint(), SpecialBindingsRegSpace, FastSpecConstCbvRegIdx, 1u));
 
