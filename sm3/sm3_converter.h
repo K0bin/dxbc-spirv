@@ -75,6 +75,7 @@ private:
   IoMap            m_ioMap;
   Parser           m_parser;
   ResourceMap      m_resources;
+  ir::SsaDef       m_psSharedData;
 
   uint32_t m_instructionCount = 0u;
 
@@ -94,6 +95,8 @@ private:
   bool finalize(ir::Builder& builder, ShaderType shaderType);
 
   bool initParser(Parser& parser, util::ByteReader reader);
+
+  ir::SsaDef emitSharedConstants(ir::Builder& builder);
 
   ir::SsaDef getEntryPoint() const {
     return m_entryPoint.def;
@@ -136,6 +139,8 @@ private:
   bool handlePow(ir::Builder& builder, const Instruction& op);
 
   bool handleLrp(ir::Builder& builder, const Instruction& op);
+
+  bool handleBem(ir::Builder& builder, const Instruction& op);
 
   ir::SsaDef applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask);
 
