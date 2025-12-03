@@ -203,6 +203,8 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
       return handleLrp(builder, op);
 
     case OpCode::eDst:
+      return handleDst(builder, op);
+
     case OpCode::eCall:
     case OpCode::eCallNz:
     case OpCode::eLoop:
@@ -1119,6 +1121,37 @@ bool Converter::handleDef(ir::Builder &builder, const Instruction &op) {
 }
 
 
+bool Converter::handleDst(ir::Builder &builder, const Instruction &op) {
+  dxbc_spv_assert(op.hasDst());
+  dxbc_spv_assert(op.getSrcCount() == 2u);
+  auto dst = op.getDst();
+  auto src0 = op.getSrc(0u);
+  auto src1 = op.getSrc(1u);
+
+  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+
+  auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
+  auto src1Val = loadSrcModified(builder, op, src1, ComponentBit::eAll, scalarType);
+  util::small_vector<ir::SsaDef, 4u> components = { };
+  if (writeMask & ComponentBit::eX)
+    components.push_back(makeTypedConstant(builder, scalarType, 1.0f));
+  if (writeMask & ComponentBit::eY) {
+    auto src0y = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(1u)));
+    auto src1y = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(1u)));
+    components.push_back(builder.add(ir::Op::FMulLegacy(scalarType, src0y, src1y)));
+  }
+  if (writeMask & ComponentBit::eZ) {
+    auto src0z = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(2u)));
+    components.push_back(src0z);
+  }
+  if (writeMask & ComponentBit::eW) {
+    auto src1w = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(3u)));
+    components.push_back(src1w);
+  }
+  auto result = buildVector(builder, scalarType, components.size(), components.data());
+  return storeDstModifiedPredicated(builder, op, dst, result);
+}
 
 
 ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask) {
