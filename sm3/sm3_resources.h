@@ -65,6 +65,21 @@ struct ConstantRange {
 };
 
 template<typename T>
+struct Vec4 {
+  T x;
+  T y;
+  T z;
+  T w;
+};
+
+template<typename T>
+struct DefinedConst {
+  T value;
+  uint32_t index;
+  ir::SsaDef def;
+};
+
+template<typename T>
 struct Constants {
   /** All constant array ranges for this constant type. This will only contain more than
    * one element if debug names are enabled. */
@@ -74,7 +89,7 @@ struct Constants {
   uint32_t maxAccessedConstant = 0u;
 
   /** All statically defined constants of this constant type. */
-  util::small_vector<std::pair<uint32_t, T>, 2u> definedConstants;
+  util::small_vector<DefinedConst<T>, 2u> definedConstants;
 
   /** The highest index of any constant of this type that gets statically defined. */
   uint32_t maxDefinedConstant = 0u;
@@ -115,6 +130,12 @@ public:
           WriteMask               componentMask,
           ir::ScalarType          scalarType);
 
+  void emitDefineConstant(
+          ir::Builder& builder,
+          RegisterType registerType,
+          uint32_t index,
+    const Operand& imm);
+
   /** Handles Dcl instructions on SM 2+ with Sampler as the register type. */
   bool handleDclSampler(ir::Builder& builder, const Instruction& op);
 
@@ -132,8 +153,8 @@ private:
 
   std::array<SamplerRegister, 32> m_samplers;
 
-  Constants<float> m_floatConstants;
-  Constants<int32_t> m_intConstants;
+  Constants<Vec4<float>> m_floatConstants;
+  Constants<Vec4<int32_t>> m_intConstants;
   Constants<bool> m_boolConstants;
 
   ir::SsaDef m_functionInsertPoint = { };

@@ -125,10 +125,59 @@ ir::SsaDef ResourceMap::emitConstantLoad(
           ir::ScalarType          scalarType) {
 
   ShaderInfo info = m_converter.getShaderInfo();
-  bool isSwvp = m_converter.getOptions().isSWVP;
+  bool isSwvp = m_converter.getOptions().isSWVP && info.getType() == ShaderType::eVertex;
   RegisterType registerType = operand.getRegisterType();
   uint32_t registerIndex = operand.getIndex();
 
+  /* Relative addressing is only supported for float constants */
+  dxbc_spv_assert(registerType == RegisterType::eConst
+    || registerType == RegisterType::eConst2
+    || registerType == RegisterType::eConst3
+    || registerType == RegisterType::eConst4
+    || !operand.hasRelativeAddressing());
+
+  /* Inline constants that were defined in the shader. */
+  if (!operand.hasRelativeAddressing()) {
+    ir::SsaDef predefinedConstant = ir::SsaDef();
+    switch (registerType) {
+      case RegisterType::eConst:
+      case RegisterType::eConst2:
+      case RegisterType::eConst3:
+      case RegisterType::eConst4:
+        for (const auto& c : m_floatConstants.definedConstants) {
+          if (c.index == registerIndex) {
+            predefinedConstant = c.def;
+            break;
+          }
+        }
+        break;
+      case RegisterType::eConstInt:
+        for (const auto& c : m_intConstants.definedConstants) {
+          if (c.index == registerIndex) {
+            predefinedConstant = c.def;
+            break;
+          }
+        }
+        break;
+      case RegisterType::eConstBool:
+        for (const auto& c : m_boolConstants.definedConstants) {
+          if (c.index == registerIndex) {
+            predefinedConstant = c.def;
+            break;
+          }
+        }
+        break;
+
+      default:
+        dxbc_spv_unreachable();
+    }
+
+    if (predefinedConstant) {
+      return m_converter.swizzleVector(builder, predefinedConstant, operand.getSwizzle(info), componentMask);
+    }
+  }
+
+  /* Bool constants are implemented using specialization constants on HWVP VS or PS */
   if (registerType == RegisterType::eConstBool && !isSwvp) {
     dxbc_spv_assert(scalarType == ir::ScalarType::eBool);
     auto bit = m_converter.m_specConstants.get(builder,
@@ -144,6 +193,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
 
   const util::small_vector<ConstantRange, 8u>* ranges = nullptr;
   uint32_t constantTypeOffset = 0u;
+  uint32_t accessedCount = 0u;
   ir::ScalarType bufferElementScalarType = ir::ScalarType::eUnknown;
   switch (registerType) {
     case RegisterType::eConst:
@@ -156,6 +206,14 @@ ir::SsaDef ResourceMap::emitConstantLoad(
       }
       /* In HWVP float constants and int constants are packed into the same buffer and the int constants come first. */
       constantTypeOffset = isSwvp ? 0u : MaxOtherConstants;
+      if (operand.hasRelativeAddressing()) {
+        if (info.getType() == ShaderType::eVertex) {
+          accessedCount = (isSwvp ? MaxFloatConstantsSoftware : MaxFloatConstantsVS) - 1u;
+        } else {
+          accessedCount = MaxFloatConstantsPS - 1u;
+        }
+      }
+      m_floatConstants.maxAccessedConstant = std::max(m_floatConstants.maxAccessedConstant, registerIndex + accessedCount);
       break;
 
     case RegisterType::eConstInt:
@@ -163,10 +221,18 @@ ir::SsaDef ResourceMap::emitConstantLoad(
       if (isSwvp) {
         bufferElementScalarType = ir::ScalarType::eI32;
       }
+      if (operand.hasRelativeAddressing()) {
+          accessedCount = (info.getType() == ShaderType::eVertex && isSwvp ? MaxOtherConstantsSoftware : MaxOtherConstants) - 1u;
+      }
+      m_intConstants.maxAccessedConstant = std::max(m_intConstants.maxAccessedConstant, registerIndex + accessedCount);
       break;
 
     case RegisterType::eConstBool:
       ranges = &m_boolConstants.constantRanges;
+      if (operand.hasRelativeAddressing()) {
+        accessedCount = (info.getType() == ShaderType::eVertex && isSwvp ? MaxOtherConstantsSoftware : MaxOtherConstants) - 1u;
+      }
+      m_boolConstants.maxAccessedConstant = std::max(m_boolConstants.maxAccessedConstant, registerIndex + accessedCount);
       break;
 
     default:
@@ -284,6 +350,53 @@ ir::SsaDef ResourceMap::emitConstantLoad(
     m_converter.makeVectorType(scalarType, componentMask),
     components.data(), operand.getSwizzle(info), componentMask);
 }
+
+
+void ResourceMap::emitDefineConstant(
+          ir::Builder& builder,
+          RegisterType registerType,
+          uint32_t index,
+    const Operand& imm) {
+
+  auto info = m_converter.getShaderInfo();
+
+  switch (registerType) {
+    case RegisterType::eConst:
+    case RegisterType::eConst2:
+    case RegisterType::eConst3:
+    case RegisterType::eConst4: {
+      Vec4<float> values = {
+        imm.getImmediate<float>(0u), imm.getImmediate<float>(1u),
+        imm.getImmediate<float>(2u), imm.getImmediate<float>(3u)
+      };
+      auto def = builder.makeConstant(values.x, values.y, values.z, values.w);
+      m_floatConstants.definedConstants.push_back({values, index, def});
+      m_floatConstants.maxDefinedConstant = std::max(m_floatConstants.maxDefinedConstant, index);
+    } break;
+
+    case RegisterType::eConstInt: {
+      Vec4<int32_t> values = {
+        imm.getImmediate<int32_t>(0u), imm.getImmediate<int32_t>(1u),
+        imm.getImmediate<int32_t>(2u), imm.getImmediate<int32_t>(3u)
+      };
+      auto def = builder.makeConstant(values.x, values.y, values.z, values.w);
+      m_intConstants.definedConstants.push_back({values, index, def});
+      m_intConstants.maxDefinedConstant = std::max(m_intConstants.maxDefinedConstant, index);
+    } break;
+
+    case RegisterType::eConstBool: {
+      auto value = imm.getImmediate<uint32_t>(0u) != 0u;
+      auto def = builder.makeConstant(value);
+      m_boolConstants.definedConstants.push_back({value, index, def});
+      m_boolConstants.maxDefinedConstant = std::max(m_boolConstants.maxDefinedConstant, index);
+    } break;
+
+    default:
+      Logger::err("Register type ", UnambiguousRegisterType { registerType, info.getType(), info.getVersion().first }, " is not a constant register");
+      dxbc_spv_unreachable();
+  }
+}
+
 
 
 ir::SsaDef ResourceMap::emitSample(
