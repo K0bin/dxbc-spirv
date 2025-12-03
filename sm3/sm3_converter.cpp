@@ -227,7 +227,7 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
 
   m_specConstants.setInsertCursor(afterMainFunc);
   m_resources.setInsertCursor(afterMainFunc);
-  m_specConstants.dclBuffer(builder, 0u); // TODO: Reg idx
+  m_specConstants.dclBuffer(builder);
   m_ioMap.initialize(builder);
   m_regFile.initialize(builder);
   m_resources.initialize(builder, m_options.includeDebugNames); // TODO: Separate option for Ctab names?
