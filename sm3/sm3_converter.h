@@ -146,6 +146,10 @@ private:
 
   bool handleDst(ir::Builder& builder, const Instruction& op);
 
+  bool handleDerivatives(ir::Builder& builder, const Instruction& op);
+
+  bool handleCrs(ir::Builder& builder, const Instruction& op);
+
   ir::SsaDef applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask);
 
   ir::SsaDef applyDstModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand);
