@@ -187,8 +187,10 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eTexDepth:
       break;
 
+    case OpCode::eLrp:
     case OpCode::eCmp:
-      return handleCmp(builder, op);
+    case OpCode::eCnd:
+      return handleSelect(builder, op);
 
     case OpCode::eNrm:
       return handleNrm(builder, op);
@@ -198,9 +200,6 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
 
     case OpCode::ePow:
       return handlePow(builder, op);
-
-    case OpCode::eLrp:
-      return handleLrp(builder, op);
 
     case OpCode::eDst:
       return handleDst(builder, op);
@@ -230,7 +229,6 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eBreakC:
     case OpCode::eExpP:
     case OpCode::eLogP:
-    case OpCode::eCnd:
     case OpCode::eSetP:
     case OpCode::eBreakP:
       break;
@@ -947,43 +945,6 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
 }
 
 
-bool Converter::handleCmp(ir::Builder &builder, const Instruction &op) {
-  dxbc_spv_assert(op.getSrcCount() == 3u);
-  dxbc_spv_assert(op.hasDst());
-
-  auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
-  auto src1 = op.getSrc(1u);
-  auto src2 = op.getSrc(2u);
-
-  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
-
-  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
-  auto condition = loadSrcModified(builder, op, src0, writeMask, scalarType);
-  auto option1 = loadSrcModified(builder, op, src1, writeMask, scalarType);
-  auto option2 = loadSrcModified(builder, op, src2, writeMask, scalarType);
-
-  ir::SsaDef res;
-  if (util::popcnt(uint8_t(writeMask)) > 1u) {
-    std::array<ir::SsaDef, 4u> components = { };
-    for (auto c : writeMask) {
-      auto component = componentFromBit(c);
-      auto conditionComponent = builder.add(ir::Op::CompositeExtract(scalarType, condition, builder.makeConstant(uint32_t(component))));
-      auto option1Component = builder.add(ir::Op::CompositeExtract(scalarType, option1, builder.makeConstant(uint32_t(component))));
-      auto option2Component = builder.add(ir::Op::CompositeExtract(scalarType, option2, builder.makeConstant(uint32_t(component))));
-      auto conditionBool = builder.add(ir::Op::FLe(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.0f)));
-      components[uint32_t(component)] = builder.add(ir::Op::Select(scalarType, conditionBool, option1Component, option2Component));
-    }
-    res = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
-  } else {
-    auto conditionBool = builder.add(ir::Op::FLe(ir::ScalarType::eBool, condition, makeTypedConstant(builder, scalarType, 0.0f)));
-    res = builder.add(ir::Op::Select(scalarType, conditionBool, option1, option2));
-  }
-
-  return storeDstModifiedPredicated(builder, op, dst, res);
-}
-
-
 bool Converter::handleNrm(ir::Builder &builder, const Instruction &op) {
   dxbc_spv_assert(op.getSrcCount() == 1u);
   dxbc_spv_assert(op.hasDst());
@@ -1052,7 +1013,7 @@ bool Converter::handlePow(ir::Builder &builder, const Instruction &op) {
 }
 
 
-bool Converter::handleLrp(ir::Builder &builder, const Instruction &op) {
+bool Converter::handleSelect(ir::Builder &builder, const Instruction &op) {
   dxbc_spv_assert(op.getSrcCount() == 3u);
   dxbc_spv_assert(op.hasDst());
 
@@ -1070,10 +1031,43 @@ bool Converter::handleLrp(ir::Builder &builder, const Instruction &op) {
 
   auto type = makeVectorType(scalarType, writeMask);
 
-  /* dest = src0 * (src1 - src2) + src2 */
-  auto result = builder.add(ir::Op::FSub(type, src1Val, src2Val));
-  result = builder.add(ir::Op::FAdd(type, result, src2Val));
-  result = builder.add(ir::Op::FMulLegacy(type, src0Val, result));
+  ir::SsaDef result;
+  if (op.getOpCode() == OpCode::eLrp) {
+    /* dest = src0 * (src1 - src2) + src2 */
+    result = builder.add(ir::Op::FSub(type, src1Val, src2Val));
+    result = builder.add(ir::Op::FAdd(type, result, src2Val));
+    result = builder.add(ir::Op::FMulLegacy(type, src0Val, result));
+  } else if (op.getOpCode() == OpCode::eCmp || op.getOpCode() == OpCode::eCnd) {
+    if (util::popcnt(uint8_t(writeMask)) > 1u) {
+      std::array<ir::SsaDef, 4u> components = { };
+      for (auto c : writeMask) {
+        auto component = componentFromBit(c);
+        auto conditionComponent = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(uint32_t(component))));
+        auto option1Component = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(uint32_t(component))));
+        auto option2Component = builder.add(ir::Op::CompositeExtract(scalarType, src2Val, builder.makeConstant(uint32_t(component))));
+        ir::SsaDef conditionBool;
+        if (op.getOpCode() == OpCode::eCmp) {
+          conditionBool = builder.add(ir::Op::FGe(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.0f)));
+        } else {
+          conditionBool = builder.add(ir::Op::FGt(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.5f)));
+        }
+        components[uint32_t(component)] = builder.add(ir::Op::Select(scalarType, conditionBool, option1Component, option2Component));
+      }
+      result = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
+    } else {
+        ir::SsaDef conditionBool;
+        if (op.getOpCode() == OpCode::eCmp) {
+          conditionBool = builder.add(ir::Op::FGe(ir::ScalarType::eBool, src0Val, makeTypedConstant(builder, scalarType, 0.0f)));
+        } else {
+          conditionBool = builder.add(ir::Op::FGt(ir::ScalarType::eBool, src0Val, makeTypedConstant(builder, scalarType, 0.5f)));
+        }
+      result = builder.add(ir::Op::Select(scalarType, conditionBool, src1Val, src2Val));
+    }
+  } else {
+    Logger::err("OpCode ", op.getOpCode(), " is not supported by handleSelect.");
+    dxbc_spv_unreachable();
+    return false;
+  }
 
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
