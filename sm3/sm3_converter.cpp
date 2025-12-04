@@ -205,13 +205,19 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eDst:
       return handleDst(builder, op);
 
+    case OpCode::eDsX:
+    case OpCode::eDsY:
+      return handleDerivatives(builder, op);
+
+    case OpCode::eCrs:
+      return handleCrs(builder, op);
+
     case OpCode::eCall:
     case OpCode::eCallNz:
     case OpCode::eLoop:
     case OpCode::eRet:
     case OpCode::eEndLoop:
     case OpCode::eLabel:
-    case OpCode::eCrs:
     case OpCode::eSgn:
     case OpCode::eAbs:
     case OpCode::eRep:
@@ -225,8 +231,6 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eExpP:
     case OpCode::eLogP:
     case OpCode::eCnd:
-    case OpCode::eDsX:
-    case OpCode::eDsY:
     case OpCode::eSetP:
     case OpCode::eBreakP:
       break;
@@ -1151,6 +1155,72 @@ bool Converter::handleDst(ir::Builder &builder, const Instruction &op) {
   }
   auto result = buildVector(builder, scalarType, components.size(), components.data());
   return storeDstModifiedPredicated(builder, op, dst, result);
+}
+
+
+bool Converter::handleDerivatives(ir::Builder &builder, const Instruction &op) {
+  dxbc_spv_assert(op.hasDst());
+  dxbc_spv_assert(op.getSrcCount() == 1u);
+  auto dst = op.getDst();
+  auto src0 = op.getSrc(0u);
+
+  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+
+  auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
+
+  auto type = makeVectorType(scalarType, writeMask);
+  if (op.getOpCode() == OpCode::eDsX) {
+    builder.add(ir::Op::DerivX(type, src0Val, ir::DerivativeMode::eDefault));
+    return true;
+  } else if (op.getOpCode() == OpCode::eDsY) {
+    builder.add(ir::Op::DerivY(type, src0Val, ir::DerivativeMode::eDefault));
+    return true;
+  } else {
+    dxbc_spv_unreachable();
+    return false;
+  }
+}
+
+
+bool Converter::handleCrs(ir::Builder& builder, const Instruction& op) {
+  dxbc_spv_assert(op.hasDst());
+  dxbc_spv_assert(op.getSrcCount() == 2u);
+  auto dst = op.getDst();
+  auto src0 = op.getSrc(0u);
+  auto src1 = op.getSrc(1u);
+
+  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+
+  auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ, scalarType);
+  auto src1Val = loadSrcModified(builder, op, src1, ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ, scalarType);
+
+  auto src0x = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(0u)));
+  auto src0y = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(1u)));
+  auto src0z = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(2u)));
+  auto src1x = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(0u)));
+  auto src1y = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(1u)));
+  auto src1z = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(2u)));
+
+  util::small_vector<ir::SsaDef, 4u> components;
+  if (writeMask & ComponentBit::eX) {
+    auto a = builder.add(ir::Op::FMulLegacy(scalarType, src0y, src1z));
+    auto b = builder.add(ir::Op::FMulLegacy(scalarType, src0z, src1y));
+    components.push_back(builder.add(ir::Op::FSub(scalarType, a, b)));
+  }
+  if (writeMask & ComponentBit::eY) {
+    auto a = builder.add(ir::Op::FMulLegacy(scalarType, src0z, src1x));
+    auto b = builder.add(ir::Op::FMulLegacy(scalarType, src0x, src1z));
+    components.push_back(builder.add(ir::Op::FSub(scalarType, a, b)));
+  }
+  if (writeMask & ComponentBit::eZ) {
+    auto a = builder.add(ir::Op::FMulLegacy(scalarType, src0x, src1y));
+    auto b = builder.add(ir::Op::FMulLegacy(scalarType, src0y, src1x));
+    components.push_back(builder.add(ir::Op::FSub(scalarType, a, b)));
+  }
+  auto res = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
+  return storeDstModifiedPredicated(builder, op, dst, res);
 }
 
 
