@@ -130,15 +130,13 @@ private:
 
   bool handleTextureSample(ir::Builder& builder, const Instruction& op);
 
-  bool handleCmp(ir::Builder& builder, const Instruction& op);
+  bool handleSelect(ir::Builder& builder, const Instruction& op);
 
   bool handleNrm(ir::Builder& builder, const Instruction& op);
 
   bool handleSinCos(ir::Builder& builder, const Instruction& op);
 
   bool handlePow(ir::Builder& builder, const Instruction& op);
-
-  bool handleLrp(ir::Builder& builder, const Instruction& op);
 
   bool handleBem(ir::Builder& builder, const Instruction& op);
 
