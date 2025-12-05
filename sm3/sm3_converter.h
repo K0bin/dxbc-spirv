@@ -11,6 +11,7 @@
 
 #include "../util/util_byte_stream.h"
 #include "../util/util_log.h"
+#include "dxbc/dxbc_control_flow.h"
 
 namespace dxbc_spv::sm3 {
 
@@ -75,6 +76,7 @@ private:
   IoMap            m_ioMap;
   Parser           m_parser;
   ResourceMap      m_resources;
+  dxbc::ControlFlow m_controlFlow;
   ir::SsaDef       m_psSharedData;
 
   uint32_t m_instructionCount = 0u;
@@ -147,6 +149,28 @@ private:
   bool handleDerivatives(ir::Builder& builder, const Instruction& op);
 
   bool handleCrs(ir::Builder& builder, const Instruction& op);
+
+  bool handleSetP(ir::Builder& builder, const Instruction& op);
+
+  bool handleSgn(ir::Builder& builder, const Instruction& op);
+
+  bool handleExpLog(ir::Builder& builder, const Instruction& op);
+
+  bool handleIf(ir::Builder& builder, const Instruction& op);
+
+  bool handleElse(ir::Builder& builder, const Instruction& op);
+
+  bool handleEndIf(ir::Builder& builder, const Instruction& op);
+
+  bool handleBreak(ir::Builder& builder, const Instruction& op);
+
+  bool handleLoop(ir::Builder& builder, const Instruction& op);
+
+  bool handleEndLoop(ir::Builder& builder, const Instruction& op);
+
+  bool handleRep(ir::Builder& builder, const Instruction& op);
+
+  bool handleEndRep(ir::Builder& builder, const Instruction& op);
 
   ir::SsaDef applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask);
 
