@@ -138,12 +138,14 @@ ir::SsaDef ResourceMap::emitConstantLoad(
 
   /* Inline constants that were defined in the shader. */
   if (!operand.hasRelativeAddressing()) {
+    ir::ScalarType predefinedType;
     ir::SsaDef predefinedConstant = ir::SsaDef();
     switch (registerType) {
       case RegisterType::eConst:
       case RegisterType::eConst2:
       case RegisterType::eConst3:
       case RegisterType::eConst4:
+        predefinedType = ir::ScalarType::eF32;
         for (const auto& c : m_floatConstants.definedConstants) {
           if (c.index == registerIndex) {
             predefinedConstant = c.def;
@@ -152,6 +154,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
         }
         break;
       case RegisterType::eConstInt:
+        predefinedType = ir::ScalarType::eI32;
         for (const auto& c : m_intConstants.definedConstants) {
           if (c.index == registerIndex) {
             predefinedConstant = c.def;
@@ -160,6 +163,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
         }
         break;
       case RegisterType::eConstBool:
+        predefinedType = ir::ScalarType::eBool;
         for (const auto& c : m_boolConstants.definedConstants) {
           if (c.index == registerIndex) {
             predefinedConstant = c.def;
@@ -173,7 +177,16 @@ ir::SsaDef ResourceMap::emitConstantLoad(
     }
 
     if (predefinedConstant) {
-      return m_converter.swizzleVector(builder, predefinedConstant, operand.getSwizzle(info), componentMask);
+      if (scalarType != predefinedType) {
+        std::array<ir::SsaDef, 4u> components;
+        for (uint32_t i = 0u; i < 4u; i++) {
+          auto c = m_converter.extractFromVector(builder, predefinedConstant, i);
+          components[i] = builder.add(ir::Op::ConsumeAs(scalarType, c));
+        }
+        return m_converter.composite(builder, m_converter.makeVectorType(scalarType, componentMask), components.data(), operand.getSwizzle(info), componentMask);
+      } else {
+        return m_converter.swizzleVector(builder, predefinedConstant, operand.getSwizzle(info), componentMask);
+      }
     }
   }
 
