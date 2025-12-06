@@ -564,7 +564,6 @@ bool Converter::handleCompare(ir::Builder& builder, const Instruction& op) {
   WriteMask writeMask = dst.getWriteMask(getShaderInfo());
 
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
-  auto boolType = makeVectorType(ir::ScalarType::eBool, writeMask);
 
   /* Load source operands */
   auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
@@ -572,13 +571,28 @@ bool Converter::handleCompare(ir::Builder& builder, const Instruction& op) {
   if (!src0 || !src1)
     return false;
 
-  ir::Op result;
-  if (opCode == OpCode::eSlt)
-    result = ir::Op::FLt(boolType, src0, src1);
-  else
-    result = ir::Op::FGe(boolType, src0, src1);
+  util::small_vector<ir::SsaDef, 4u> components;
+  for (auto c : writeMask) {
+    auto index = util::componentFromBit(c);
+    auto src0c = src0;
+    auto src1c = src1;
+    if (util::popcnt(uint8_t(writeMask)) > 1u) {
+      src0c = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(uint32_t(index))));
+      src1c = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(uint32_t(index))));
+    }
+    ir::SsaDef cond;
+    if (opCode == OpCode::eSlt)
+      cond = builder.add(ir::Op::FLt(ir::ScalarType::eBool, src0c, src1c));
+    else
+      cond = builder.add(ir::Op::FGe(ir::ScalarType::eBool, src0c, src1c));
 
-  return storeDstModifiedPredicated(builder, op, dst, builder.add(std::move(result)));
+    components.push_back(builder.add(ir::Op::Select(scalarType, cond,
+      makeTypedConstant(builder, scalarType, 1.0f),
+      makeTypedConstant(builder, scalarType, 0.0f))));
+  }
+  auto result = buildVector(builder, scalarType, components.size(), components.data());
+
+  return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
 
@@ -980,8 +994,7 @@ bool Converter::handleNrm(ir::Builder& builder, const Instruction& op) {
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
   auto vector = loadSrcModified(builder, op, src0, writeMask, scalarType);
   auto result = normalizeVector(builder, vector);
-  auto resultVec = broadcastScalar(builder, result, writeMask);
-  return storeDstModifiedPredicated(builder, op, dst, resultVec);
+  return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
 
@@ -1610,7 +1623,7 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
   const auto& op = builder.getOp(def);
   auto type = op.getType().getBaseType(0u);
   bool isUnknown = type.isUnknownType();
-  bool partialPrecision = instruction.getDst().isPartialPrecision();
+  bool partialPrecision = instruction.hasDst() && instruction.getDst().isPartialPrecision();
 
   if (!type.isFloatType()) {
     type = ir::BasicType(partialPrecision ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32, type.getVectorSize());
@@ -1839,6 +1852,7 @@ bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Oper
 
   switch (operand.getRegisterType()) {
     case RegisterType::eTemp:
+    case RegisterType::eAddr:
       return m_regFile.emitStore(builder, operand, writeMask, predicateVec, value);
 
     case RegisterType::eOutput:
@@ -2053,7 +2067,7 @@ ir::SsaDef Converter::normalizeVector(ir::Builder& builder, ir::SsaDef def) {
   uint32_t vecSize = type.getVectorSize();
   auto lengthSquared = builder.add(ir::Op::FDotLegacy(scalarType, def, def));
   auto length = builder.add(ir::Op::FSqrt(scalarType, lengthSquared));
-  return builder.add(ir::Op::FDiv(type, def, broadcastScalar(builder, length, vecSize)));
+  return builder.add(ir::Op::FDiv(type, def, broadcastScalar(builder, length, WriteMask((1u << vecSize) - 1u))));
 }
 
 
