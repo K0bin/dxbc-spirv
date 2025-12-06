@@ -22,7 +22,7 @@ void RegisterFile::initialize(ir::Builder& builder) {
     }
   }
 
-  m_aLReg = builder.add(ir::Op::DclTmp(ir::ScalarType::eU32, m_converter.getEntryPoint()));
+  m_aLReg = builder.add(ir::Op::DclTmp(ir::ScalarType::eI32, m_converter.getEntryPoint()));
   if (m_converter.getOptions().includeDebugNames) {
     std::string name = m_converter.makeRegisterDebugName(RegisterType::eLoop, 0u, ComponentBit::eAll);
     builder.add(ir::Op::DebugName(m_aLReg, name.c_str()));
@@ -198,16 +198,19 @@ bool RegisterFile::emitStore(
   return true;
 }
 
-ir::SsaDef RegisterFile::emitLoopCounterLoad(ir::Builder& builder) {
-  return builder.add(ir::Op::TmpLoad(ir::ScalarType::eU32, m_aLReg));
+ir::SsaDef RegisterFile::emitLoopCounterLoad(
+          ir::Builder&            builder) {
+  return builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, m_aLReg));
 }
+
+
 void RegisterFile::emitLoopCounterStore(
           ir::Builder&            builder,
           ir::SsaDef              value) {
   auto op = builder.getOp(value);
   auto type = op.getType();
-  if (type != ir::ScalarType::eU32)
-    value = builder.add(ir::Op::ConsumeAs(ir::ScalarType::eU32, value));
+  if (type != ir::ScalarType::eI32)
+    value = builder.add(ir::Op::ConsumeAs(ir::ScalarType::eI32, value));
 
   builder.add(ir::Op::TmpStore(m_aLReg, value));
 }

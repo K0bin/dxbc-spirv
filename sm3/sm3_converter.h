@@ -6,12 +6,12 @@
 #include "sm3_registers.h"
 #include "sm3_resources.h"
 #include "sm3_spec_constants.h"
+#include "sm3_control_flow.h"
 
 #include "../ir/ir_builder.h"
 
 #include "../util/util_byte_stream.h"
 #include "../util/util_log.h"
-#include "dxbc/dxbc_control_flow.h"
 
 namespace dxbc_spv::sm3 {
 
@@ -76,7 +76,7 @@ private:
   IoMap            m_ioMap;
   Parser           m_parser;
   ResourceMap      m_resources;
-  dxbc::ControlFlow m_controlFlow;
+  ControlFlow      m_controlFlow;
   ir::SsaDef       m_psSharedData;
 
   uint32_t m_instructionCount = 0u;
@@ -154,7 +154,9 @@ private:
 
   bool handleSgn(ir::Builder& builder, const Instruction& op);
 
-  bool handleExpLog(ir::Builder& builder, const Instruction& op);
+  bool handleExp(ir::Builder& builder, const Instruction& op);
+
+  bool handleLog(ir::Builder& builder, const Instruction& op);
 
   bool handleIf(ir::Builder& builder, const Instruction& op);
 
@@ -171,6 +173,8 @@ private:
   bool handleRep(ir::Builder& builder, const Instruction& op);
 
   bool handleEndRep(ir::Builder& builder, const Instruction& op);
+
+  ir::SsaDef emitComparison(ir::Builder& builder, ir::ScalarType scalarType, ir::SsaDef a, ir::SsaDef b, ComparisonMode comparisonMode);
 
   ir::SsaDef applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask);
 
