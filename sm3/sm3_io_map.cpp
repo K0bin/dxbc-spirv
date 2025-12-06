@@ -140,7 +140,7 @@ void IoMap::dclIoVar(
 
   bool foundExisting = false;
   for (auto& entry : m_variables) {
-    if (entry.semantic == semantic) {
+    if (entry.semantic == semantic && entry.registerType == registerType) {
       foundExisting = true;
       break;
     }
@@ -156,7 +156,8 @@ void IoMap::dclIoVar(
   ir::BuiltIn builtIn = ir::BuiltIn::ePosition;
 
   // Position must not be mapped to a regular input. SM3 still has a separate register for that.
-  dxbc_spv_assert(semantic.usage != SemanticUsage::ePosition
+  dxbc_spv_assert(shaderType == ShaderType::eVertex
+    || semantic.usage != SemanticUsage::ePosition
     || registerType == RegisterType::eMiscType
     || registerType == RegisterType::eOutput);
 
