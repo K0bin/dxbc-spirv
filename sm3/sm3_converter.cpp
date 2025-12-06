@@ -219,8 +219,10 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
       return handleSgn(builder, op);
 
     case OpCode::eExpP:
+      return handleExp(builder, op);
+
     case OpCode::eLogP:
-      return handleExpLog(builder, op);
+      return handleLog(builder, op);
 
     case OpCode::eIf:
     case OpCode::eIfC:
@@ -688,7 +690,7 @@ bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
 }
 
 
-bool Converter::handleTexCoord(ir::Builder &builder, const Instruction &op) {
+bool Converter::handleTexCoord(ir::Builder& builder, const Instruction& op) {
   const auto& dst = op.getDst();
   WriteMask writeMask = dst.getWriteMask(getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
@@ -967,7 +969,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
 }
 
 
-bool Converter::handleNrm(ir::Builder &builder, const Instruction &op) {
+bool Converter::handleNrm(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.getSrcCount() == 1u);
   dxbc_spv_assert(op.hasDst());
 
@@ -983,7 +985,7 @@ bool Converter::handleNrm(ir::Builder &builder, const Instruction &op) {
 }
 
 
-bool Converter::handleSinCos(ir::Builder &builder, const Instruction &op) {
+bool Converter::handleSinCos(ir::Builder& builder, const Instruction& op) {
   uint32_t majorVersion = getShaderInfo().getVersion().first;
   dxbc_spv_assert((majorVersion >= 3u && op.getSrcCount() == 2u) || op.getSrcCount() == 3u);
   dxbc_spv_assert(op.hasDst());
@@ -1010,7 +1012,7 @@ bool Converter::handleSinCos(ir::Builder &builder, const Instruction &op) {
 }
 
 
-bool Converter::handlePow(ir::Builder &builder, const Instruction &op) {
+bool Converter::handlePow(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.getSrcCount() == 2u);
   dxbc_spv_assert(op.hasDst());
 
@@ -1035,7 +1037,7 @@ bool Converter::handlePow(ir::Builder &builder, const Instruction &op) {
 }
 
 
-bool Converter::handleSelect(ir::Builder &builder, const Instruction &op) {
+bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.getSrcCount() == 3u);
   dxbc_spv_assert(op.hasDst());
 
@@ -1099,7 +1101,7 @@ bool Converter::handleSelect(ir::Builder &builder, const Instruction &op) {
 }
 
 
-bool Converter::handleBem(ir::Builder &builder, const Instruction &op) {
+bool Converter::handleBem(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.getSrcCount() == 2u);
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(!!m_psSharedData);
@@ -1133,7 +1135,10 @@ bool Converter::handleBem(ir::Builder &builder, const Instruction &op) {
 }
 
 
-bool Converter::handleDef(ir::Builder &builder, const Instruction &op) {
+bool Converter::handleDef(ir::Builder& builder, const Instruction& op) {
+  /* def instructions define so-called immediate constants.
+   * Immediate instructions take precedence over constants set using API methods.
+   */
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.hasImm());
   auto dst = op.getDst();
@@ -1145,7 +1150,7 @@ bool Converter::handleDef(ir::Builder &builder, const Instruction &op) {
 }
 
 
-bool Converter::handleDst(ir::Builder &builder, const Instruction &op) {
+bool Converter::handleDst(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.getSrcCount() == 2u);
   auto dst = op.getDst();
@@ -1178,7 +1183,7 @@ bool Converter::handleDst(ir::Builder &builder, const Instruction &op) {
 }
 
 
-bool Converter::handleDerivatives(ir::Builder &builder, const Instruction &op) {
+bool Converter::handleDerivatives(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.getSrcCount() == 1u);
   auto dst = op.getDst();
@@ -1204,6 +1209,14 @@ bool Converter::handleDerivatives(ir::Builder &builder, const Instruction &op) {
 
 
 bool Converter::handleCrs(ir::Builder& builder, const Instruction& op) {
+  /* crs dst, src0, src1
+   * dest.x = src0.y * src1.z - src0.z * src1.y;
+   * dest.y = src0.z * src1.x - src0.x * src1.z;
+   * dest.z = src0.x * src1.y - src0.y * src1.x;
+   *
+   * src0 & src1 must have the default swizzle.
+   * Dst must have one of the following write masks: .x | .y | .z | .xy | .xz | .yz | .xyz.
+   */
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.getSrcCount() == 2u);
   auto dst = op.getDst();
@@ -1244,7 +1257,7 @@ bool Converter::handleCrs(ir::Builder& builder, const Instruction& op) {
 }
 
 
-bool Converter::handleSetP(ir::Builder &builder, const Instruction &op) {
+bool Converter::handleSetP(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.getSrcCount() == 2u);
   auto dst = op.getDst();
@@ -1266,33 +1279,7 @@ bool Converter::handleSetP(ir::Builder &builder, const Instruction &op) {
       src1c = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(components.size())));
     }
 
-    ir::SsaDef comparison;
-    switch (op.getComparisonMode()) {
-      case ComparisonMode::eNever:
-        comparison = builder.makeConstant(false);
-        break;
-      case ComparisonMode::eGreaterThan:
-        comparison = builder.add(ir::Op::FGt(scalarType, src0c, src1c));
-        break;
-      case ComparisonMode::eEqual:
-        comparison = builder.add(ir::Op::FEq(scalarType, src0c, src1c));
-        break;
-      case ComparisonMode::eGreaterEqual:
-        comparison = builder.add(ir::Op::FGe(scalarType, src0c, src1c));
-        break;
-      case ComparisonMode::eLessThan:
-        comparison = builder.add(ir::Op::FLt(scalarType, src0c, src1c));
-        break;
-      case ComparisonMode::eNotEqual:
-        comparison = builder.add(ir::Op::FNe(scalarType, src0c, src1c));
-        break;
-      case ComparisonMode::eLessEqual:
-        comparison = builder.add(ir::Op::FLe(scalarType, src0c, src1c));
-        break;
-      case ComparisonMode::eAlways:
-        comparison = builder.makeConstant(true);
-        break;
-    }
+    auto comparison = emitComparison(builder, ir::ScalarType::eF32, src0c, src1c, op.getComparisonMode());
     components.push_back(comparison);
   }
 
@@ -1301,7 +1288,7 @@ bool Converter::handleSetP(ir::Builder &builder, const Instruction &op) {
 }
 
 
-bool Converter::handleSgn(ir::Builder &builder, const Instruction &op) {
+bool Converter::handleSgn(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
   /* Sgn takes 3 src operands but 2 of them only hold intermediate results. */
   dxbc_spv_assert(op.getSrcCount() >= 1u);
@@ -1324,6 +1311,12 @@ bool Converter::handleSgn(ir::Builder &builder, const Instruction &op) {
       components.push_back(builder.add(ir::Op::FSgn(scalarType, srcComponent)));
     }
   } else if (op.getOpCode() == OpCode::eAbs) {
+    /*
+     * dest.x = abs(src.x)
+     * dest.y = abs(src.y)
+     * dest.z = abs(src.z)
+     * dest.w = abs(src.w)
+     */
     for (auto c : writeMask) {
       auto srcComponent = src0Val;
       if (!isScalar) {
@@ -1342,7 +1335,7 @@ bool Converter::handleSgn(ir::Builder &builder, const Instruction &op) {
 }
 
 
-bool Converter::handleExpLog(ir::Builder& builder, const Instruction& op) {
+bool Converter::handleExp(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.getSrcCount() == 1u);
   auto dst = op.getDst();
@@ -1360,29 +1353,47 @@ bool Converter::handleExpLog(ir::Builder& builder, const Instruction& op) {
   }
 
   util::small_vector<ir::SsaDef, 4u> components;
-  if (op.getOpCode() == OpCode::eExp) {
-    if (info.getVersion().first >= 2u) {
-      for (auto _ : writeMask) {
-        components.push_back(builder.add(ir::Op::FExp2(scalarType, v)));
-      }
-    } else {
-      if (writeMask & ComponentBit::eX)
-        components.push_back(builder.add(ir::Op::FExp2(scalarType, v)));
-      if (writeMask & ComponentBit::eY)
-        components.push_back(builder.add(ir::Op::FSub(scalarType, v, builder.add(ir::Op::FRound(scalarType, v, ir::RoundMode::eNegativeInf)))));
-      if (writeMask & ComponentBit::eZ)
-        components.push_back(builder.add(ir::Op::FExp2(scalarType, v)));
-      if (writeMask & ComponentBit::eW)
-        components.push_back(makeTypedConstant(builder, scalarType, 1.0f));
+  if (info.getVersion().first >= 2u) {
+    for (auto _ : writeMask) {
+      components.push_back(builder.add(ir::Op::FExp2(scalarType, v)));
     }
   } else {
-    v = builder.add(ir::Op::FAbs(scalarType, v));
-    for (auto _ : writeMask) {
-      components.push_back(builder.add(ir::Op::FLog2(scalarType, v)));
-    }
+    if (writeMask & ComponentBit::eX)
+      components.push_back(builder.add(ir::Op::FExp2(scalarType, v)));
+    if (writeMask & ComponentBit::eY)
+      components.push_back(builder.add(ir::Op::FSub(scalarType, v, builder.add(ir::Op::FRound(scalarType, v, ir::RoundMode::eNegativeInf)))));
+    if (writeMask & ComponentBit::eZ)
+      components.push_back(builder.add(ir::Op::FExp2(scalarType, v)));
+    if (writeMask & ComponentBit::eW)
+      components.push_back(makeTypedConstant(builder, scalarType, 1.0f));
   }
 
   auto result = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
+  return storeDstModifiedPredicated(builder, op, dst, result);
+}
+
+
+bool Converter::handleLog(ir::Builder& builder, const Instruction& op) {
+  dxbc_spv_assert(op.hasDst());
+  dxbc_spv_assert(op.getSrcCount() == 1u);
+  auto dst = op.getDst();
+  auto src0 = op.getSrc(0u);
+
+  auto info = m_parser.getShaderInfo();
+  WriteMask writeMask = dst.getWriteMask(info);
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+  bool isScalar = util::popcnt(uint8_t(writeMask)) == 1u;
+
+  auto src0Val = loadSrcModified(builder, op, src0, writeMask, scalarType);
+  auto v = src0Val;
+  if (!isScalar) {
+    src0Val = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(0u)));
+  }
+
+  v = builder.add(ir::Op::FAbs(scalarType, v));
+  auto res = builder.add(ir::Op::FLog2(scalarType, v));
+
+  auto result = broadcastScalar(builder, res, writeMask);
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
@@ -1395,32 +1406,7 @@ bool Converter::handleIf(ir::Builder& builder, const Instruction& op) {
   } else if (op.getOpCode() == OpCode::eIfC) {
     ir::SsaDef src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, ir::ScalarType::eF32);
     ir::SsaDef src1 = loadSrcModified(builder, op, op.getSrc(1u), ComponentBit::eX, ir::ScalarType::eF32);
-    switch (op.getComparisonMode()) {
-      case ComparisonMode::eNever:
-        cond = builder.makeConstant(false);
-        break;
-      case ComparisonMode::eGreaterThan:
-        cond = builder.add(ir::Op::FGt(ir::ScalarType::eF32, src0, src1));
-        break;
-      case ComparisonMode::eEqual:
-        cond = builder.add(ir::Op::FEq(ir::ScalarType::eF32, src0, src1));
-        break;
-      case ComparisonMode::eGreaterEqual:
-        cond = builder.add(ir::Op::FGe(ir::ScalarType::eF32, src0, src1));
-        break;
-      case ComparisonMode::eLessThan:
-        cond = builder.add(ir::Op::FLt(ir::ScalarType::eF32, src0, src1));
-        break;
-      case ComparisonMode::eNotEqual:
-        cond = builder.add(ir::Op::FNe(ir::ScalarType::eF32, src0, src1));
-        break;
-      case ComparisonMode::eLessEqual:
-        cond = builder.add(ir::Op::FLe(ir::ScalarType::eF32, src0, src1));
-        break;
-      case ComparisonMode::eAlways:
-        cond = builder.makeConstant(true);
-        break;
-    }
+    cond = emitComparison(builder, ir::ScalarType::eF32, src0, src1, op.getComparisonMode());
   } else {
     Logger::err("OpCode ", op.getOpCode(), " is not supported by handleControlFlowIf");
     dxbc_spv_unreachable();
@@ -1438,7 +1424,7 @@ bool Converter::handleElse(ir::Builder& builder, const Instruction& op) {
   if (type != ir::OpCode::eScopedIf)
     return logOpError(op, "'Else' occurred outside of 'If'.");
 
-  builder.add(ir::Op::ScopedElse(construct));
+  builder.add(ir::Op::ScopedElse(construct->def));
   return true;
 }
 
@@ -1449,8 +1435,8 @@ bool Converter::handleEndIf(ir::Builder& builder, const Instruction& op) {
   if (type != ir::OpCode::eScopedIf)
     return logOpError(op, "'EndIf' occurred outside of 'If'.");
 
-  auto constructEnd = builder.add(ir::Op::ScopedEndIf(construct));
-  builder.rewriteOp(construct, ir::Op(builder.getOp(construct)).setOperand(0u, constructEnd));
+  auto constructEnd = builder.add(ir::Op::ScopedEndIf(construct->def));
+  builder.rewriteOp(construct->def, ir::Op(builder.getOp(construct->def)).setOperand(0u, constructEnd));
 
   m_controlFlow.pop();
   return true;
@@ -1458,28 +1444,162 @@ bool Converter::handleEndIf(ir::Builder& builder, const Instruction& op) {
 
 
 bool Converter::handleLoop(ir::Builder& builder, const Instruction& op) {
-  dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.getSrcCount() >= 1u);
-  auto dst = op.getDst();
   auto src0 = op.getSrc(0u);
-  auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ, ir::ScalarType::eU32);
-  auto iterationCount = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eU32, src0Val, builder.makeConstant(0u)));
-  auto initialValue = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eU32, src0Val, builder.makeConstant(1u)));
-  auto stepSize = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eU32, src0Val, builder.makeConstant(2u)));
+  auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ, ir::ScalarType::eI32);
+  auto iterationCount = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eI32, src0Val, builder.makeConstant(0u)));
+  auto initialValue = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eI32, src0Val, builder.makeConstant(1u)));
+  auto stepSize = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eI32, src0Val, builder.makeConstant(2u)));
 
-  //m_regFile.emitStore(builder, )
-  m_regFile.emitLoopCounterStore(builder, initialValue);
+  auto loopCounter =  builder.add(ir::Op::DclTmp(ir::ScalarType::eI32, m_entryPoint.def));
+  builder.add(ir::Op::TmpStore(loopCounter, initialValue));
 
   auto loopDef = builder.add(ir::Op::ScopedLoop(ir::SsaDef()));
+  auto loop = m_controlFlow.push(loopDef);
 
-  //auto loopExitCondition = builder.add(ir::Op::I)
-  //builder.add(ir::Op::ScopedIf(ir::SsaDef(), ))
+  auto loopCounterVal = builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, loopCounter));
+  auto totalSteps = builder.add(ir::Op::IMul(ir::ScalarType::eI32, stepSize, iterationCount));
+  auto finalCounterValue = builder.add(ir::Op::IAdd(ir::ScalarType::eI32, initialValue, totalSteps));
+  auto breakCondition = builder.add(ir::Op::IEq(ir::ScalarType::eI32, loopCounterVal, finalCounterValue));
+  auto breakIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), breakCondition));
+  builder.add(ir::Op::ScopedLoopBreak(loopDef));
+  auto breakEndIf = builder.add(ir::Op::ScopedEndIf(breakIf));
+  builder.rewriteOp(breakIf, ir::Op(builder.getOp(breakIf)).setOperand(0u, breakEndIf));
 
-  auto loopCounterVal = m_regFile.emitLoopCounterLoad(builder);
-  //builder.add(ir::Op::IAdd(ir::ScalarType::eU32, loopCounterVal, stepSize));
-  //builder.add(ir::Op::ScopedIf(ir::SsaDef(), ))
-  m_controlFlow.push(loopDef);
+  m_regFile.emitLoopCounterStore(builder, loopCounterVal);
 
+  loop.loopStep = stepSize;
+  loop.loopCounter = loopCounter;
+  return true;
+}
+
+
+bool Converter::handleEndLoop(ir::Builder &builder, const Instruction &op) {
+  auto [construct, type] = m_controlFlow.getConstruct(builder);
+
+  if (type != ir::OpCode::eScopedLoop)
+    return logOpError(op, "'EndLoop' occurred outside of 'Loop' or 'Loop' is straddling 'If'.");
+
+  auto loopCounterVal = builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, construct->loopCounter));
+  loopCounterVal = builder.add(ir::Op::IAdd(ir::ScalarType::eI32, loopCounterVal, construct->loopStep));
+  builder.add(ir::Op::TmpStore(construct->loopCounter, loopCounterVal));
+  return true;
+}
+
+
+bool Converter::handleRep(ir::Builder& builder, const Instruction& op) {
+  dxbc_spv_assert(op.getSrcCount() >= 1u);
+  auto src0 = op.getSrc(0u);
+  auto iterationCount = loadSrcModified(builder, op, src0, ComponentBit::eX, ir::ScalarType::eU32);
+
+  auto loopCounter =  builder.add(ir::Op::DclTmp(ir::ScalarType::eU32, m_entryPoint.def));
+  builder.add(ir::Op::TmpStore(loopCounter, iterationCount));
+
+  auto loopDef = builder.add(ir::Op::ScopedLoop(ir::SsaDef()));
+  auto loop = m_controlFlow.push(loopDef);
+
+  auto loopCounterVal = builder.add(ir::Op::TmpLoad(ir::ScalarType::eU32, loopCounter));
+  auto breakCondition = builder.add(ir::Op::IEq(ir::ScalarType::eU32, loopCounterVal, builder.makeConstant(0u)));
+  auto breakIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), breakCondition));
+  builder.add(ir::Op::ScopedLoopBreak(loopDef));
+  auto breakEndIf = builder.add(ir::Op::ScopedEndIf(breakIf));
+  builder.rewriteOp(breakIf, ir::Op(builder.getOp(breakIf)).setOperand(0u, breakEndIf));
+
+  m_regFile.emitLoopCounterStore(builder, loopCounterVal);
+
+  loop.loopStep = ir::SsaDef();
+  loop.loopCounter = loopCounter;
+  return true;
+}
+
+
+bool Converter::handleEndRep(ir::Builder &builder, const Instruction &op) {
+  auto [construct, type] = m_controlFlow.getConstruct(builder);
+
+  if (type != ir::OpCode::eScopedLoop)
+    return logOpError(op, "'EndRep' occurred outside of 'Rep' or 'Rep' is straddling 'If'.");
+
+  auto loopCounterVal = builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, construct->loopCounter));
+  loopCounterVal = builder.add(ir::Op::ISub(ir::ScalarType::eI32, loopCounterVal, builder.makeConstant(1u)));
+  builder.add(ir::Op::TmpStore(construct->loopCounter, loopCounterVal));
+  return true;
+}
+
+
+bool Converter::handleBreak(ir::Builder& builder, const Instruction& op) {
+  auto construct = m_controlFlow.getBreakConstruct(builder);
+
+  if (construct == nullptr)
+    return logOpError(op, "'Break' occurred outside of 'Loop' or 'Rep'.");
+
+  if (op.getOpCode() == OpCode::eBreak) {
+
+    builder.add(ir::Op::ScopedLoopBreak(construct->def));
+    return true;
+
+  } else if (op.getOpCode() == OpCode::eBreakP) {
+
+    auto cond = m_regFile.emitPredicateLoad(builder, op.getDst().getPredicateSwizzle(), ComponentBit::eX);
+    auto breakIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), cond));
+    builder.add(ir::Op::ScopedLoopBreak(construct->def));
+    auto breakEndIf = builder.add(ir::Op::ScopedEndIf(breakIf));
+    builder.rewriteOp(breakIf, ir::Op(builder.getOp(breakIf)).setOperand(0u, breakEndIf));
+    return true;
+
+  } else if (op.getOpCode() == OpCode::eBreakC) {
+
+    auto src0 = op.getSrc(0u);
+    auto src1 = op.getSrc(1u);
+    auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eX, ir::ScalarType::eF32);
+    auto src1Val = loadSrcModified(builder, op, src1, ComponentBit::eX, ir::ScalarType::eF32);
+    auto cond = emitComparison(builder, ir::ScalarType::eF32, src0Val, src1Val, op.getComparisonMode());
+    auto breakIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), cond));
+    builder.add(ir::Op::ScopedLoopBreak(construct->def));
+    auto breakEndIf = builder.add(ir::Op::ScopedEndIf(breakIf));
+    builder.rewriteOp(breakIf, ir::Op(builder.getOp(breakIf)).setOperand(0u, breakEndIf));
+    return true;
+
+  } else {
+
+    dxbc_spv_unreachable();
+    Logger::err("handleBreak can't handle opcode '", op.getOpCode(), "'");
+    return false;
+  }
+  return false;
+}
+
+
+ir::SsaDef Converter::emitComparison(ir::Builder& builder, ir::ScalarType scalarType, ir::SsaDef a, ir::SsaDef b, ComparisonMode comparisonMode) {
+  switch (comparisonMode) {
+    case ComparisonMode::eNever:
+      return builder.makeConstant(false);
+      break;
+    case ComparisonMode::eGreaterThan:
+      return builder.add(ir::Op::FGt(scalarType, a, b));
+      break;
+    case ComparisonMode::eEqual:
+      return builder.add(ir::Op::FEq(scalarType, a, b));
+      break;
+    case ComparisonMode::eGreaterEqual:
+      return builder.add(ir::Op::FGe(scalarType, a, b));
+      break;
+    case ComparisonMode::eLessThan:
+      return builder.add(ir::Op::FLt(scalarType, a, b));
+      break;
+    case ComparisonMode::eNotEqual:
+      return builder.add(ir::Op::FNe(scalarType, a, b));
+      break;
+    case ComparisonMode::eLessEqual:
+      return builder.add(ir::Op::FLe(scalarType, a, b));
+      break;
+    case ComparisonMode::eAlways:
+      return builder.makeConstant(true);
+      break;
+
+    default:
+      Logger::warn("Invalid comparison mode: '", uint32_t(comparisonMode), "'");
+      return builder.makeConstant(true);
+  }
 }
 
 
@@ -1927,7 +2047,7 @@ ir::SsaDef Converter::makeTypedConstant(ir::Builder& builder, ir::BasicType type
 }
 
 
-ir::SsaDef Converter::normalizeVector(ir::Builder &builder, ir::SsaDef def) {
+ir::SsaDef Converter::normalizeVector(ir::Builder& builder, ir::SsaDef def) {
   auto type = builder.getOp(def).getType().getBaseType(0u);
   auto scalarType = type.getBaseType();
   uint32_t vecSize = type.getVectorSize();
