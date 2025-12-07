@@ -158,9 +158,9 @@ private:
 
   bool handleSgn(ir::Builder& builder, const Instruction& op);
 
-  bool handleExp(ir::Builder& builder, const Instruction& op);
+  bool handleAbs(ir::Builder& builder, const Instruction& op);
 
-  bool handleLog(ir::Builder& builder, const Instruction& op);
+  bool handleExpP(ir::Builder& builder, const Instruction& op);
 
   bool handleIf(ir::Builder& builder, const Instruction& op);
 
@@ -209,6 +209,8 @@ private:
   ir::SsaDef makeTypedConstant(ir::Builder& builder, ir::BasicType type, T value);
 
   ir::SsaDef normalizeVector(ir::Builder& builder, ir::SsaDef def);
+
+  ir::SsaDef applyBumpMapping(ir::Builder& builder, uint32_t stageIdx, ir::SsaDef src0, ir::SsaDef src1);
 
   WriteMask fixupWriteMask(ir::Builder& builder, WriteMask writeMask, ir::SsaDef value);
 
