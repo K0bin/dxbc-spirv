@@ -1292,7 +1292,7 @@ bool Converter::handleSetP(ir::Builder& builder, const Instruction& op) {
       src1c = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(components.size())));
     }
 
-    auto comparison = emitComparison(builder, ir::ScalarType::eF32, src0c, src1c, op.getComparisonMode());
+    auto comparison = emitComparison(builder, src0c, src1c, op.getComparisonMode());
     components.push_back(comparison);
   }
 
@@ -1419,7 +1419,7 @@ bool Converter::handleIf(ir::Builder& builder, const Instruction& op) {
   } else if (op.getOpCode() == OpCode::eIfC) {
     ir::SsaDef src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, ir::ScalarType::eF32);
     ir::SsaDef src1 = loadSrcModified(builder, op, op.getSrc(1u), ComponentBit::eX, ir::ScalarType::eF32);
-    cond = emitComparison(builder, ir::ScalarType::eF32, src0, src1, op.getComparisonMode());
+    cond = emitComparison(builder, src0, src1, op.getComparisonMode());
   } else {
     Logger::err("OpCode ", op.getOpCode(), " is not supported by handleControlFlowIf");
     dxbc_spv_unreachable();
@@ -1565,7 +1565,7 @@ bool Converter::handleBreak(ir::Builder& builder, const Instruction& op) {
     auto src1 = op.getSrc(1u);
     auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eX, ir::ScalarType::eF32);
     auto src1Val = loadSrcModified(builder, op, src1, ComponentBit::eX, ir::ScalarType::eF32);
-    auto cond = emitComparison(builder, ir::ScalarType::eF32, src0Val, src1Val, op.getComparisonMode());
+    auto cond = emitComparison(builder, src0Val, src1Val, op.getComparisonMode());
     auto breakIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), cond));
     builder.add(ir::Op::ScopedLoopBreak(construct->def));
     auto breakEndIf = builder.add(ir::Op::ScopedEndIf(breakIf));
@@ -1582,28 +1582,28 @@ bool Converter::handleBreak(ir::Builder& builder, const Instruction& op) {
 }
 
 
-ir::SsaDef Converter::emitComparison(ir::Builder& builder, ir::ScalarType scalarType, ir::SsaDef a, ir::SsaDef b, ComparisonMode comparisonMode) {
+ir::SsaDef Converter::emitComparison(ir::Builder& builder, ir::SsaDef a, ir::SsaDef b, ComparisonMode comparisonMode) {
   switch (comparisonMode) {
     case ComparisonMode::eNever:
       return builder.makeConstant(false);
       break;
     case ComparisonMode::eGreaterThan:
-      return builder.add(ir::Op::FGt(scalarType, a, b));
+      return builder.add(ir::Op::FGt(ir::ScalarType::eBool, a, b));
       break;
     case ComparisonMode::eEqual:
-      return builder.add(ir::Op::FEq(scalarType, a, b));
+      return builder.add(ir::Op::FEq(ir::ScalarType::eBool, a, b));
       break;
     case ComparisonMode::eGreaterEqual:
-      return builder.add(ir::Op::FGe(scalarType, a, b));
+      return builder.add(ir::Op::FGe(ir::ScalarType::eBool, a, b));
       break;
     case ComparisonMode::eLessThan:
-      return builder.add(ir::Op::FLt(scalarType, a, b));
+      return builder.add(ir::Op::FLt(ir::ScalarType::eBool, a, b));
       break;
     case ComparisonMode::eNotEqual:
-      return builder.add(ir::Op::FNe(scalarType, a, b));
+      return builder.add(ir::Op::FNe(ir::ScalarType::eBool, a, b));
       break;
     case ComparisonMode::eLessEqual:
-      return builder.add(ir::Op::FLe(scalarType, a, b));
+      return builder.add(ir::Op::FLe(ir::ScalarType::eBool, a, b));
       break;
     case ComparisonMode::eAlways:
       return builder.makeConstant(true);
