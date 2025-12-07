@@ -22,7 +22,6 @@ constexpr uint32_t TextureStageCount = 8u;
  *     - if pred: Loads predicate register.
  *     - callnz: Loads straight from a constant boolean register.
  *     - callnz pred: Loads predicate register.
- *     - break_comp: Loads straight from a constant boolean register.
  *     - breakp pred: Loads predicate register.
  *   - Registers:
  *     - pred: Can't be read directly. Can only be used with if pred or to make operations conditional with predication.
@@ -125,6 +124,7 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eExp:
     case OpCode::eFrc:
     case OpCode::eLog:
+    case OpCode::eLogP:
     case OpCode::eMax:
     case OpCode::eMin:
     case OpCode::eMul:
@@ -217,14 +217,13 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
       return handleSetP(builder, op);
 
     case OpCode::eSgn:
-    case OpCode::eAbs:
       return handleSgn(builder, op);
 
-    case OpCode::eExpP:
-      return handleExp(builder, op);
+    case OpCode::eAbs:
+      return handleAbs(builder, op);
 
-    case OpCode::eLogP:
-      return handleLog(builder, op);
+    case OpCode::eExpP:
+      return handleExpP(builder, op);
 
     case OpCode::eIf:
     case OpCode::eIfC:
@@ -419,6 +418,7 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
 
       ir::SsaDef roundedValue;
       if (getShaderInfo().getVersion().first < 2 && getShaderInfo().getVersion().second < 2)
+        /* Contrary to what the documentation says, we need to floor here. */
         roundedValue = builder.add(ir::Op::FRound(scalarType, scalarValue, ir::RoundMode::eNegativeInf));
       else
         roundedValue = builder.add(ir::Op::FRound(scalarType, scalarValue, ir::RoundMode::eNearestEven));
@@ -444,7 +444,17 @@ bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
 
   WriteMask writeMask = dst.getWriteMask(getShaderInfo());
 
-  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+  bool isPartialPrecision = dst.isPartialPrecision();
+  switch (opCode) {
+    /* Exp & Log are explicitly full-precision instructions. */
+    case OpCode::eExp:
+    case OpCode::eLog:  isPartialPrecision = false; break;
+    /* LogP is an explicitly partial-precision instruction. */
+    case OpCode::eLogP: isPartialPrecision = true;  break;
+    default: break;
+  }
+
+  auto scalarType = isPartialPrecision ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   auto vectorType = makeVectorType(scalarType, writeMask);
 
   /* Load source operands */
@@ -466,6 +476,7 @@ bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
       case OpCode::eExp:        return ir::Op::FExp2(vectorType, src.at(0u));
       case OpCode::eFrc:        return ir::Op::FFract(vectorType, src.at(0u));
       case OpCode::eLog:        return ir::Op::FLog2(vectorType, src.at(0u));
+      case OpCode::eLogP:       return ir::Op::FLog2(vectorType, src.at(0u));
       case OpCode::eMax:        return ir::Op::FMax(vectorType, src.at(0u), src.at(1u));
       case OpCode::eMin:        return ir::Op::FMin(vectorType, src.at(0u), src.at(1u));
       case OpCode::eMul:        return ir::Op::FMulLegacy(vectorType, src.at(0u), src.at(1u));
@@ -543,6 +554,7 @@ bool Converter::handleDot(ir::Builder& builder, const Instruction& op) {
   auto result = builder.add(ir::Op::FDotLegacy(scalarType, vectorA, vectorB));
 
   if (opCode == OpCode::eDp2Add) {
+    /* src2 needs to have a replicate swizzle, so just get the first component. */
     auto summandC = loadSrcModified(builder, op, op.getSrc(2u), WriteMask(ComponentBit::eX), scalarType);
     result = builder.add(ir::Op::FAdd(scalarType, result, summandC));
   }
@@ -579,6 +591,7 @@ bool Converter::handleCompare(ir::Builder& builder, const Instruction& op) {
     auto src0c = src0;
     auto src1c = src1;
     if (util::popcnt(uint8_t(writeMask)) > 1u) {
+      /* It is done per-component. */
       src0c = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(uint32_t(index))));
       src1c = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(uint32_t(index))));
     }
@@ -665,6 +678,7 @@ bool Converter::handleMatrixArithmetic(ir::Builder& builder, const Instruction& 
 
 
 bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
+  /* Calculates lighting coefficients from two dot products and an exponent. */
   const auto& dst = op.getDst();
   WriteMask writeMask = dst.getWriteMask(getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
@@ -678,6 +692,7 @@ bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
   auto srcY = builder.add(ir::Op::CompositeExtract(scalarType, src, yConst));
   auto srcW = builder.add(ir::Op::CompositeExtract(scalarType, src, wConst));
 
+  /* power = clamp(src.w, -127.9961, 127.9961) */
   auto power = builder.add(ir::Op::FClamp(scalarType, srcW,
     builder.makeConstant(-127.9961f), builder.makeConstant(127.9961f)));
 
@@ -686,27 +701,34 @@ bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
 
   util::small_vector<ir::SsaDef, 4u> components;
   if (writeMask & ComponentBit::eX)
+    /* dst.x = 1.0 */
     components.push_back(oneFConst);
   if (writeMask & ComponentBit::eY)
+    /* dst.y = max(0.0, src.x) */
     components.push_back(builder.add(ir::Op::FMax(scalarType, srcX, zeroFConst)));
   if (writeMask & ComponentBit::eZ)
-    components.push_back(builder.add(ir::Op::FPow(scalarType, builder.add(ir::Op::FMax(scalarType, srcX, zeroFConst)), power)));
+    /* dst.z = pow(src.y, power) : 0.0 */
+    components.push_back(builder.add(ir::Op::FPow(scalarType, srcX, power)));
   if (writeMask & ComponentBit::eW)
     components.push_back(oneFConst);
 
-  auto zTestX = builder.add(ir::Op::FGe(ir::ScalarType::eBool, srcX,zeroFConst));
-  auto zTestY = builder.add(ir::Op::FGe(ir::ScalarType::eBool, srcY, zeroFConst));
-  auto zTest = builder.add(ir::Op::BAnd(ir::ScalarType::eBool, zTestX, zTestY));
+  if (components.size() > 2u) {
+    /* dst.z = src.x > 0.0 && src.y > 0.0 ? pow(src.y, src.w) : 0.0 */
 
-  if (components.size() > 2u)
+    auto zTestX = builder.add(ir::Op::FGe(ir::ScalarType::eBool, srcX,zeroFConst));
+    auto zTestY = builder.add(ir::Op::FGe(ir::ScalarType::eBool, srcY, zeroFConst));
+    auto zTest = builder.add(ir::Op::BAnd(ir::ScalarType::eBool, zTestX, zTestY));
+
     components[2u] = builder.add(ir::Op::Select(scalarType, zTest, components[2u], zeroFConst));
+  }
 
-  auto result = buildVector(builder, scalarType, util::popcnt(uint8_t(writeMask)), components.data());
+  auto result = buildVector(builder, scalarType, components.size(), components.data());
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
 
 bool Converter::handleTexCoord(ir::Builder& builder, const Instruction& op) {
+  /* Reads texcoord data */
   const auto& dst = op.getDst();
   WriteMask writeMask = dst.getWriteMask(getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
@@ -745,6 +767,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
 
   switch (opCode) {
     case OpCode::eTexLd: {
+      /* Regular texture sampling instruction */
       uint32_t samplerIdx;
       ir::SsaDef texCoord;
       ir::SsaDef lodBias = ir::SsaDef();
@@ -791,6 +814,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     } break;
 
     case OpCode::eTexLdl: {
+      /* Sample with explicit LOD */
       auto src0 = op.getSrc(0u);
       auto src1 = op.getSrc(1u);
       auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, ir::ScalarType::eF32);
@@ -800,6 +824,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     } break;
 
     case OpCode::eTexLdd: {
+      /* Sample with explicit derivatives */
       auto src0 = op.getSrc(0u);
       auto src1 = op.getSrc(1u);
       auto src2 = op.getSrc(2u);
@@ -814,6 +839,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     case OpCode::eTexReg2Ar:
     case OpCode::eTexReg2Gb:
     case OpCode::eTexReg2Rgb: {
+      /* Sample with custom values used as texture coords (SM 1) */
       Swizzle swizzle = Swizzle::identity();
       switch (opCode) {
         case OpCode::eTexReg2Ar:  swizzle = Swizzle(Component::eW, Component::eX, Component::eX, Component::eX); break;
@@ -918,6 +944,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
 
     case OpCode::eTexDp3Tex:
     case OpCode::eTexDp3: {
+      /* Calculate a dot product of the texcoord data and src0 (and optionally use that for 1D texture lookup) */
       auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
       auto src0 = op.getSrc(0u);
       auto m = m_ioMap.emitTexCoordLoad(builder, op, dst.getIndex(), util::makeWriteMaskForComponents(3u), Swizzle::identity(), scalarType);
@@ -929,48 +956,40 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         auto texCoord = buildVector(builder, scalarType, 3u, texCoordComponents.data());
         result = m_resources.emitSample(builder, dst.getIndex(), texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
       } else {
-        /* Replicates the dot product to all four color channels. */
+        /* Replicates the dot product to all four color channels. Doesn't actually sample. */
         result = broadcastScalar(builder, dot, util::makeWriteMaskForComponents(4u));
       }
     } break;
 
     case OpCode::eTexBem:
     case OpCode::eTexBemL: {
+      /* Apply a fake bump environment-map transform */
       uint32_t samplerIdx = dst.getIndex();
       auto texCoord = m_ioMap.emitTexCoordLoad(builder, op, samplerIdx, ComponentBit::eAll, Swizzle::identity(), ir::ScalarType::eF32);
-      auto src0 = op.getSrc(0u);
-      auto src0Val = loadSrcModified(builder, op, src0, WriteMask(ComponentBit::eX | ComponentBit::eY), ir::ScalarType::eF32);
+      auto src0 = loadSrcModified(builder, op, op.getSrc(0u), WriteMask(ComponentBit::eX | ComponentBit::eY), ir::ScalarType::eF32);
 
       dxbc_spv_assert(getShaderInfo().getVersion().first < 2u);
       texCoord = m_resources.projectTexCoord(builder, samplerIdx, texCoord, true);
 
-      auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
-      std::array<ir::SsaDef, 2> components = {};
-      for (uint32_t i = 0u; i < components.size(); i++) {
-        auto bumpEnvMat0 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 1u), 16u));
-        auto bumpEnvMat1 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 2u), 8u));
+      auto bumpMappedTexCoord = applyBumpMapping(builder, samplerIdx, texCoord, src0);
 
-        auto src1r = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src0Val, builder.makeConstant(0u)));
-        auto bumped0 = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, bumpEnvMat0, src1r));
-        auto src1g = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src0Val, builder.makeConstant(1u)));
-        auto bumped1 = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, bumpEnvMat1, src1g));
-        auto bumpedSum = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, bumped0, bumped1));
-        auto src0Component = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(i)));
-        components[i] = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, src0Component, bumpedSum));
-      }
-
-      texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(ir::ScalarType::eF32, 4u), texCoord, builder.makeConstant(0u), components[0u]));
-      texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(ir::ScalarType::eF32, 4u), texCoord, builder.makeConstant(1u), components[1u]));
+      /* Insert it back into the original tex coord, so we have a z and w component in case we need them. */
+      auto u = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, bumpMappedTexCoord, builder.makeConstant(0u)));
+      auto v = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, bumpMappedTexCoord, builder.makeConstant(1u)));
+      texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(ir::ScalarType::eF32, 4u), texCoord, builder.makeConstant(0u), u));
+      texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(ir::ScalarType::eF32, 4u), texCoord, builder.makeConstant(1u), v));
 
       result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
 
       if (opCode == OpCode::eTexBemL) {
+        /* Additionally does luminance correction */
+        auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
         auto bumpEnvLScale = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 3u), 16u));
         auto bumpEnvLOffset = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 2u), 8u));
         auto scale = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, result, builder.makeConstant(2u)));
         scale = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, scale, bumpEnvLScale));
         scale = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, scale, bumpEnvLOffset));
-        std::array<ir::SsaDef, 2> scaledComponents = {};
+        std::array<ir::SsaDef, 4u> scaledComponents = {};
         scale = builder.add(ir::Op::FClamp(ir::ScalarType::eF32, scale, builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
         for (uint32_t i = 0u; i < 4u; i++) {
           auto resultComponent = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, result, builder.makeConstant(i)));
@@ -988,6 +1007,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
 
 
 bool Converter::handleTexDepth(ir::Builder& builder, const Instruction& op) {
+  /* Writes the fragment depth */
   /* It always uses temporary register r5. */
   auto val = m_regFile.emitTempLoad(builder, 5u, Swizzle::identity(), ComponentBit::eX | ComponentBit::eY, ir::ScalarType::eF32);
   auto r = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, val, builder.makeConstant(0u)));
@@ -1040,30 +1060,30 @@ bool Converter::handleNrm(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
 
   auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
-
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
-  auto vector = loadSrcModified(builder, op, src0, writeMask, scalarType);
-  auto result = normalizeVector(builder, vector);
+
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
+  auto result = normalizeVector(builder, src0);
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
 
 bool Converter::handleSinCos(ir::Builder& builder, const Instruction& op) {
+  /* dst.x = cos(src)
+   * dst.y = sin(src)
+   * Before PS 3_0, shaders had to provide specific consts as src1 and src2. */
   uint32_t majorVersion = getShaderInfo().getVersion().first;
   dxbc_spv_assert((majorVersion >= 3u && op.getSrcCount() == 1u) || op.getSrcCount() == 3u);
   dxbc_spv_assert(op.hasDst());
 
   auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
-
-  Swizzle swizzle = src0.getSwizzle(getShaderInfo());
+  Swizzle swizzle = op.getSrc(0u).getSwizzle(getShaderInfo());
   dxbc_spv_assert(swizzle.x() == swizzle.y() && swizzle.y() == swizzle.z() && swizzle.z() == swizzle.w());
   WriteMask writeMask = dst.getWriteMask(getShaderInfo());
 
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
-  auto val = loadSrcModified(builder, op, src0, ComponentBit::eX, scalarType);
+  auto val = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, scalarType);
 
   dxbc_spv_assert((writeMask & (ComponentBit::eZ | ComponentBit::eW)) == WriteMask());
   util::small_vector<ir::SsaDef, 2u> components = { };
@@ -1078,25 +1098,24 @@ bool Converter::handleSinCos(ir::Builder& builder, const Instruction& op) {
 
 
 bool Converter::handlePow(ir::Builder& builder, const Instruction& op) {
+  /* abs(src0)^src1 */
   dxbc_spv_assert(op.getSrcCount() == 2u);
   dxbc_spv_assert(op.hasDst());
 
   auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
-  auto src1 = op.getSrc(1u);
-
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
-
-  Swizzle src0Swizzle = src0.getSwizzle(getShaderInfo());
-  dxbc_spv_assert(src0Swizzle.x() == src0Swizzle.y() && src0Swizzle.y() == src0Swizzle.z() && src0Swizzle.z() == src0Swizzle.w());
-  auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eX, scalarType);
-  Swizzle src1Swizzle = src1.getSwizzle(getShaderInfo());
-  dxbc_spv_assert(src1Swizzle.x() == src1Swizzle.y() && src1Swizzle.y() == src1Swizzle.z() && src1Swizzle.z() == src1Swizzle.w());
-  auto src1Val = loadSrcModified(builder, op, src1, ComponentBit::eX, scalarType);
   WriteMask writeMask = dst.getWriteMask(getShaderInfo());
+  Swizzle src0Swizzle = op.getSrc(0u).getSwizzle(getShaderInfo());
+  Swizzle src1Swizzle = op.getSrc(1u).getSwizzle(getShaderInfo());
 
-  auto absSrc0 = builder.add(ir::Op::FAbs(scalarType, src0Val));
-  auto val = builder.add(ir::Op::FPowLegacy(scalarType, absSrc0, src1Val));
+  /* The swizzles must be replicate swizzles. */
+  dxbc_spv_assert(src0Swizzle.x() == src0Swizzle.y() && src0Swizzle.y() == src0Swizzle.z() && src0Swizzle.z() == src0Swizzle.w());
+  dxbc_spv_assert(src1Swizzle.x() == src1Swizzle.y() && src1Swizzle.y() == src1Swizzle.z() && src1Swizzle.z() == src1Swizzle.w());
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, scalarType);
+  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), ComponentBit::eX, scalarType);
+
+  auto absSrc0 = builder.add(ir::Op::FAbs(scalarType, src0));
+  auto val = builder.add(ir::Op::FPowLegacy(scalarType, absSrc0, src1));
   auto vec = broadcastScalar(builder, val, writeMask);
   return storeDstModifiedPredicated(builder, op, dst, vec);
 }
@@ -1107,33 +1126,29 @@ bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
 
   auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
-  auto src1 = op.getSrc(1u);
-  auto src2 = op.getSrc(2u);
-
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
 
-  auto src0Val = loadSrcModified(builder, op, src0, writeMask, scalarType);
-  auto src1Val = loadSrcModified(builder, op, src1, writeMask, scalarType);
-  auto src2Val = loadSrcModified(builder, op, src2, writeMask, scalarType);
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
+  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
+  auto src2 = loadSrcModified(builder, op, op.getSrc(2u), writeMask, scalarType);
 
   auto type = makeVectorType(scalarType, writeMask);
 
   ir::SsaDef result;
   if (op.getOpCode() == OpCode::eLrp) {
     /* dest = src0 * (src1 - src2) + src2 */
-    result = builder.add(ir::Op::FSub(type, src1Val, src2Val));
-    result = builder.add(ir::Op::FAdd(type, result, src2Val));
-    result = builder.add(ir::Op::FMulLegacy(type, src0Val, result));
+    result = builder.add(ir::Op::FSub(type, src1, src2));
+    result = builder.add(ir::Op::FAdd(type, result, src2));
+    result = builder.add(ir::Op::FMulLegacy(type, src0, result));
   } else if (op.getOpCode() == OpCode::eCmp || op.getOpCode() == OpCode::eCnd) {
     if (util::popcnt(uint8_t(writeMask)) > 1u) {
       std::array<ir::SsaDef, 4u> components = { };
       for (auto c : writeMask) {
         auto component = componentFromBit(c);
-        auto conditionComponent = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(uint32_t(component))));
-        auto option1Component = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(uint32_t(component))));
-        auto option2Component = builder.add(ir::Op::CompositeExtract(scalarType, src2Val, builder.makeConstant(uint32_t(component))));
+        auto conditionComponent = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(uint32_t(component))));
+        auto option1Component = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(uint32_t(component))));
+        auto option2Component = builder.add(ir::Op::CompositeExtract(scalarType, src2, builder.makeConstant(uint32_t(component))));
         ir::SsaDef conditionBool;
         if (op.getOpCode() == OpCode::eCmp) {
           /* Cmp compares to 0.0 */
@@ -1149,12 +1164,12 @@ bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
         ir::SsaDef conditionBool;
         if (op.getOpCode() == OpCode::eCmp) {
           /* Cmp compares to 0.0 */
-          conditionBool = builder.add(ir::Op::FGe(ir::ScalarType::eBool, src0Val, makeTypedConstant(builder, scalarType, 0.0f)));
+          conditionBool = builder.add(ir::Op::FGe(ir::ScalarType::eBool, src0, makeTypedConstant(builder, scalarType, 0.0f)));
         } else {
           /* Cnd compares to 0.5 */
-          conditionBool = builder.add(ir::Op::FGt(ir::ScalarType::eBool, src0Val, makeTypedConstant(builder, scalarType, 0.5f)));
+          conditionBool = builder.add(ir::Op::FGt(ir::ScalarType::eBool, src0, makeTypedConstant(builder, scalarType, 0.5f)));
         }
-      result = builder.add(ir::Op::Select(scalarType, conditionBool, src1Val, src2Val));
+      result = builder.add(ir::Op::Select(scalarType, conditionBool, src1, src2));
     }
   } else {
     Logger::err("OpCode ", op.getOpCode(), " is not supported by handleSelect.");
@@ -1167,43 +1182,28 @@ bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
 
 
 bool Converter::handleBem(ir::Builder& builder, const Instruction& op) {
+  /* Apply a fake bump environment-map transform. */
   dxbc_spv_assert(op.getSrcCount() == 2u);
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(!!m_psSharedData);
   auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
-  auto src1 = op.getSrc(1u);
+  /* Dst register index determines the bumpmapping stage index. */
   auto stageIdx = dst.getIndex();
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
-  /* No point trying to use partial precision (FP16) here because we're loading the bump env matrices as FP32 anyway. */
-  auto src0Val = loadSrcModified(builder, op, src0, writeMask, ir::ScalarType::eF32);
-  auto src1Val = loadSrcModified(builder, op, src1, writeMask, ir::ScalarType::eF32);
-
-  auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
-  std::array<ir::SsaDef, 2> components = {};
-  for (uint32_t i = 0u; i < components.size(); i++) {
-    auto bumpEnvMat0 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 1u), 16u));
-    auto bumpEnvMat1 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 2u), 8u));
-
-    auto src1r = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src1Val, builder.makeConstant(0u)));
-    auto bumped0 = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, bumpEnvMat0, src1r));
-    auto src1g = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src1Val, builder.makeConstant(1u)));
-    auto bumped1 = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, bumpEnvMat1, src1g));
-    auto bumpedSum = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, bumped0, bumped1));
-    auto src0Component = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src0Val, builder.makeConstant(i)));
-    components[i] = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, src0Component, bumpedSum));
-  }
-
+  /* Write mask must be .xy */
   dxbc_spv_assert(writeMask == WriteMask(ComponentBit::eX | ComponentBit::eY));
-  auto result = buildVector(builder, ir::ScalarType::eF32, components.size(), components.data());
+  /* No point trying to use partial precision (FP16) here because we're loading the bump env matrices as FP32 anyway. */
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, ir::ScalarType::eF32);
+  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, ir::ScalarType::eF32);
+
+  auto result = applyBumpMapping(builder, stageIdx, src0, src1);
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
 
 bool Converter::handleDef(ir::Builder& builder, const Instruction& op) {
   /* def instructions define so-called immediate constants.
-   * Immediate instructions take precedence over constants set using API methods.
-   */
+   * Immediate instructions take precedence over constants set using API methods. */
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.hasImm());
   auto dst = op.getDst();
@@ -1216,33 +1216,38 @@ bool Converter::handleDef(ir::Builder& builder, const Instruction& op) {
 
 
 bool Converter::handleDst(ir::Builder& builder, const Instruction& op) {
+  /* Calculates a distance vector */
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.getSrcCount() == 2u);
   auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
-  auto src1 = op.getSrc(1u);
-
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
 
-  auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
-  auto src1Val = loadSrcModified(builder, op, src1, ComponentBit::eAll, scalarType);
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eAll, scalarType);
+  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), ComponentBit::eAll, scalarType);
   util::small_vector<ir::SsaDef, 4u> components = { };
-  if (writeMask & ComponentBit::eX)
+
+  if (writeMask & ComponentBit::eX) {
+    /* dst.x = 1.0 */
     components.push_back(makeTypedConstant(builder, scalarType, 1.0f));
+  }
   if (writeMask & ComponentBit::eY) {
-    auto src0y = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(1u)));
-    auto src1y = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(1u)));
+    /* dst.y = src0.y * src1.y */
+    auto src0y = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(1u)));
+    auto src1y = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(1u)));
     components.push_back(builder.add(ir::Op::FMulLegacy(scalarType, src0y, src1y)));
   }
   if (writeMask & ComponentBit::eZ) {
-    auto src0z = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(2u)));
+    /* dst.z = src0.z */
+    auto src0z = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(2u)));
     components.push_back(src0z);
   }
   if (writeMask & ComponentBit::eW) {
-    auto src1w = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(3u)));
+    /* dst.w = src1.w */
+    auto src1w = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(3u)));
     components.push_back(src1w);
   }
+
   auto result = buildVector(builder, scalarType, components.size(), components.data());
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
@@ -1252,19 +1257,17 @@ bool Converter::handleDerivatives(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.getSrcCount() == 1u);
   auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
-
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
 
-  auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eAll, scalarType);
 
   auto type = makeVectorType(scalarType, writeMask);
   if (op.getOpCode() == OpCode::eDsX) {
-    builder.add(ir::Op::DerivX(type, src0Val, ir::DerivativeMode::eDefault));
+    builder.add(ir::Op::DerivX(type, src0, ir::DerivativeMode::eDefault));
     return true;
   } else if (op.getOpCode() == OpCode::eDsY) {
-    builder.add(ir::Op::DerivY(type, src0Val, ir::DerivativeMode::eDefault));
+    builder.add(ir::Op::DerivY(type, src0, ir::DerivativeMode::eDefault));
     return true;
   } else {
     dxbc_spv_unreachable();
@@ -1285,21 +1288,18 @@ bool Converter::handleCrs(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.getSrcCount() == 2u);
   auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
-  auto src1 = op.getSrc(1u);
-
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
 
-  auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ, scalarType);
-  auto src1Val = loadSrcModified(builder, op, src1, ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ, scalarType);
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ, scalarType);
+  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ, scalarType);
 
-  auto src0x = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(0u)));
-  auto src0y = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(1u)));
-  auto src0z = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(2u)));
-  auto src1x = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(0u)));
-  auto src1y = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(1u)));
-  auto src1z = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(2u)));
+  auto src0x = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(0u)));
+  auto src0y = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(1u)));
+  auto src0z = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(2u)));
+  auto src1x = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(0u)));
+  auto src1y = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(1u)));
+  auto src1z = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(2u)));
 
   util::small_vector<ir::SsaDef, 4u> components;
   if (writeMask & ComponentBit::eX) {
@@ -1323,25 +1323,24 @@ bool Converter::handleCrs(ir::Builder& builder, const Instruction& op) {
 
 
 bool Converter::handleSetP(ir::Builder& builder, const Instruction& op) {
+  /* Assigns the result of a comparison to the predicate register */
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.getSrcCount() == 2u);
   auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
-  auto src1 = op.getSrc(1u);
-
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
 
-  auto src0Val = loadSrcModified(builder, op, src0, writeMask, scalarType);
-  auto src1Val = loadSrcModified(builder, op, src1, writeMask, scalarType);
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
+  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
 
   util::small_vector<ir::SsaDef, 4u> components;
   for (auto c : writeMask) {
-    ir::SsaDef src0c = src0Val;
-    ir::SsaDef src1c = src1Val;
+    /* The comparison is done for each component separately. */
+    ir::SsaDef src0c = src0;
+    ir::SsaDef src1c = src1;
     if (util::popcnt(uint8_t(writeMask)) > 1u) {
-      src0c = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(components.size())));
-      src1c = builder.add(ir::Op::CompositeExtract(scalarType, src1Val, builder.makeConstant(components.size())));
+      src0c = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(components.size())));
+      src1c = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(components.size())));
     }
 
     auto comparison = emitComparison(builder, src0c, src1c, op.getComparisonMode());
@@ -1358,41 +1357,21 @@ bool Converter::handleSgn(ir::Builder& builder, const Instruction& op) {
   /* Sgn takes 3 src operands but 2 of them only hold intermediate results. */
   dxbc_spv_assert(op.getSrcCount() >= 1u);
   auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
-
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   bool isScalar = util::popcnt(uint8_t(writeMask)) == 1u;
 
-  auto src0Val = loadSrcModified(builder, op, src0, writeMask, scalarType);
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
 
   util::small_vector<ir::SsaDef, 4u> components;
-  if (op.getOpCode() == OpCode::eSgn) {
-    for (auto c : writeMask) {
-      auto srcComponent = src0Val;
-      if (!isScalar) {
-        srcComponent = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(components.size())));
-      }
-      components.push_back(builder.add(ir::Op::FSgn(scalarType, srcComponent)));
+  for (auto c : writeMask) {
+    uint32_t componentIndex = uint32_t(util::componentFromBit(c));
+    auto srcComponent = src0;
+    if (!isScalar) {
+      /* Done for each component individually */
+      srcComponent = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(componentIndex)));
     }
-  } else if (op.getOpCode() == OpCode::eAbs) {
-    /*
-     * dest.x = abs(src.x)
-     * dest.y = abs(src.y)
-     * dest.z = abs(src.z)
-     * dest.w = abs(src.w)
-     */
-    for (auto c : writeMask) {
-      auto srcComponent = src0Val;
-      if (!isScalar) {
-        srcComponent = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(components.size())));
-      }
-      components.push_back(builder.add(ir::Op::FAbs(scalarType, srcComponent)));
-    }
-  } else {
-    Logger::err("OpCode ", op.getOpCode(), " is not supported by handleSgn.");
-    dxbc_spv_unreachable();
-    return false;
+    components.push_back(builder.add(ir::Op::FSgn(scalarType, srcComponent)));
   }
 
   auto result = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
@@ -1400,65 +1379,69 @@ bool Converter::handleSgn(ir::Builder& builder, const Instruction& op) {
 }
 
 
-bool Converter::handleExp(ir::Builder& builder, const Instruction& op) {
+bool Converter::handleAbs(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(op.getSrcCount() == 1u);
   auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
-
-  auto info = m_parser.getShaderInfo();
-  WriteMask writeMask = dst.getWriteMask(info);
+  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   bool isScalar = util::popcnt(uint8_t(writeMask)) == 1u;
 
-  auto src0Val = loadSrcModified(builder, op, src0, writeMask, scalarType);
-  auto v = src0Val;
-  if (!isScalar) {
-    src0Val = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(0u)));
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
+
+  util::small_vector<ir::SsaDef, 4u> components;
+  for (auto c : writeMask) {
+    uint32_t componentIndex = uint32_t(util::componentFromBit(c));
+    auto srcComponent = src0;
+    if (!isScalar) {
+      /* Done for each component individually */
+      srcComponent = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(componentIndex)));
+    }
+    components.push_back(builder.add(ir::Op::FAbs(scalarType, srcComponent)));
   }
+
+  auto result = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
+  return storeDstModifiedPredicated(builder, op, dst, result);
+}
+
+
+bool Converter::handleExpP(ir::Builder& builder, const Instruction& op) {
+  dxbc_spv_assert(op.hasDst());
+  dxbc_spv_assert(op.getSrcCount() == 1u);
+  auto dst = op.getDst();
+  auto info = m_parser.getShaderInfo();
+  WriteMask writeMask = dst.getWriteMask(info);
+  /* ExpP is the partial precision variant. Always use MinF16 here. */
+  auto scalarType = ir::ScalarType::eMinF16;
+
+  /* src0 has to have a replicate swizzle, so just load x */
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, scalarType);
 
   util::small_vector<ir::SsaDef, 4u> components;
   if (info.getVersion().first >= 2u) {
     for (auto _ : writeMask) {
-      components.push_back(builder.add(ir::Op::FExp2(scalarType, v)));
+      components.push_back(builder.add(ir::Op::FExp2(scalarType, src0)));
     }
   } else {
-    if (writeMask & ComponentBit::eX)
-      components.push_back(builder.add(ir::Op::FExp2(scalarType, v)));
-    if (writeMask & ComponentBit::eY)
-      components.push_back(builder.add(ir::Op::FSub(scalarType, v, builder.add(ir::Op::FRound(scalarType, v, ir::RoundMode::eNegativeInf)))));
-    if (writeMask & ComponentBit::eZ)
-      components.push_back(builder.add(ir::Op::FExp2(scalarType, v)));
-    if (writeMask & ComponentBit::eW)
+    if (writeMask & ComponentBit::eX) {
+      /* dst.x = pow(2.0, floor(src0)) */
+      components.push_back(builder.add(ir::Op::FExp2(scalarType, src0)));
+    }
+    if (writeMask & ComponentBit::eY) {
+      /* dst.y = src0 - floor(src0) */
+      components.push_back(builder.add(ir::Op::FSub(scalarType, src0, builder.add(ir::Op::FRound(scalarType, src0, ir::RoundMode::eNegativeInf)))));
+    }
+    if (writeMask & ComponentBit::eZ) {
+      /* dst.z = pow(2.0, floor(src0)) */
+      components.push_back(builder.add(ir::Op::FExp2(scalarType, src0)));
+    }
+    if (writeMask & ComponentBit::eW) {
+      /* dst.w 1.0 */
       components.push_back(makeTypedConstant(builder, scalarType, 1.0f));
+    }
   }
 
   auto result = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
-  return storeDstModifiedPredicated(builder, op, dst, result);
-}
-
-
-bool Converter::handleLog(ir::Builder& builder, const Instruction& op) {
-  dxbc_spv_assert(op.hasDst());
-  dxbc_spv_assert(op.getSrcCount() == 1u);
-  auto dst = op.getDst();
-  auto src0 = op.getSrc(0u);
-
-  auto info = m_parser.getShaderInfo();
-  WriteMask writeMask = dst.getWriteMask(info);
-  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
-  bool isScalar = util::popcnt(uint8_t(writeMask)) == 1u;
-
-  auto src0Val = loadSrcModified(builder, op, src0, writeMask, scalarType);
-  auto v = src0Val;
-  if (!isScalar) {
-    src0Val = builder.add(ir::Op::CompositeExtract(scalarType, src0Val, builder.makeConstant(0u)));
-  }
-
-  v = builder.add(ir::Op::FAbs(scalarType, v));
-  auto res = builder.add(ir::Op::FLog2(scalarType, v));
-
-  auto result = broadcastScalar(builder, res, writeMask);
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
@@ -1509,12 +1492,12 @@ bool Converter::handleEndIf(ir::Builder& builder, const Instruction& op) {
 
 
 bool Converter::handleLoop(ir::Builder& builder, const Instruction& op) {
+  /* For-Loop with a loop counter that can be used for relative addressing */
   dxbc_spv_assert(op.getSrcCount() >= 1u);
-  auto src0 = op.getSrc(0u);
-  auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ, ir::ScalarType::eI32);
-  auto iterationCount = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eI32, src0Val, builder.makeConstant(0u)));
-  auto initialValue = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eI32, src0Val, builder.makeConstant(1u)));
-  auto stepSize = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eI32, src0Val, builder.makeConstant(2u)));
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ, ir::ScalarType::eI32);
+  auto iterationCount = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eI32, src0, builder.makeConstant(0u)));
+  auto initialValue = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eI32, src0, builder.makeConstant(1u)));
+  auto stepSize = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eI32, src0, builder.makeConstant(2u)));
 
   auto loopCounter =  builder.add(ir::Op::DclTmp(ir::ScalarType::eI32, m_entryPoint.def));
   builder.add(ir::Op::TmpStore(loopCounter, initialValue));
@@ -1556,9 +1539,9 @@ bool Converter::handleEndLoop(ir::Builder &builder, const Instruction &op) {
 
 
 bool Converter::handleRep(ir::Builder& builder, const Instruction& op) {
+  /* Loop that does n repetitions (src1) and doesn't expose the current counter to the application. */
   dxbc_spv_assert(op.getSrcCount() >= 1u);
-  auto src0 = op.getSrc(0u);
-  auto iterationCount = loadSrcModified(builder, op, src0, ComponentBit::eX, ir::ScalarType::eU32);
+  auto iterationCount = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, ir::ScalarType::eU32);
 
   auto loopCounter =  builder.add(ir::Op::DclTmp(ir::ScalarType::eU32, m_entryPoint.def));
   builder.add(ir::Op::TmpStore(loopCounter, iterationCount));
@@ -1601,12 +1584,15 @@ bool Converter::handleBreak(ir::Builder& builder, const Instruction& op) {
     return logOpError(op, "'Break' occurred outside of 'Loop' or 'Rep'.");
 
   if (op.getOpCode() == OpCode::eBreak) {
+    /* Break unconditionally */
 
     builder.add(ir::Op::ScopedLoopBreak(construct->def));
     return true;
 
   } else if (op.getOpCode() == OpCode::eBreakP) {
+    /* Break if the predicate is true */
 
+    /* It **must** have a replicate swizzle, so just load X. */
     auto cond = m_regFile.emitPredicateLoad(builder, op.getDst().getPredicateSwizzle(), ComponentBit::eX);
     auto breakIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), cond));
     builder.add(ir::Op::ScopedLoopBreak(construct->def));
@@ -1615,12 +1601,11 @@ bool Converter::handleBreak(ir::Builder& builder, const Instruction& op) {
     return true;
 
   } else if (op.getOpCode() == OpCode::eBreakC) {
+    /* Break based on the comparison */
 
-    auto src0 = op.getSrc(0u);
-    auto src1 = op.getSrc(1u);
-    auto src0Val = loadSrcModified(builder, op, src0, ComponentBit::eX, ir::ScalarType::eF32);
-    auto src1Val = loadSrcModified(builder, op, src1, ComponentBit::eX, ir::ScalarType::eF32);
-    auto cond = emitComparison(builder, src0Val, src1Val, op.getComparisonMode());
+    auto src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, ir::ScalarType::eF32);
+    auto src1 = loadSrcModified(builder, op, op.getSrc(1u), ComponentBit::eX, ir::ScalarType::eF32);
+    auto cond = emitComparison(builder, src0, src1, op.getComparisonMode());
     auto breakIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), cond));
     builder.add(ir::Op::ScopedLoopBreak(construct->def));
     auto breakEndIf = builder.add(ir::Op::ScopedEndIf(breakIf));
@@ -1687,16 +1672,16 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
 
   auto mod = operand.getModifier();
   switch (mod) {
-    case OperandModifier::eAbs: // abs(r)
-    case OperandModifier::eAbsNeg: // -abs(r)
+    case OperandModifier::eAbs: /* abs(r) */
+    case OperandModifier::eAbsNeg: /* -abs(r) */
       modifiedDef = builder.add(ir::Op::FAbs(type, modifiedDef));
       if (mod == OperandModifier::eAbsNeg) {
         modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
       }
       break;
 
-    case OperandModifier::eBias: // r - 0.5
-    case OperandModifier::eBiasNeg: { // -(r - 0.5)
+    case OperandModifier::eBias: /* r - 0.5 */
+    case OperandModifier::eBiasNeg: { /* -(r - 0.5) */
       auto halfConstOp = ir::Op(ir::OpCode::eConstant, type);
       for (uint32_t i = 0u; i < type.getVectorSize(); i++) {
         halfConstOp.addOperand(0.5f);
@@ -1707,8 +1692,8 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
         modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
     } break;
 
-    case OperandModifier::eSign: // fma(r, 2.0, -1.0)
-    case OperandModifier::eSignNeg: { // -fma(r, 2.0, -1.0)
+    case OperandModifier::eSign: /* fma(r, 2.0, -1.0) */
+    case OperandModifier::eSignNeg: { /* -fma(r, 2.0, -1.0) */
       auto twoConstOp = ir::Op(ir::OpCode::eConstant, type);
       auto minusOneConstOp = ir::Op(ir::OpCode::eConstant, type);
       for (uint32_t i = 0u; i < type.getVectorSize(); i++) {
@@ -1731,8 +1716,8 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
       modifiedDef = builder.add(ir::Op::FSub(type, oneConst, modifiedDef));
     } break;
 
-    case OperandModifier::eX2: // r * 2.0
-    case OperandModifier::eX2Neg: { // -(r * 2.0)
+    case OperandModifier::eX2: /* r * 2.0 */
+    case OperandModifier::eX2Neg: { /* -(r * 2.0) */
       auto twoConstOp = ir::Op(ir::OpCode::eConstant, type);
       for (uint32_t i = 0u; i < type.getVectorSize(); i++) {
           twoConstOp.addOperand(2.0f);
@@ -1746,9 +1731,9 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
 
     case OperandModifier::eDz:
     case OperandModifier::eDw: {
-      // The Dz and Dw modifiers can only be applied to SM1.4 TexLd & TexCrd instructions.
-      // Both of those only accept a texture coord register as argument and that is always
-      // a float vec4.
+      /* The Dz and Dw modifiers can only be applied to SM1.4 TexLd & TexCrd instructions.
+       * Both of those only accept a texture coord register as argument and that is always
+       * a float vec4. */
       uint32_t fullVec4ComponentIndex = mod == OperandModifier::eDz ? 2u : 3u;
       uint32_t componentIndex = 0u;
       for (auto c : mask) {
@@ -1842,13 +1827,13 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
       break;
 
     case RegisterType::eAddr:
-    // case RegisterType::eTexture: Same Value
+    /* case RegisterType::eTexture: Same Value */
       if (getShaderInfo().getType() == ShaderType::eVertex)
         loadDef = m_regFile.emitTempLoad(builder,
           operand.getIndex(),
           operand.getSwizzle(getShaderInfo()),
           mask,
-          type); // RegisterType::eAddr
+          type); /* RegisterType::eAddr */
       else
         loadDef = m_ioMap.emitLoad(builder, op, operand, mask, swizzle, type); // RegisterType::eTexture
       break;
@@ -1891,10 +1876,10 @@ ir::SsaDef Converter::loadSrcModified(ir::Builder& builder, const Instruction& o
   Swizzle swizzle = operand.getSwizzle(getShaderInfo());
   Swizzle originalSwizzle = swizzle;
   WriteMask originalMask = mask;
-  // If the modifier divides by one of the components, that component needs to be loaded.
+  /* If the modifier divides by one of the components, that component needs to be loaded. */
 
-  // Dz & Dw need to get applied before the swizzle!
-  // So if those are used, we load the whole vector and swizzle afterward.
+  /* Dz & Dw need to get applied before the swizzle!
+   * So if those are used, we load the whole vector and swizzle afterward. */
   bool hasPreSwizzleModifier = operand.getModifier() == OperandModifier::eDz || operand.getModifier() == OperandModifier::eDw;
   if (hasPreSwizzleModifier) {
     mask = WriteMask(ComponentBit::eAll);
@@ -1943,26 +1928,31 @@ bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Oper
 
 bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef value) {
   value = applyDstModifiers(builder, value, op, operand);
+
   ir::SsaDef predicate = ir::SsaDef();
   if (operand.isPredicated()) {
+    /* Make sure we're not trying to load more predicate components than we can write. */
     WriteMask writeMask = operand.getWriteMask(getShaderInfo());
     writeMask = fixupWriteMask(builder, writeMask, value);
 
+    /* Load predicate */
     predicate = m_regFile.emitPredicateLoad(builder, operand.getPredicateSwizzle(), writeMask);
+    /* Apply predicate modifier (per component) if necessary */
     if (operand.getPredicateModifier() == OperandModifier::eNot) {
-      std::array<ir::SsaDef, 4u> components = { };
+      util::small_vector<ir::SsaDef, 4u> components = { };
       for (auto c : writeMask) {
         auto component = componentFromBit(c);
         auto predicateComponent = util::popcnt(uint8_t(writeMask)) > 1u
           ? builder.add(ir::Op::CompositeExtract(ir::ScalarType::eBool, predicate, builder.makeConstant(uint32_t(component))))
           : predicate;
-        components[uint8_t(component)] = builder.add(ir::Op::BNot(ir::ScalarType::eBool, predicateComponent));
+        components.push_back(builder.add(ir::Op::BNot(ir::ScalarType::eBool, predicateComponent)));
       }
-      predicate = composite(builder, makeVectorType(ir::ScalarType::eBool, writeMask), components.data(), Swizzle::identity(), writeMask);
+      predicate = buildVector(builder, ir::ScalarType::eBool, components.size(), components.data());
     } else if (operand.getPredicateModifier() != OperandModifier::eNone) {
       Logger::log(LogLevel::eError, "Unknown predicate modifier: ", uint32_t(operand.getPredicateModifier()));
     }
   }
+
   return storeDst(builder, op, operand, predicate, value);
 }
 
@@ -2141,6 +2131,33 @@ ir::SsaDef Converter::normalizeVector(ir::Builder& builder, ir::SsaDef def) {
   return builder.add(ir::Op::FDiv(type, def, broadcastScalar(builder, length, WriteMask((1u << vecSize) - 1u))));
 }
 
+
+ir::SsaDef Converter::applyBumpMapping(ir::Builder& builder, uint32_t stageIdx, ir::SsaDef src0, ir::SsaDef src1) {
+  /*
+   * dst.x = src0.x + D3DTSS_BUMPENVMAT00(stage n) * src1.x
+  *                 + D3DTSS_BUMPENVMAT10(stage n) * src1.y
+  *
+   * dst.y = src0.y + D3DTSS_BUMPENVMAT01(stage n) * src1.x
+   *                + D3DTSS_BUMPENVMAT11(stage n) * src1.y
+   */
+
+  auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
+  std::array<ir::SsaDef, 2> components = {};
+  for (uint32_t i = 0u; i < components.size(); i++) {
+    /* Load bump matrix */
+    auto bumpEnvMat0 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 1u), 16u));
+    auto bumpEnvMat1 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 2u), 8u));
+
+    auto src1r = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src1, builder.makeConstant(0u)));
+    auto bumped0 = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, bumpEnvMat0, src1r));
+    auto src1g = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src1, builder.makeConstant(1u)));
+    auto bumped1 = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, bumpEnvMat1, src1g));
+    auto bumpedSum = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, bumped0, bumped1));
+    auto src0Component = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src0, builder.makeConstant(i)));
+    components[i] = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, src0Component, bumpedSum));
+  }
+  return buildVector(builder, ir::ScalarType::eF32, components.size(), components.data());
+}
 
 
 void Converter::logOp(LogLevel severity, const Instruction& op) const {
