@@ -419,7 +419,7 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
 
       ir::SsaDef roundedValue;
       if (getShaderInfo().getVersion().first < 2 && getShaderInfo().getVersion().second < 2)
-        roundedValue = builder.add(ir::Op::FRound(scalarType, scalarValue, ir::RoundMode::eZero));
+        roundedValue = builder.add(ir::Op::FRound(scalarType, scalarValue, ir::RoundMode::eNegativeInf));
       else
         roundedValue = builder.add(ir::Op::FRound(scalarType, scalarValue, ir::RoundMode::eNearestEven));
 
