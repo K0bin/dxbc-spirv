@@ -185,6 +185,7 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
 
     case OpCode::eTexKill:
     case OpCode::eTexDepth:
+      // TODO
       break;
 
     case OpCode::eLrp:
@@ -907,8 +908,10 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         auto nDotN = builder.add(ir::Op::FDotLegacy(scalarType, normal, normal));
         auto dotDiv = builder.add(ir::Op::FDiv(scalarType, nDotE, nDotN));
         auto twoDotDiv = builder.add(ir::Op::FMulLegacy(scalarType, makeTypedConstant(builder, scalarType, 2.0f), dotDiv));
-        result = builder.add(ir::Op::FMulLegacy(vectorType, result, broadcastScalar(builder, twoDotDiv, util::makeWriteMaskForComponents(3u))));
-        result = builder.add(ir::Op::FSub(vectorType, result, eyeRay));
+        auto texCoord = builder.add(ir::Op::FMulLegacy(vectorType, result, broadcastScalar(builder, twoDotDiv, util::makeWriteMaskForComponents(3u))));
+        texCoord = builder.add(ir::Op::FSub(vectorType, result, eyeRay));
+
+        result = m_resources.emitSample(builder, dst.getIndex(), texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
       }
     } break;
 
