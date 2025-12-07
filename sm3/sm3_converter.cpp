@@ -1052,7 +1052,7 @@ bool Converter::handleNrm(ir::Builder& builder, const Instruction& op) {
 
 bool Converter::handleSinCos(ir::Builder& builder, const Instruction& op) {
   uint32_t majorVersion = getShaderInfo().getVersion().first;
-  dxbc_spv_assert((majorVersion >= 3u && op.getSrcCount() == 2u) || op.getSrcCount() == 3u);
+  dxbc_spv_assert((majorVersion >= 3u && op.getSrcCount() == 1u) || op.getSrcCount() == 3u);
   dxbc_spv_assert(op.hasDst());
 
   auto dst = op.getDst();
