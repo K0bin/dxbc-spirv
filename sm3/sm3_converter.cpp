@@ -1467,6 +1467,8 @@ bool Converter::handleLoop(ir::Builder& builder, const Instruction& op) {
   auto loopCounter =  builder.add(ir::Op::DclTmp(ir::ScalarType::eI32, m_entryPoint.def));
   builder.add(ir::Op::TmpStore(loopCounter, initialValue));
 
+  auto loopCounterBackup = m_regFile.emitLoopCounterLoad(builder);
+
   auto loopDef = builder.add(ir::Op::ScopedLoop(ir::SsaDef()));
   auto loop = m_controlFlow.push(loopDef);
 
@@ -1476,6 +1478,7 @@ bool Converter::handleLoop(ir::Builder& builder, const Instruction& op) {
   auto breakCondition = builder.add(ir::Op::IEq(ir::ScalarType::eI32, loopCounterVal, finalCounterValue));
   auto breakIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), breakCondition));
   builder.add(ir::Op::ScopedLoopBreak(loopDef));
+  m_regFile.emitLoopCounterStore(builder, loopCounterBackup);
   auto breakEndIf = builder.add(ir::Op::ScopedEndIf(breakIf));
   builder.rewriteOp(breakIf, ir::Op(builder.getOp(breakIf)).setOperand(0u, breakEndIf));
 
