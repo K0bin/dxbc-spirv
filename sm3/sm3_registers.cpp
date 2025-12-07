@@ -56,18 +56,12 @@ ir::SsaDef RegisterFile::getOrDeclareTemp(ir::Builder& builder, uint32_t index, 
 
 ir::SsaDef RegisterFile::emitTempLoad(
   ir::Builder& builder,
-  const Operand& operand,
+  uint32_t regIndex,
+  Swizzle swizzle,
   WriteMask componentMask,
   ir::ScalarType type
 ) {
-  /* The register types handled here do not support relative addressing. */
-  dxbc_spv_assert(!operand.hasRelativeAddressing());
-  dxbc_spv_assert(operand.getRegisterType() == RegisterType::eTemp);
-
-  auto swizzle = operand.getSwizzle(m_converter.getShaderInfo());
   auto returnType = m_converter.makeVectorType(type, componentMask);
-
-  auto regIndex = operand.getIndex();
 
   std::array<ir::SsaDef, 4u> components = { };
 

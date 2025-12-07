@@ -184,9 +184,10 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
       return handleTextureSample(builder, op);
 
     case OpCode::eTexKill:
+      return handleTexKill(builder, op);
+
     case OpCode::eTexDepth:
-      // TODO
-      break;
+      return handleTexDepth(builder, op);
 
     case OpCode::eLrp:
     case OpCode::eCmp:
@@ -986,6 +987,54 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
 }
 
 
+bool Converter::handleTexDepth(ir::Builder& builder, const Instruction& op) {
+  /* It always uses temporary register r5. */
+  auto val = m_regFile.emitTempLoad(builder, 5u, Swizzle::identity(), ComponentBit::eX | ComponentBit::eY, ir::ScalarType::eF32);
+  auto r = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, val, builder.makeConstant(0u)));
+  auto g = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, val, builder.makeConstant(1u)));
+  /* depth = r5.r / r5.g */
+  auto depth = builder.add(ir::Op::FDiv(ir::ScalarType::eF32, r, g));
+  /* if r5.g = 0, the result of r5.r / r5.g = 1.0. */
+  auto cond = builder.add(ir::Op::FNe(ir::ScalarType::eF32, g, builder.makeConstant(0.0f)));
+  depth = builder.add(ir::Op::Select(ir::ScalarType::eF32, cond, depth, builder.makeConstant(1.0f)));
+  return m_ioMap.emitDepthStore(builder, op, depth);
+}
+
+
+bool Converter::handleTexKill(ir::Builder& builder, const Instruction& op) {
+  /* Demotes if any of the first 3 components are less than 0.0. */
+  dxbc_spv_assert(op.hasDst());
+  auto writeMask = op.getDst().getWriteMask(getShaderInfo());
+  writeMask &= ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ;
+  auto dst = m_ioMap.emitTexCoordLoad(builder,
+    op,
+    op.getDst().getIndex(),
+    writeMask,
+    Swizzle::identity(),
+    ir::ScalarType::eF32);
+
+  ir::SsaDef cond = { };
+
+  for (auto c : writeMask) {
+    ir::SsaDef texCoordComponent = dst;
+    if (util::popcnt(uint8_t(writeMask)) > 1u)
+      texCoordComponent = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, dst, builder.makeConstant(uint32_t(util::componentFromBit(c)))));
+
+    auto componentCond = builder.add(ir::Op::FLt(ir::ScalarType::eBool, texCoordComponent, builder.makeConstant(0.0f)));
+    if (!cond)
+      cond = componentCond;
+    else
+      cond = builder.add(ir::Op::BOr(ir::ScalarType::eBool, cond, componentCond));
+  }
+
+  auto ifDef = builder.add(ir::Op::ScopedIf(ir::SsaDef(), cond));
+  builder.add(ir::Op::Demote());
+  auto endIf = builder.add(ir::Op::ScopedEndIf(ifDef));
+  builder.rewriteOp(ifDef, ir::Op(builder.getOp(ifDef)).setOperand(0u, endIf));
+  return true;
+}
+
+
 bool Converter::handleNrm(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.getSrcCount() == 1u);
   dxbc_spv_assert(op.hasDst());
@@ -1777,6 +1826,14 @@ ir::SsaDef Converter::applyDstModifiers(ir::Builder& builder, ir::SsaDef def, co
 ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const Operand& operand, WriteMask mask, Swizzle swizzle, ir::ScalarType type) {
   auto loadDef = ir::SsaDef();
 
+  dxbc_spv_assert(!operand.hasRelativeAddressing()
+    || operand.getRegisterType() == RegisterType::eInput
+    || operand.getRegisterType() == RegisterType::eConst
+    || operand.getRegisterType() == RegisterType::eConst2
+    || operand.getRegisterType() == RegisterType::eConst3
+    || operand.getRegisterType() == RegisterType::eConst4
+    || (operand.getRegisterType() == RegisterType::eOutput && getShaderInfo().getType() == ShaderType::eVertex));
+
   switch (operand.getRegisterType()) {
     case RegisterType::eInput:
     case RegisterType::ePixelTexCoord:
@@ -1787,7 +1844,11 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
     case RegisterType::eAddr:
     // case RegisterType::eTexture: Same Value
       if (getShaderInfo().getType() == ShaderType::eVertex)
-        loadDef = m_regFile.emitTempLoad(builder, operand, mask, type); // RegisterType::eAddr
+        loadDef = m_regFile.emitTempLoad(builder,
+          operand.getIndex(),
+          operand.getSwizzle(getShaderInfo()),
+          mask,
+          type); // RegisterType::eAddr
       else
         loadDef = m_ioMap.emitLoad(builder, op, operand, mask, swizzle, type); // RegisterType::eTexture
       break;
@@ -1795,7 +1856,11 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
     case RegisterType::eTemp:
     case RegisterType::eLoop:
     case RegisterType::ePredicate:
-      loadDef = m_regFile.emitTempLoad(builder, operand, mask, type);
+      loadDef = m_regFile.emitTempLoad(builder,
+        operand.getIndex(),
+        operand.getSwizzle(getShaderInfo()),
+        mask,
+        type);
       break;
 
 

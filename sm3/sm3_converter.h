@@ -132,6 +132,10 @@ private:
 
   bool handleTextureSample(ir::Builder& builder, const Instruction& op);
 
+  bool handleTexDepth(ir::Builder& builder, const Instruction& op);
+
+  bool handleTexKill(ir::Builder& builder, const Instruction& op);
+
   bool handleSelect(ir::Builder& builder, const Instruction& op);
 
   bool handleNrm(ir::Builder& builder, const Instruction& op);
