@@ -25,7 +25,8 @@ public:
   /** Loads temporary register. */
   ir::SsaDef emitTempLoad(
           ir::Builder&            builder,
-    const Operand&                operand,
+          uint32_t                regIndex,
+          Swizzle                 swizzle,
           WriteMask               componentMask,
           ir::ScalarType          type);
 
