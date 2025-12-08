@@ -194,20 +194,6 @@ private:
 
   bool storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef value);
 
-  ir::SsaDef broadcastScalar(ir::Builder& builder, ir::SsaDef def, WriteMask mask);
-
-  ir::SsaDef swizzleVector(ir::Builder& builder, ir::SsaDef value, Swizzle swizzle, WriteMask writeMask);
-
-  ir::SsaDef composite(ir::Builder& builder, ir::BasicType type,
-    const ir::SsaDef* components, Swizzle swizzle, WriteMask mask);
-
-  ir::SsaDef buildVector(ir::Builder& builder, ir::ScalarType scalarType, size_t count, const ir::SsaDef* scalars);
-
-  ir::SsaDef extractFromVector(ir::Builder& builder, ir::SsaDef def, uint32_t component);
-
-  template<typename T>
-  ir::SsaDef makeTypedConstant(ir::Builder& builder, ir::BasicType type, T value);
-
   ir::SsaDef normalizeVector(ir::Builder& builder, ir::SsaDef def);
 
   ir::SsaDef applyBumpMapping(ir::Builder& builder, uint32_t stageIdx, ir::SsaDef src0, ir::SsaDef src1);
@@ -226,10 +212,6 @@ private:
   template<typename... Args>
   bool logOpError(const Instruction& op, const Args&... args) const {
     return logOpMessage(LogLevel::eError, op, args...);
-  }
-
-  static ir::BasicType makeVectorType(ir::ScalarType type, WriteMask mask) {
-    return ir::BasicType(type, util::popcnt(uint8_t(mask)));
   }
 
   std::string makeRegisterDebugName(RegisterType type, uint32_t index, WriteMask mask) const;

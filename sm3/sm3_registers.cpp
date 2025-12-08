@@ -2,6 +2,8 @@
 
 #include "sm3_converter.h"
 
+#include "../ir/ir_utils.h"
+
 namespace dxbc_spv::sm3 {
 
 RegisterFile::RegisterFile(Converter &converter)
@@ -61,7 +63,7 @@ ir::SsaDef RegisterFile::emitTempLoad(
   WriteMask componentMask,
   ir::ScalarType type
 ) {
-  auto returnType = m_converter.makeVectorType(type, componentMask);
+  auto returnType = makeVectorType(type, componentMask);
 
   std::array<ir::SsaDef, 4u> components = { };
 
@@ -77,7 +79,7 @@ ir::SsaDef RegisterFile::emitTempLoad(
     components[uint8_t(component)] = scalar;
   }
 
-  return m_converter.composite(builder, returnType, components.data(), swizzle, componentMask);
+  return composite(builder, returnType, components.data(), swizzle, componentMask);
 }
 
 
@@ -85,7 +87,7 @@ ir::SsaDef RegisterFile::emitPredicateLoad(
           ir::Builder&            builder,
           Swizzle                 swizzle,
           WriteMask               componentMask) {
-  auto returnType = m_converter.makeVectorType(ir::ScalarType::eBool, componentMask);
+  auto returnType = makeVectorType(ir::ScalarType::eBool, componentMask);
 
   std::array<ir::SsaDef, 4u> components = { };
   for (auto c : swizzle.getReadMask(componentMask)) {
@@ -93,7 +95,7 @@ ir::SsaDef RegisterFile::emitPredicateLoad(
     components[uint8_t(component)] = builder.add(ir::Op::TmpLoad(ir::ScalarType::eBool, m_pReg[uint8_t(component)]));
   }
 
-  return m_converter.composite(builder, returnType, components.data(), swizzle, componentMask);
+  return composite(builder, returnType, components.data(), swizzle, componentMask);
 }
 
 
@@ -139,7 +141,7 @@ bool RegisterFile::emitStore(
     auto component = componentFromBit(c);
 
     /* Extract scalar and 'convert' to unknown type */
-    auto scalar = m_converter.extractFromVector(builder, value, componentIndex);
+    auto scalar = extractFromVector(builder, value, componentIndex);
 
     ir::SsaDef reg;
     switch (operand.getRegisterType()) {
@@ -177,7 +179,7 @@ bool RegisterFile::emitStore(
     ir::SsaDef predicateIf = ir::SsaDef();
     if (predicateVec) {
       /* Check if the matching component of the predicate register vector is true first. */
-      auto condComponent = m_converter.extractFromVector(builder, predicateVec, componentIndex);
+      auto condComponent = extractFromVector(builder, predicateVec, componentIndex);
       predicateIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), condComponent));
     }
     builder.add(ir::Op::TmpStore(reg, scalar));
