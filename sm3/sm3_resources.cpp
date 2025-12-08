@@ -2,6 +2,8 @@
 
 #include "sm3_converter.h"
 
+#include "../ir/ir_utils.h"
+
 #include "../util/util_log.h"
 
 namespace dxbc_spv::sm3 {
@@ -180,12 +182,12 @@ ir::SsaDef ResourceMap::emitConstantLoad(
       if (scalarType != predefinedType) {
         std::array<ir::SsaDef, 4u> components;
         for (uint32_t i = 0u; i < 4u; i++) {
-          auto c = m_converter.extractFromVector(builder, predefinedConstant, i);
+          auto c = extractFromVector(builder, predefinedConstant, i);
           components[i] = builder.add(ir::Op::ConsumeAs(scalarType, c));
         }
-        return m_converter.composite(builder, m_converter.makeVectorType(scalarType, componentMask), components.data(), operand.getSwizzle(info), componentMask);
+        return composite(builder, makeVectorType(scalarType, componentMask), components.data(), operand.getSwizzle(info), componentMask);
       } else {
-        return m_converter.swizzleVector(builder, predefinedConstant, operand.getSwizzle(info), componentMask);
+        return swizzleVector(builder, predefinedConstant, operand.getSwizzle(info), componentMask);
       }
     }
   }
@@ -200,7 +202,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
     if (util::popcnt(uint8_t(componentMask)) == 1u) {
       return boolVal;
     } else {
-      return m_converter.broadcastScalar(builder, boolVal, componentMask);
+      return broadcastScalar(builder, boolVal, componentMask);
     }
   }
 
@@ -309,7 +311,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
     if (util::popcnt(uint8_t(componentMask)) == 1u) {
       return boolVal;
     } else {
-      return m_converter.broadcastScalar(builder, boolVal, componentMask);
+      return broadcastScalar(builder, boolVal, componentMask);
     }
   }
 
@@ -323,7 +325,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
       ir::BasicType(bufferElementScalarType, 4u), descriptor, offset, 16u));
 
     for (uint32_t i = 0u; i < components.size(); i++)
-      components[i] = m_converter.extractFromVector(builder, result, i);
+      components[i] = extractFromVector(builder, result, i);
   } else {
     /* Absolute component alignment, in dwords */
     constexpr uint32_t ComponentAlignments = 0x1214;
@@ -346,7 +348,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
       auto result = builder.add(ir::Op::BufferLoad(blockType, descriptor, address, blockAlignment));
 
       for (uint32_t i = 0u; i < blockType.getVectorSize(); i++)
-        components[componentIndex + i] = m_converter.extractFromVector(builder, result, i);
+        components[componentIndex + i] = extractFromVector(builder, result, i);
 
       readMask -= block;
     }
@@ -359,8 +361,8 @@ ir::SsaDef ResourceMap::emitConstantLoad(
   }
 
   /* Build result vector */
-  return m_converter.composite(builder,
-    m_converter.makeVectorType(scalarType, componentMask),
+  return composite(builder,
+    makeVectorType(scalarType, componentMask),
     components.data(), operand.getSwizzle(info), componentMask);
 }
 
@@ -463,7 +465,7 @@ ir::SsaDef ResourceMap::projectTexCoord(ir::Builder& builder, uint32_t samplerIn
   auto projectedTexCoord = builder.add(ir::Op::FDiv(
     texCoordType,
     texCoord,
-    m_converter.broadcastScalar(builder, texCoordW, ComponentBit::eAll)
+    broadcastScalar(builder, texCoordW, ComponentBit::eAll)
   ));
 
   if (controlWithSpecConst) {
@@ -476,7 +478,7 @@ ir::SsaDef ResourceMap::projectTexCoord(ir::Builder& builder, uint32_t samplerIn
       builder.makeConstant(1u)
     );
     auto isProjectedBool = builder.add(ir::Op::INe(ir::ScalarType::eBool, isProjectedSpecConst, builder.makeConstant(0u)));
-    return builder.add(ir::Op::Select(texCoordType, m_converter.broadcastScalar(builder, isProjectedBool, WriteMask(ComponentBit::eAll)),
+    return builder.add(ir::Op::Select(texCoordType, broadcastScalar(builder, isProjectedBool, WriteMask(ComponentBit::eAll)),
       projectedTexCoord, texCoord));
   } else {
     return projectedTexCoord;
@@ -759,7 +761,7 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
   for (uint32_t i = 0u; i < texCoordComponentCount; i++) {
     texCoordComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(i)));
   }
-  auto sizedTexCoord = m_converter.buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, texCoordComponents.data());
+  auto sizedTexCoord = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, texCoordComponents.data());
 
   auto color = builder.add(ir::Op::ImageSample(
     ir::BasicType(ir::ScalarType::eF32, 4u),
@@ -804,7 +806,7 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
       auto textureSizeStruct = builder.add(ir::Op::ImageQuerySize(sizeType, descriptor, builder.makeConstant(0u)));
       auto textureSizeTypeI = ir::BasicType(ir::ScalarType::eU32, coordDims);
       auto textureSizeI = builder.add(ir::Op::CompositeExtract(textureSizeTypeI, textureSizeStruct, builder.makeConstant(0u)));
-      auto const2vec = m_converter.broadcastScalar(builder, builder.makeConstant(2u), util::makeWriteMaskForComponents(coordDims));
+      auto const2vec = broadcastScalar(builder, builder.makeConstant(2u), util::makeWriteMaskForComponents(coordDims));
       auto scaledTextureSizeI = builder.add(ir::Op::IMul(textureSizeTypeI, textureSizeI, const2vec));
       auto textureSizeType = ir::BasicType(ir::ScalarType::eF32, coordDims);
       auto scaledTextureSizeF = builder.add(ir::Op::ConvertItoF(textureSizeType, scaledTextureSizeI));
@@ -816,7 +818,7 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
        * as only then does the imprecision need to be biased
        * towards infinity -- but that's not really worth doing... */
       numerator -= 1.0f / 256.0f;
-      auto numeratorVec = m_converter.broadcastScalar(builder, builder.makeConstant(numerator), util::makeWriteMaskForComponents(coordDims));
+      auto numeratorVec = broadcastScalar(builder, builder.makeConstant(numerator), util::makeWriteMaskForComponents(coordDims));
       auto invTextureSize = builder.add(ir::Op::FDiv(textureSizeType, numeratorVec, scaledTextureSizeF));
 
       /* texcoord += invTextureSize */
@@ -834,10 +836,10 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
       0u
     ));
     /* Shuffle the vector to match the funny D3D9 order: B R G A */
-    fetch4Val = m_converter.swizzleVector(builder, fetch4Val, Swizzle(Component::eY, Component::eX, Component::eZ, Component::eW), WriteMask(ComponentBit::eAll));
+    fetch4Val = swizzleVector(builder, fetch4Val, Swizzle(Component::eY, Component::eX, Component::eZ, Component::eW), WriteMask(ComponentBit::eAll));
     /* Use Fetch4 value if spec constant bit is set and regular sampled color if not. */
     color = builder.add(ir::Op::Select(ir::BasicType(ir::ScalarType::eF32, 4u),
-    m_converter.broadcastScalar(builder, fetch4Enabled, WriteMask(ComponentBit::eAll)),
+    broadcastScalar(builder, fetch4Enabled, WriteMask(ComponentBit::eAll)),
     fetch4Val, color));
   }
 
@@ -853,7 +855,7 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
 
   return builder.add(ir::Op::Select(
     ir::BasicType(ir::ScalarType::eF32, 4u),
-    m_converter.broadcastScalar(builder, isNull, WriteMask(ComponentBit::eAll)),
+    broadcastScalar(builder, isNull, WriteMask(ComponentBit::eAll)),
     builder.makeConstant(0.0f, 0.0f, 0.0f, 1.0f),
     color));
 }
@@ -904,7 +906,7 @@ ir::SsaDef ResourceMap::emitSampleDref(
   for (uint32_t i = 0u; i < texCoordComponentCount; i++) {
     texCoordComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(i)));
   }
-  auto sizedTexCoord = m_converter.buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, texCoordComponents.data());
+  auto sizedTexCoord = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, texCoordComponents.data());
   auto drefResult = builder.add(ir::Op::ImageSample(
     ir::ScalarType::eF32,
     descriptor,
@@ -919,7 +921,7 @@ ir::SsaDef ResourceMap::emitSampleDref(
     dy,
     reference
   ));
-  return m_converter.broadcastScalar(builder, drefResult, WriteMask(ComponentBit::eAll));
+  return broadcastScalar(builder, drefResult, WriteMask(ComponentBit::eAll));
 }
 
 

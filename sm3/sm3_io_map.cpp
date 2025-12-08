@@ -3,6 +3,8 @@
 #include "sm3_converter.h"
 #include "sm3_io_map.h"
 
+#include "../ir/ir_utils.h"
+
 #include "../util/util_log.h"
 
 namespace dxbc_spv::sm3 {
@@ -408,7 +410,7 @@ ir::SsaDef IoMap::emitLoad(
     }
   }
 
-  ir::SsaDef value = m_converter.composite(builder, ir::BasicType(type, util::popcnt(uint8_t(componentMask))), components.data(), swizzle, componentMask);
+  ir::SsaDef value = composite(builder, ir::BasicType(type, util::popcnt(uint8_t(componentMask))), components.data(), swizzle, componentMask);
 
   return value;
 }
@@ -448,7 +450,7 @@ ir::SsaDef IoMap::emitTexCoordLoad(
     components[componentIndex] = convertScalar(builder, type, value);
   }
 
-  return m_converter.composite(builder, ir::BasicType(type, util::popcnt(uint8_t(componentMask))), components.data(), swizzle, componentMask);
+  return composite(builder, ir::BasicType(type, util::popcnt(uint8_t(componentMask))), components.data(), swizzle, componentMask);
 }
 
 
@@ -501,7 +503,7 @@ bool IoMap::emitStore(
       ir::SsaDef predicateIf = ir::SsaDef();
       if (predicateVec) {
         /* Check if the matching component of the predicate register vector is true first. */
-        auto condComponent = m_converter.extractFromVector(builder, predicateVec, componentIndex);
+        auto condComponent = extractFromVector(builder, predicateVec, componentIndex);
         predicateIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), condComponent));
       }
 
@@ -536,7 +538,7 @@ bool IoMap::emitStore(
       ir::SsaDef predicateIf = ir::SsaDef();
       if (predicateVec) {
         /* Check if the matching component of the predicate register vector is true first. */
-        auto condComponent = m_converter.extractFromVector(builder, predicateVec, componentIndex);
+        auto condComponent = extractFromVector(builder, predicateVec, componentIndex);
         predicateIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), condComponent));
       }
       builder.add(ir::Op::FunctionCall(ir::Type(), m_outputSwitchFunction)
@@ -616,7 +618,7 @@ ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
           components[j] = builder.makeConstant(0.0f);
         }
       }
-      vec4 = m_converter.buildVector(builder, ir::ScalarType::eF32, components.size(), components.data());
+      vec4 = buildVector(builder, ir::ScalarType::eF32, components.size(), components.data());
     }
     builder.add(ir::Op::Return(ir::Type(ir::ScalarType::eF32, 4u), vec4));
     builder.add(ir::Op::ScopedSwitchBreak(switchDef));
