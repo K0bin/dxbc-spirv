@@ -130,6 +130,8 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eMul:
     case OpCode::eRcp:
     case OpCode::eRsq:
+    case OpCode::eSgn:
+    case OpCode::eAbs:
       return handleArithmetic(builder, op);
 
     case OpCode::eMad:
@@ -215,12 +217,6 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
 
     case OpCode::eSetP:
       return handleSetP(builder, op);
-
-    case OpCode::eSgn:
-      return handleSgn(builder, op);
-
-    case OpCode::eAbs:
-      return handleAbs(builder, op);
 
     case OpCode::eExpP:
       return handleExpP(builder, op);
@@ -482,6 +478,8 @@ bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
       case OpCode::eMul:        return ir::Op::FMulLegacy(vectorType, src.at(0u), src.at(1u));
       case OpCode::eRcp:        return ir::Op::FRcp(vectorType, src.at(0u));
       case OpCode::eRsq:        return ir::Op::FRsq(vectorType, src.at(0u));
+      case OpCode::eAbs:        return ir::Op::FAbs(vectorType, src.at(0u));
+      case OpCode::eSgn:        return ir::Op::FAbs(vectorType, src.at(0u));
       default: break;
     }
 
