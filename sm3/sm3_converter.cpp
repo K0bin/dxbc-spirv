@@ -409,10 +409,7 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
     std::array<ir::SsaDef, 4u> components = { };
     for (auto c : writeMask) {
       auto componentIndex = uint8_t(util::componentFromBit(c));
-      auto componentConstant = builder.makeConstant(componentIndex);
-      auto scalarValue = componentCount > 1u
-        ? builder.add(ir::Op::CompositeExtract(scalarType, value, componentConstant))
-        : value;
+      auto scalarValue = ir::extractFromVector(builder, value, uint32_t(componentIndex));
 
       ir::SsaDef roundedValue;
       if (getShaderInfo().getVersion().first < 2 && getShaderInfo().getVersion().second < 2)
@@ -588,13 +585,9 @@ bool Converter::handleCompare(ir::Builder& builder, const Instruction& op) {
   util::small_vector<ir::SsaDef, 4u> components;
   for (auto c : writeMask) {
     auto index = util::componentFromBit(c);
-    auto src0c = src0;
-    auto src1c = src1;
-    if (util::popcnt(uint8_t(writeMask)) > 1u) {
-      /* It is done per-component. */
-      src0c = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(uint32_t(index))));
-      src1c = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(uint32_t(index))));
-    }
+    /* It is done per-component. */
+    auto src0c = ir::extractFromVector(builder, src0, uint32_t(index));
+    auto src1c = ir::extractFromVector(builder, src1, uint32_t(index));
     ir::SsaDef cond;
     if (opCode == OpCode::eSlt)
       cond = builder.add(ir::Op::FLt(ir::ScalarType::eBool, src0c, src1c));
@@ -1036,9 +1029,7 @@ bool Converter::handleTexKill(ir::Builder& builder, const Instruction& op) {
   ir::SsaDef cond = { };
 
   for (auto c : writeMask) {
-    ir::SsaDef texCoordComponent = dst;
-    if (util::popcnt(uint8_t(writeMask)) > 1u)
-      texCoordComponent = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, dst, builder.makeConstant(uint32_t(util::componentFromBit(c)))));
+    ir::SsaDef texCoordComponent = ir::extractFromVector(builder, dst, uint32_t(util::componentFromBit(c)));
 
     auto componentCond = builder.add(ir::Op::FLt(ir::ScalarType::eBool, texCoordComponent, builder.makeConstant(0.0f)));
     if (!cond)
@@ -1142,35 +1133,24 @@ bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
     result = builder.add(ir::Op::FAdd(type, result, src2));
     result = builder.add(ir::Op::FMulLegacy(type, src0, result));
   } else if (op.getOpCode() == OpCode::eCmp || op.getOpCode() == OpCode::eCnd) {
-    if (util::popcnt(uint8_t(writeMask)) > 1u) {
-      std::array<ir::SsaDef, 4u> components = { };
-      for (auto c : writeMask) {
-        auto component = componentFromBit(c);
-        auto conditionComponent = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(uint32_t(component))));
-        auto option1Component = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(uint32_t(component))));
-        auto option2Component = builder.add(ir::Op::CompositeExtract(scalarType, src2, builder.makeConstant(uint32_t(component))));
-        ir::SsaDef conditionBool;
-        if (op.getOpCode() == OpCode::eCmp) {
-          /* Cmp compares to 0.0 */
-          conditionBool = builder.add(ir::Op::FGe(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.0f)));
-        } else {
-          /* Cnd compares to 0.5 */
-          conditionBool = builder.add(ir::Op::FGt(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.5f)));
-        }
-        components[uint32_t(component)] = builder.add(ir::Op::Select(scalarType, conditionBool, option1Component, option2Component));
+    std::array<ir::SsaDef, 4u> components = { };
+    for (auto c : writeMask) {
+      auto component = componentFromBit(c);
+      uint32_t componentIndex = uint32_t(component);
+      auto conditionComponent = ir::extractFromVector(builder, src0, componentIndex);
+      auto option1Component = ir::extractFromVector(builder, src1, componentIndex);
+      auto option2Component = ir::extractFromVector(builder, src2, componentIndex);
+      ir::SsaDef conditionBool;
+      if (op.getOpCode() == OpCode::eCmp) {
+        /* Cmp compares to 0.0 */
+        conditionBool = builder.add(ir::Op::FGe(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.0f)));
+      } else {
+        /* Cnd compares to 0.5 */
+        conditionBool = builder.add(ir::Op::FGt(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.5f)));
       }
-      result = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
-    } else {
-        ir::SsaDef conditionBool;
-        if (op.getOpCode() == OpCode::eCmp) {
-          /* Cmp compares to 0.0 */
-          conditionBool = builder.add(ir::Op::FGe(ir::ScalarType::eBool, src0, makeTypedConstant(builder, scalarType, 0.0f)));
-        } else {
-          /* Cnd compares to 0.5 */
-          conditionBool = builder.add(ir::Op::FGt(ir::ScalarType::eBool, src0, makeTypedConstant(builder, scalarType, 0.5f)));
-        }
-      result = builder.add(ir::Op::Select(scalarType, conditionBool, src1, src2));
+      components[componentIndex] = builder.add(ir::Op::Select(scalarType, conditionBool, option1Component, option2Component));
     }
+    result = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
   } else {
     Logger::err("OpCode ", op.getOpCode(), " is not supported by handleSelect.");
     dxbc_spv_unreachable();
@@ -1336,12 +1316,8 @@ bool Converter::handleSetP(ir::Builder& builder, const Instruction& op) {
   util::small_vector<ir::SsaDef, 4u> components;
   for (auto c : writeMask) {
     /* The comparison is done for each component separately. */
-    ir::SsaDef src0c = src0;
-    ir::SsaDef src1c = src1;
-    if (util::popcnt(uint8_t(writeMask)) > 1u) {
-      src0c = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(components.size())));
-      src1c = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(components.size())));
-    }
+    ir::SsaDef src0c = ir::extractFromVector(builder, src0, uint32_t(components.size()));
+    ir::SsaDef src1c = ir::extractFromVector(builder, src1, uint32_t(components.size()));
 
     auto comparison = emitComparison(builder, src0c, src1c, op.getComparisonMode());
     components.push_back(comparison);
@@ -1359,18 +1335,13 @@ bool Converter::handleSgn(ir::Builder& builder, const Instruction& op) {
   auto dst = op.getDst();
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
-  bool isScalar = util::popcnt(uint8_t(writeMask)) == 1u;
 
   auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
 
   util::small_vector<ir::SsaDef, 4u> components;
   for (auto c : writeMask) {
     uint32_t componentIndex = uint32_t(util::componentFromBit(c));
-    auto srcComponent = src0;
-    if (!isScalar) {
-      /* Done for each component individually */
-      srcComponent = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(componentIndex)));
-    }
+    auto srcComponent = ir::extractFromVector(builder, src0, uint32_t(componentIndex));
     components.push_back(builder.add(ir::Op::FSgn(scalarType, srcComponent)));
   }
 
@@ -1385,18 +1356,14 @@ bool Converter::handleAbs(ir::Builder& builder, const Instruction& op) {
   auto dst = op.getDst();
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
-  bool isScalar = util::popcnt(uint8_t(writeMask)) == 1u;
 
   auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
 
   util::small_vector<ir::SsaDef, 4u> components;
   for (auto c : writeMask) {
     uint32_t componentIndex = uint32_t(util::componentFromBit(c));
-    auto srcComponent = src0;
-    if (!isScalar) {
-      /* Done for each component individually */
-      srcComponent = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(componentIndex)));
-    }
+    /* Done for each component individually */
+    auto srcComponent = ir::extractFromVector(builder, src0, uint32_t(componentIndex));
     components.push_back(builder.add(ir::Op::FAbs(scalarType, srcComponent)));
   }
 
@@ -1969,9 +1936,7 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
       util::small_vector<ir::SsaDef, 4u> components = { };
       for (auto c : writeMask) {
         auto component = componentFromBit(c);
-        auto predicateComponent = util::popcnt(uint8_t(writeMask)) > 1u
-          ? builder.add(ir::Op::CompositeExtract(ir::ScalarType::eBool, predicate, builder.makeConstant(uint32_t(component))))
-          : predicate;
+        auto predicateComponent = ir::extractFromVector(builder, predicate, uint32_t(component));
         components.push_back(builder.add(ir::Op::BNot(ir::ScalarType::eBool, predicateComponent)));
       }
       predicate = buildVector(builder, ir::ScalarType::eBool, components.size(), components.data());
