@@ -198,7 +198,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
     auto bit = m_converter.m_specConstants.get(builder,
       info.getType() == ShaderType::eVertex ? SpecConstantId::eSpecVertexShaderBools : SpecConstantId::eSpecPixelShaderBools,
       builder.makeConstant(operand.getIndex()), builder.makeConstant(1u));
-    auto boolVal = builder.add(ir::Op::INe(ir::ScalarType::eU32, bit, builder.makeConstant(0u)));
+    auto boolVal = builder.add(ir::Op::INe(ir::ScalarType::eBool, bit, builder.makeConstant(0u)));
     if (util::popcnt(uint8_t(componentMask)) == 1u) {
       return boolVal;
     } else {
@@ -307,7 +307,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
       dword,
       builder.makeConstant(operand.getIndex() % 32u),
       builder.makeConstant(1u)));
-    auto boolVal = builder.add(ir::Op::INe(ir::ScalarType::eU32, bit, builder.makeConstant(0u)));
+    auto boolVal = builder.add(ir::Op::INe(ir::ScalarType::eBool, bit, builder.makeConstant(0u)));
     if (util::popcnt(uint8_t(componentMask)) == 1u) {
       return boolVal;
     } else {
