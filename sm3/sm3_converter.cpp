@@ -1494,7 +1494,15 @@ bool Converter::handleEndIf(ir::Builder& builder, const Instruction& op) {
 bool Converter::handleLoop(ir::Builder& builder, const Instruction& op) {
   /* For-Loop with a loop counter that can be used for relative addressing */
   dxbc_spv_assert(op.getSrcCount() >= 1u);
-  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ, ir::ScalarType::eI32);
+
+  /* Assume that modifiers aren't supported here. We only implement them for floats right now. */
+  dxbc_spv_assert(op.getSrc(0u).getModifier() == OperandModifier::eNone);
+  auto src0 = loadSrc(
+    builder, op, op.getSrc(0u),
+    ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ,
+    op.getSrc(0u).getSwizzle(getShaderInfo()),
+    ir::ScalarType::eI32);
+
   auto iterationCount = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eI32, src0, builder.makeConstant(0u)));
   auto initialValue = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eI32, src0, builder.makeConstant(1u)));
   auto stepSize = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eI32, src0, builder.makeConstant(2u)));
@@ -1547,7 +1555,14 @@ bool Converter::handleEndLoop(ir::Builder &builder, const Instruction &op) {
 bool Converter::handleRep(ir::Builder& builder, const Instruction& op) {
   /* Loop that does n repetitions (src1) and doesn't expose the current counter to the application. */
   dxbc_spv_assert(op.getSrcCount() >= 1u);
-  auto iterationCount = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, ir::ScalarType::eU32);
+
+  /* Assume that modifiers aren't supported here. We only implement them for floats right now. */
+  dxbc_spv_assert(op.getSrc(0u).getModifier() == OperandModifier::eNone);
+  auto iterationCount = loadSrc(
+    builder, op, op.getSrc(0u),
+    ComponentBit::eX,
+    op.getSrc(0u).getSwizzle(getShaderInfo()),
+    ir::ScalarType::eU32);
 
   auto loopCounter =  builder.add(ir::Op::DclTmp(ir::ScalarType::eU32, m_entryPoint.def));
   builder.add(ir::Op::TmpStore(loopCounter, iterationCount));
