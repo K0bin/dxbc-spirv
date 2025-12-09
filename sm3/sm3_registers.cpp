@@ -34,7 +34,7 @@ void RegisterFile::initialize(ir::Builder& builder) {
     m_pReg[i] = builder.add(ir::Op::DclTmp(ir::ScalarType::eBool, m_converter.getEntryPoint()));
     if (m_converter.getOptions().includeDebugNames) {
       std::string name = m_converter.makeRegisterDebugName(RegisterType::ePredicate, 0u, util::componentBit(Component(i)));
-      builder.add(ir::Op::DebugName(m_rRegs[i], name.c_str()));
+      builder.add(ir::Op::DebugName(m_pReg[i], name.c_str()));
     }
   }
 }
