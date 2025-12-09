@@ -1019,12 +1019,20 @@ bool Converter::handleTexKill(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
   auto writeMask = op.getDst().getWriteMask(getShaderInfo());
   writeMask &= ComponentBit::eX | ComponentBit::eY | ComponentBit::eZ;
-  auto dst = m_ioMap.emitTexCoordLoad(builder,
-    op,
-    op.getDst().getIndex(),
-    writeMask,
-    Swizzle::identity(),
-    ir::ScalarType::eF32);
+  ir::SsaDef dst;
+
+  auto [versionMajor, versionMinor] = getShaderInfo().getVersion();
+  if (versionMajor <= 1u && versionMinor <= 3u) {
+    dst = m_ioMap.emitTexCoordLoad(builder,
+      op,
+      op.getDst().getIndex(),
+      writeMask,
+      Swizzle::identity(),
+      ir::ScalarType::eF32);
+  } else {
+    /* Yes, we're loading the dst as a src here. That's not a mistake. */
+    dst = loadSrc(builder, op, op.getDst(), writeMask, Swizzle::identity(), ir::ScalarType::eF32);
+  }
 
   ir::SsaDef cond = { };
 
@@ -1837,7 +1845,7 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
     case RegisterType::ePredicate:
       loadDef = m_regFile.emitTempLoad(builder,
         operand.getIndex(),
-        operand.getSwizzle(getShaderInfo()),
+        swizzle,
         mask,
         type);
       break;
