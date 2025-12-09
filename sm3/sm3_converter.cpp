@@ -406,10 +406,10 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
   /* Mova writes to the address register. On <= SM2.1 mov *can* write to the address register. */
   if (dst.getRegisterType() == RegisterType::eAddr) {
     uint32_t componentCount = util::popcnt(uint8_t(writeMask));
-    std::array<ir::SsaDef, 4u> components = { };
-    for (auto c : writeMask) {
-      auto componentIndex = uint8_t(util::componentFromBit(c));
-      auto scalarValue = ir::extractFromVector(builder, value, uint32_t(componentIndex));
+    util::small_vector<ir::SsaDef, 4u> components;
+    for (auto _ : writeMask) {
+      auto componentIndex = components.size();
+      auto scalarValue = ir::extractFromVector(builder, value, componentIndex);
 
       ir::SsaDef roundedValue;
       if (getShaderInfo().getVersion().first < 2 && getShaderInfo().getVersion().second < 2)
@@ -418,7 +418,7 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
       else
         roundedValue = builder.add(ir::Op::FRound(scalarType, scalarValue, ir::RoundMode::eNearestEven));
 
-      components[componentIndex] = builder.add(ir::Op::Cast(ir::ScalarType::eI32, roundedValue));
+      components.push_back(builder.add(ir::Op::Cast(ir::ScalarType::eI32, roundedValue)));
     }
     value = buildVector(builder, ir::ScalarType::eI32, componentCount, components.data());
   }
@@ -583,11 +583,11 @@ bool Converter::handleCompare(ir::Builder& builder, const Instruction& op) {
     return false;
 
   util::small_vector<ir::SsaDef, 4u> components;
-  for (auto c : writeMask) {
-    auto index = util::componentFromBit(c);
+  for (auto _ : writeMask) {
+    auto index = components.size();
     /* It is done per-component. */
-    auto src0c = ir::extractFromVector(builder, src0, uint32_t(index));
-    auto src1c = ir::extractFromVector(builder, src1, uint32_t(index));
+    auto src0c = ir::extractFromVector(builder, src0, index);
+    auto src1c = ir::extractFromVector(builder, src1, index);
     ir::SsaDef cond;
     if (opCode == OpCode::eSlt)
       cond = builder.add(ir::Op::FLt(ir::ScalarType::eBool, src0c, src1c));
@@ -1141,13 +1141,13 @@ bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
     result = builder.add(ir::Op::FAdd(type, result, src2));
     result = builder.add(ir::Op::FMulLegacy(type, src0, result));
   } else if (op.getOpCode() == OpCode::eCmp || op.getOpCode() == OpCode::eCnd) {
-    std::array<ir::SsaDef, 4u> components = { };
-    for (auto c : writeMask) {
-      auto component = componentFromBit(c);
-      uint32_t componentIndex = uint32_t(component);
+    util::small_vector<ir::SsaDef, 4u> components;
+    for (auto _ : writeMask) {
+      uint32_t componentIndex = components.size();
       auto conditionComponent = ir::extractFromVector(builder, src0, componentIndex);
       auto option1Component = ir::extractFromVector(builder, src1, componentIndex);
       auto option2Component = ir::extractFromVector(builder, src2, componentIndex);
+
       ir::SsaDef conditionBool;
       if (op.getOpCode() == OpCode::eCmp) {
         /* Cmp compares to 0.0 */
@@ -1156,9 +1156,9 @@ bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
         /* Cnd compares to 0.5 */
         conditionBool = builder.add(ir::Op::FGt(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.5f)));
       }
-      components[componentIndex] = builder.add(ir::Op::Select(scalarType, conditionBool, option1Component, option2Component));
+      components.push_back(builder.add(ir::Op::Select(scalarType, conditionBool, option1Component, option2Component)));
     }
-    result = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
+    result = ir::buildVector(builder, scalarType, components.size(), components.data());
   } else {
     Logger::err("OpCode ", op.getOpCode(), " is not supported by handleSelect.");
     dxbc_spv_unreachable();
