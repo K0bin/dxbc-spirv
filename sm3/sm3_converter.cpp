@@ -1488,12 +1488,12 @@ bool Converter::handleLoop(ir::Builder& builder, const Instruction& op) {
   auto loopCounterBackup = m_regFile.emitLoopCounterLoad(builder);
 
   auto loopDef = builder.add(ir::Op::ScopedLoop(ir::SsaDef()));
-  auto loop = m_controlFlow.push(loopDef);
+  auto& loop = m_controlFlow.push(loopDef);
 
   auto loopCounterVal = builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, loopCounter));
   auto totalSteps = builder.add(ir::Op::IMul(ir::ScalarType::eI32, stepSize, iterationCount));
   auto finalCounterValue = builder.add(ir::Op::IAdd(ir::ScalarType::eI32, initialValue, totalSteps));
-  auto breakCondition = builder.add(ir::Op::IEq(ir::ScalarType::eI32, loopCounterVal, finalCounterValue));
+  auto breakCondition = builder.add(ir::Op::IEq(ir::ScalarType::eBool, loopCounterVal, finalCounterValue));
   auto breakIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), breakCondition));
   builder.add(ir::Op::ScopedLoopBreak(loopDef));
   m_regFile.emitLoopCounterStore(builder, loopCounterBackup);
@@ -1543,10 +1543,10 @@ bool Converter::handleRep(ir::Builder& builder, const Instruction& op) {
   builder.add(ir::Op::TmpStore(loopCounter, iterationCount));
 
   auto loopDef = builder.add(ir::Op::ScopedLoop(ir::SsaDef()));
-  auto loop = m_controlFlow.push(loopDef);
+  auto& loop = m_controlFlow.push(loopDef);
 
   auto loopCounterVal = builder.add(ir::Op::TmpLoad(ir::ScalarType::eU32, loopCounter));
-  auto breakCondition = builder.add(ir::Op::IEq(ir::ScalarType::eU32, loopCounterVal, builder.makeConstant(0u)));
+  auto breakCondition = builder.add(ir::Op::IEq(ir::ScalarType::eBool, loopCounterVal, builder.makeConstant(0u)));
   auto breakIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), breakCondition));
   builder.add(ir::Op::ScopedLoopBreak(loopDef));
   auto breakEndIf = builder.add(ir::Op::ScopedEndIf(breakIf));
@@ -1566,8 +1566,8 @@ bool Converter::handleEndRep(ir::Builder &builder, const Instruction &op) {
   if (type != ir::OpCode::eScopedLoop)
     return logOpError(op, "'EndRep' occurred outside of 'Rep' or 'Rep' is straddling 'If'.");
 
-  auto loopCounterVal = builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, construct->loopCounter));
-  loopCounterVal = builder.add(ir::Op::ISub(ir::ScalarType::eI32, loopCounterVal, builder.makeConstant(1u)));
+  auto loopCounterVal = builder.add(ir::Op::TmpLoad(ir::ScalarType::eU32, construct->loopCounter));
+  loopCounterVal = builder.add(ir::Op::ISub(ir::ScalarType::eU32, loopCounterVal, builder.makeConstant(1u)));
   builder.add(ir::Op::TmpStore(construct->loopCounter, loopCounterVal));
 
   auto constructEnd = builder.add(ir::Op::ScopedEndLoop(construct->def));
