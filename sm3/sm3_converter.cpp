@@ -860,7 +860,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     case OpCode::eTexM3x3VSpec: {
       /* All of those instructions start with a matrix multiplication. */
       const uint32_t rows = opCode == OpCode::eTexM3x2Tex ? 2u : 3u;
-      auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
+      auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
 
       auto src0 = op.getSrc(0u);
       auto n = loadSrcModified(builder, op, src0, util::makeWriteMaskForComponents(3u), scalarType);
@@ -938,7 +938,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     case OpCode::eTexDp3Tex:
     case OpCode::eTexDp3: {
       /* Calculate a dot product of the texcoord data and src0 (and optionally use that for 1D texture lookup) */
-      auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
+      auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
       auto src0 = op.getSrc(0u);
       auto m = m_ioMap.emitTexCoordLoad(builder, op, dst.getIndex(), util::makeWriteMaskForComponents(3u), Swizzle::identity(), scalarType);
       auto n = loadSrcModified(builder, op, src0, util::makeWriteMaskForComponents(3u), scalarType);
@@ -1060,7 +1060,7 @@ bool Converter::handleNrm(ir::Builder& builder, const Instruction& op) {
 
   auto dst = op.getDst();
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
-  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
 
   auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
   auto result = normalizeVector(builder, src0);
@@ -1081,7 +1081,7 @@ bool Converter::handleSinCos(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(swizzle.x() == swizzle.y() && swizzle.y() == swizzle.z() && swizzle.z() == swizzle.w());
   WriteMask writeMask = dst.getWriteMask(getShaderInfo());
 
-  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   auto val = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, scalarType);
 
   dxbc_spv_assert((writeMask & (ComponentBit::eZ | ComponentBit::eW)) == WriteMask());
@@ -1102,7 +1102,7 @@ bool Converter::handlePow(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
 
   auto dst = op.getDst();
-  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   WriteMask writeMask = dst.getWriteMask(getShaderInfo());
   Swizzle src0Swizzle = op.getSrc(0u).getSwizzle(getShaderInfo());
   Swizzle src1Swizzle = op.getSrc(1u).getSwizzle(getShaderInfo());
@@ -1126,7 +1126,7 @@ bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
 
   auto dst = op.getDst();
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
-  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eF16 : ir::ScalarType::eF32;
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
 
   auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
   auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
