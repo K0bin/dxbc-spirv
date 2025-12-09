@@ -1425,7 +1425,8 @@ bool Converter::handleIf(ir::Builder& builder, const Instruction& op) {
   ir::SsaDef cond;
 
   if (op.getOpCode() == OpCode::eIf) {
-      cond = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, ir::ScalarType::eBool);
+    dxbc_spv_assert(op.getSrc(0u).getModifier() == OperandModifier::eNone);
+    cond = loadSrc(builder, op, op.getSrc(0u), ComponentBit::eX, op.getSrc(0u).getSwizzle(getShaderInfo()), ir::ScalarType::eBool);
   } else if (op.getOpCode() == OpCode::eIfC) {
     ir::SsaDef src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, ir::ScalarType::eF32);
     ir::SsaDef src1 = loadSrcModified(builder, op, op.getSrc(1u), ComponentBit::eX, ir::ScalarType::eF32);
