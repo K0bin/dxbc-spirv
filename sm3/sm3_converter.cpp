@@ -1534,6 +1534,12 @@ bool Converter::handleEndLoop(ir::Builder &builder, const Instruction &op) {
   auto loopCounterVal = builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, construct->loopCounter));
   loopCounterVal = builder.add(ir::Op::IAdd(ir::ScalarType::eI32, loopCounterVal, construct->loopStep));
   builder.add(ir::Op::TmpStore(construct->loopCounter, loopCounterVal));
+
+  auto constructEnd = builder.add(ir::Op::ScopedEndLoop(construct->def));
+  builder.rewriteOp(construct->def, ir::Op(builder.getOp(construct->def)).setOperand(0u, constructEnd));
+
+  m_controlFlow.pop();
+
   return true;
 }
 
@@ -1573,6 +1579,12 @@ bool Converter::handleEndRep(ir::Builder &builder, const Instruction &op) {
   auto loopCounterVal = builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, construct->loopCounter));
   loopCounterVal = builder.add(ir::Op::ISub(ir::ScalarType::eI32, loopCounterVal, builder.makeConstant(1u)));
   builder.add(ir::Op::TmpStore(construct->loopCounter, loopCounterVal));
+
+  auto constructEnd = builder.add(ir::Op::ScopedEndLoop(construct->def));
+  builder.rewriteOp(construct->def, ir::Op(builder.getOp(construct->def)).setOperand(0u, constructEnd));
+
+  m_controlFlow.pop();
+
   return true;
 }
 
