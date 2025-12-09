@@ -129,6 +129,65 @@ bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
 }
 
 
+std::optional<ir::BuiltIn> IoMap::determineBuiltinForRegister(RegisterType regType, uint32_t regIndex, Semantic semantic) {
+  if (!registerTypeIsInput(regType)) {
+
+    if (regType == RegisterType::eDepthOut) {
+      return std::make_optional(ir::BuiltIn::eDepth);
+    }
+
+    if (regType == RegisterType::eRasterizerOut) {
+      if (regIndex == uint32_t(RasterizerOutIndex::eRasterOutPointSize)) {
+        dxbc_spv_assert(semantic.usage == SemanticUsage::ePointSize && semantic.index == 0u);
+        return std::make_optional(ir::BuiltIn::ePointSize);
+      }
+
+      /* The only other register index we accept for RasterizerOut registers is
+       * the fog register. */
+      dxbc_spv_assert(regIndex == uint32_t(RasterizerOutIndex::eRasterOutFog));
+      dxbc_spv_assert(semantic.usage == SemanticUsage::eFog && semantic.index == 0u);
+      /* Fog is a builtin for D3D9 but not for Vulkan. */
+    }
+
+    if (semantic.usage == SemanticUsage::ePosition && semantic.index == 0u) {
+      dxbc_spv_assert(regType == RegisterType::eOutput);
+      return std::make_optional(ir::BuiltIn::ePosition);
+    }
+
+    if (semantic.usage == SemanticUsage::ePointSize && semantic.index == 0u) {
+      dxbc_spv_assert(regType == RegisterType::eOutput);
+      return std::make_optional(ir::BuiltIn::ePointSize);
+    }
+
+  } else {
+
+    ShaderType shaderType = m_converter.getShaderInfo().getType();
+
+    // Position must not be mapped to a regular input. SM3 still has a separate register for that.
+    dxbc_spv_assert(shaderType == ShaderType::eVertex
+      || semantic.usage != SemanticUsage::ePosition
+      || regType == RegisterType::eMiscType
+      || regType == RegisterType::eOutput);
+
+    if (regType == RegisterType::eMiscType) {
+      if (regIndex == uint32_t(MiscTypeIndex(MiscTypeIndex::eMiscTypeFace))) {
+        return std::make_optional(ir::BuiltIn::eIsFrontFace);
+      }
+
+      if (regIndex == uint32_t(MiscTypeIndex::eMiscTypePosition)) {
+        return std::make_optional(ir::BuiltIn::ePosition);
+      }
+
+      // Invalid MiscType
+      dxbc_spv_assert(false);
+    }
+
+  }
+
+  return std::nullopt;
+}
+
+
 void IoMap::dclIoVar(
    ir::Builder& builder,
    RegisterType registerType,
@@ -136,61 +195,28 @@ void IoMap::dclIoVar(
    Semantic     semantic,
    WriteMask    componentMask) {
 
-  bool isInput = registerType == RegisterType::eInput
-    || registerType == RegisterType::eMiscType
+  bool isInput = registerTypeIsInput(registerType);
+
+  /* Semantics only apply to specific register types.
+   * Multiple RegisterType::eMiscType registers may have the same semantic. */
+  bool isRegularRegister = registerType == RegisterType::eInput
+    || registerType == RegisterType::eOutput
     || registerType == RegisterType::ePixelTexCoord;
 
   bool foundExisting = false;
   for (auto& entry : m_variables) {
-    if (entry.semantic == semantic && entry.registerType == registerType) {
+    if (isInput != registerTypeIsInput(entry.registerType)) {
+      continue;
+    }
+    if ((isRegularRegister && entry.semantic == semantic)
+      || (registerType == entry.registerType && registerIndex == entry.registerIndex)) {
       foundExisting = true;
       break;
     }
   }
   dxbc_spv_assert(!foundExisting);
 
-  ShaderType shaderType = m_converter.getShaderInfo().getType();
-
-  ir::OpCode opCode = isInput
-    ? ir::OpCode::eDclInput
-    : ir::OpCode::eDclOutput;
-
-  ir::BuiltIn builtIn = ir::BuiltIn::ePosition;
-
-  // Position must not be mapped to a regular input. SM3 still has a separate register for that.
-  dxbc_spv_assert(shaderType == ShaderType::eVertex
-    || semantic.usage != SemanticUsage::ePosition
-    || registerType == RegisterType::eMiscType
-    || registerType == RegisterType::eOutput);
-
-  if (semantic.usage == SemanticUsage::ePointSize && semantic.index == 0u) {
-    opCode = ir::OpCode::eDclOutputBuiltIn;
-    builtIn = ir::BuiltIn::ePointSize;
-  } else if (semantic.usage == SemanticUsage::ePosition && semantic.index == 0u) {
-    opCode = isInput
-      ? ir::OpCode::eDclInputBuiltIn
-      : ir::OpCode::eDclOutputBuiltIn;
-    builtIn = ir::BuiltIn::ePosition;
-  } else if (registerType == RegisterType::eDepthOut) {
-    builtIn = ir::BuiltIn::eDepth;
-  } else if (registerType == RegisterType::eMiscType) {
-    opCode = ir::OpCode::eDclInputBuiltIn;
-    if (registerIndex == uint32_t(MiscTypeIndex(MiscTypeIndex::eMiscTypeFace))) {
-      builtIn = ir::BuiltIn::eIsFrontFace;
-    } else if (registerIndex == uint32_t(MiscTypeIndex::eMiscTypePosition)) {
-      builtIn = ir::BuiltIn::ePosition;
-    } else {
-      // Invalid MiscType
-      dxbc_spv_assert(false);
-    }
-  }
-
-  bool isBuiltin = opCode != ir::OpCode::eDclInput && opCode != ir::OpCode::eDclOutput;
-
-  bool supportsRelativeAddressing = m_converter.getShaderInfo().getVersion().first == 3
-    && (m_converter.getShaderInfo().getType() == ShaderType::eVertex || isInput);
-
-  uint32_t location = m_converter.getSemanticMap().getIoLocation(semantic);
+  auto builtIn = determineBuiltinForRegister(registerType, registerIndex, semantic);
 
   bool isScalar = registerType == RegisterType::eRasterizerOut
     && (registerIndex == uint32_t(RasterizerOutIndex::eRasterOutFog)
@@ -203,21 +229,36 @@ void IoMap::dclIoVar(
     typeVectorSize
   );
 
-  ir::Op declaration = ir::Op(opCode, type)
-    .addOperand(m_converter.getEntryPoint());
+  ir::Op declaration;
+  uint32_t location = 0u;
+  if (!builtIn) {
+    location = m_converter.getSemanticMap().getIoLocation(semantic);
 
-  if (!isBuiltin) {
-      declaration.addOperand(location)
-        .addOperand(util::tzcnt(uint8_t(componentMask)));
+    ir::OpCode opCode = isInput
+      ? ir::OpCode::eDclInput
+      : ir::OpCode::eDclOutput;
 
-    if (isInput && shaderType == ShaderType::ePixel) {
-      if (semantic.usage == SemanticUsage::eColor) {
-        declaration.addOperand(ir::InterpolationModes(ir::InterpolationMode::eCentroid));
-      }
+    declaration = ir::Op(opCode, type)
+      .addOperand(m_converter.getEntryPoint())
+      .addOperand(location)
+      .addOperand(util::tzcnt(uint8_t(componentMask)));
+
+    ShaderType shaderType = m_converter.getShaderInfo().getType();
+    if (isInput && shaderType == ShaderType::ePixel && semantic.usage == SemanticUsage::eColor) {
+      declaration.addOperand(ir::InterpolationModes(ir::InterpolationMode::eCentroid));
     }
   } else {
-    declaration.addOperand(builtIn);
+    ir::OpCode opCode = isInput
+      ? ir::OpCode::eDclInputBuiltIn
+      : ir::OpCode::eDclOutputBuiltIn;
+
+    declaration = ir::Op(opCode, type)
+      .addOperand(m_converter.getEntryPoint())
+      .addOperand(*builtIn);
   }
+
+  bool supportsRelativeAddressing = m_converter.getShaderInfo().getVersion().first == 3
+    && (m_converter.getShaderInfo().getType() == ShaderType::eVertex || isInput);
 
   auto& mapping = m_variables.emplace_back();
   mapping.semantic = semantic;

@@ -154,6 +154,14 @@ private:
 
   void flushOutputs(ir::Builder& builder) const;
 
+  static bool registerTypeIsInput(RegisterType regType) {
+    return regType == RegisterType::eInput
+      || regType == RegisterType::eMiscType
+      || regType == RegisterType::ePixelTexCoord;
+  }
+
+  std::optional<ir::BuiltIn> determineBuiltinForRegister(RegisterType regType, uint32_t regIndex, Semantic semantic);
+
   void dclIoVar(
    ir::Builder& builder,
    RegisterType registerType,
