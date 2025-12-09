@@ -755,7 +755,7 @@ void IoMap::flushOutputs(ir::Builder& builder) const {
     auto baseType = variable.baseType.getBaseType(0u);
     for (uint32_t i = 0u; i < baseType.getVectorSize(); i++) {
       auto temp = builder.add(ir::Op::TmpLoad(variable.baseType, variable.tempDefs[i]));
-      builder.add(ir::Op::OutputStore(variable.baseDef, builder.makeConstant(i), temp));
+      builder.add(ir::Op::OutputStore(variable.baseDef, baseType.getVectorSize() > 1u ? builder.makeConstant(i) : ir::SsaDef(), temp));
     }
   }
 }
