@@ -1528,7 +1528,7 @@ bool Converter::handleEndLoop(ir::Builder &builder, const Instruction &op) {
 
 
 bool Converter::handleRep(ir::Builder& builder, const Instruction& op) {
-  /* Loop that does n repetitions (src1) and doesn't expose the current counter to the application. */
+  /* Loop that does n repetitions (src0) and doesn't expose the current counter to the application. */
   dxbc_spv_assert(op.getSrcCount() >= 1u);
 
   /* Assume that modifiers aren't supported here. We only implement them for floats right now. */
