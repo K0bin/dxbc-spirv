@@ -2028,7 +2028,7 @@ std::string Converter::makeRegisterDebugName(RegisterType type, uint32_t index, 
       name << MiscTypeIndex(index);
     } else if (type == RegisterType::eRasterizerOut) {
       name << RasterizerOutIndex(index);
-    } else if (type != RegisterType::eLoop) {
+    } else if (type != RegisterType::eLoop && type != RegisterType::ePredicate) {
       name << index;
     }
     if (mask && mask != WriteMask(ComponentBit::eAll)) {
