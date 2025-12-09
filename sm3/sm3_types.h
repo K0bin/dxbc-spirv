@@ -191,8 +191,8 @@ enum class RasterizerOutIndex : uint32_t {
 
 /** Valid indices for MiscType registers */
 enum class MiscTypeIndex : uint32_t {
-  eMiscTypePosition,
-  eMiscTypeFace,
+  eMiscTypePosition = 0u,
+  eMiscTypeFace     = 1u,
 };
 
 /* Comparison modes for usage with the ifc instruction */
