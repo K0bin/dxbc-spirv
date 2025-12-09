@@ -1684,11 +1684,7 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
 
     case OperandModifier::eBias: /* r - 0.5 */
     case OperandModifier::eBiasNeg: { /* -(r - 0.5) */
-      auto halfConstOp = ir::Op(ir::OpCode::eConstant, type);
-      for (uint32_t i = 0u; i < type.getVectorSize(); i++) {
-        halfConstOp.addOperand(0.5f);
-      }
-      ir::SsaDef halfConst = builder.add(halfConstOp);
+      auto halfConst = ir::makeTypedConstant(builder, type, 0.5f);
       modifiedDef = builder.add(ir::Op::FSub(type, modifiedDef, halfConst));
       if (mod == OperandModifier::eBiasNeg)
         modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
@@ -1696,35 +1692,21 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
 
     case OperandModifier::eSign: /* fma(r, 2.0, -1.0) */
     case OperandModifier::eSignNeg: { /* -fma(r, 2.0, -1.0) */
-      auto twoConstOp = ir::Op(ir::OpCode::eConstant, type);
-      auto minusOneConstOp = ir::Op(ir::OpCode::eConstant, type);
-      for (uint32_t i = 0u; i < type.getVectorSize(); i++) {
-        twoConstOp.addOperand(2.0f);
-        minusOneConstOp.addOperand(-1.0f);
-      }
-      auto twoConst = builder.add(twoConstOp);
-      auto minusOneConst = builder.add(minusOneConstOp);
+      auto twoConst = ir::makeTypedConstant(builder, type, 2.0f);
+      auto minusOneConst = ir::makeTypedConstant(builder, type, -1.0f);
       modifiedDef = builder.add(ir::Op::FMad(type, modifiedDef, twoConst, minusOneConst));
       if (mod == OperandModifier::eSignNeg)
         modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
     } break;
 
     case OperandModifier::eComp: { // 1.0 - r
-      auto oneConstOp = ir::Op(ir::OpCode::eConstant, type);
-      for (uint32_t i = 0u; i < type.getVectorSize(); i++) {
-        oneConstOp.addOperand(1.0f);
-      }
-      ir::SsaDef oneConst = builder.add(oneConstOp);
+      ir::SsaDef oneConst = ir::makeTypedConstant(builder, type, 1.0f);
       modifiedDef = builder.add(ir::Op::FSub(type, oneConst, modifiedDef));
     } break;
 
     case OperandModifier::eX2: /* r * 2.0 */
     case OperandModifier::eX2Neg: { /* -(r * 2.0) */
-      auto twoConstOp = ir::Op(ir::OpCode::eConstant, type);
-      for (uint32_t i = 0u; i < type.getVectorSize(); i++) {
-          twoConstOp.addOperand(2.0f);
-      }
-      ir::SsaDef twoConst = builder.add(twoConstOp);
+      ir::SsaDef twoConst = ir::makeTypedConstant(builder, type, 2.0f);
       modifiedDef = builder.add(ir::Op::FMul(type, modifiedDef, twoConst));
       if (mod == OperandModifier::eX2Neg) {
         modifiedDef = builder.add(ir::Op::FAbs(type, modifiedDef));
