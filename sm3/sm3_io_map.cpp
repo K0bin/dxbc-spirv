@@ -359,6 +359,10 @@ bool IoMap::determineSemanticForRegister(RegisterType regType, uint32_t regIndex
       *semantic = Semantic { SemanticUsage::eDepth, regIndex };
       return true;
 
+    case RegisterType::eTexture:
+      *semantic = Semantic { SemanticUsage::eTexCoord, regIndex };
+      return true;
+
     case RegisterType::eRasterizerOut:
     case RegisterType::eAttributeOut:
       switch (regIndex) {
