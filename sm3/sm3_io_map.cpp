@@ -119,12 +119,29 @@ bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
   const auto& dst = op.getDst();
   const auto& dcl = op.getDcl();
 
-  WriteMask componentMask = dst.getWriteMask(m_converter.getShaderInfo());
-  if (m_converter.getShaderInfo().getVersion().first < 3) {
-    componentMask = WriteMask(ComponentBit::eAll);
+  auto info = m_converter.getShaderInfo();
+
+  Semantic semantic;
+
+  bool isPixelShader = info.getType() == ShaderType::ePixel;
+  bool isVarying = registerTypeIsInput(dst.getRegisterType(), info.getType()) == isPixelShader;
+
+  if (!isVarying || info.getVersion().first >= 3u ) {
+    /* DCL instructions for VS outputs and PS inputs that associate generic input/output registers
+     * to semantics only exist in SM3.
+     * Instructions that associate VS input registers to semantics do exist in earlier shader models though. */
+    semantic = { dcl.getSemanticUsage(), dcl.getSemanticIndex() };
+  } else {
+    /* SM2 doesn't have semantics for VS outputs or PS inputs.
+     * Generate a matching semantic so we can use the same code. */
+    bool foundSemantic = determineSemanticForRegister(dst.getRegisterType(), dst.getIndex(), &semantic);
+    dxbc_spv_assert(foundSemantic);
   }
 
-  Semantic semantic = { dcl.getSemanticUsage(), dcl.getSemanticIndex() };
+  WriteMask componentMask = dst.getWriteMask(info);
+  if (info.getVersion().first < 3u) {
+    componentMask = WriteMask(ComponentBit::eAll);
+  }
 
   dclIoVar(builder, dst.getRegisterType(), dst.getIndex(), semantic, componentMask);
   return true;
@@ -132,7 +149,9 @@ bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
 
 
 std::optional<ir::BuiltIn> IoMap::determineBuiltinForRegister(RegisterType regType, uint32_t regIndex, Semantic semantic) {
-  if (!registerTypeIsInput(regType, m_converter.getShaderInfo().getType())) {
+  auto shaderInfo = m_converter.getShaderInfo();
+
+  if (!registerTypeIsInput(regType, shaderInfo.getType())) {
 
     if (regType == RegisterType::eDepthOut) {
       return std::make_optional(ir::BuiltIn::eDepth);
@@ -140,43 +159,43 @@ std::optional<ir::BuiltIn> IoMap::determineBuiltinForRegister(RegisterType regTy
 
     if (regType == RegisterType::eRasterizerOut) {
       if (regIndex == uint32_t(RasterizerOutIndex::eRasterOutPointSize)) {
+        dxbc_spv_assert(semantic.usage == SemanticUsage::ePointSize && semantic.index == 0u);
         return std::make_optional(ir::BuiltIn::ePointSize);
       }
 
       if (regIndex == uint32_t(RasterizerOutIndex::eRasterOutPosition)) {
+        dxbc_spv_assert(semantic.usage == SemanticUsage::ePosition && semantic.index == 0u);
         return std::make_optional(ir::BuiltIn::ePosition);
       }
 
       /* The only other register index we accept for RasterizerOut registers is
        * the fog register. */
       dxbc_spv_assert(regIndex == uint32_t(RasterizerOutIndex::eRasterOutFog));
+      dxbc_spv_assert(semantic.usage == SemanticUsage::eFog && semantic.index == 0u);
       /* Fog is a builtin for D3D9 but not for Vulkan. */
 
       return std::nullopt;
     }
 
-    if (regType == RegisterType::eOutput) {
-      // The dcl instructions with a semantic only exist in SM3
-      // and SM3 uses generic output registers.
+    // The dcl instructions with a semantic only exist in SM3
+    // and SM3 uses generic output registers.
 
-      if (semantic.usage == SemanticUsage::ePosition && semantic.index == 0u) {
-        return std::make_optional(ir::BuiltIn::ePosition);
-      }
-
-      if (semantic.usage == SemanticUsage::ePointSize && semantic.index == 0u) {
-        return std::make_optional(ir::BuiltIn::ePointSize);
-      }
-
-      return std::nullopt;
+    if (semantic.usage == SemanticUsage::ePosition && semantic.index == 0u) {
+      dxbc_spv_assert(regType == RegisterType::eOutput);
+      return std::make_optional(ir::BuiltIn::ePosition);
     }
+
+    if (semantic.usage == SemanticUsage::ePointSize && semantic.index == 0u) {
+      dxbc_spv_assert(regType == RegisterType::eOutput);
+      return std::make_optional(ir::BuiltIn::ePointSize);
+    }
+
+    return std::nullopt;
 
   } else {
 
-    auto shaderInfo = m_converter.getShaderInfo();
-
     // Position must not be mapped to a regular input. SM3 still has a separate register for that.
     dxbc_spv_assert(shaderInfo.getType() == ShaderType::eVertex
-      || shaderInfo.getVersion().first < 3u
       || semantic.usage != SemanticUsage::ePosition
       || regType != RegisterType::eInput);
 
@@ -267,8 +286,8 @@ void IoMap::dclIoVar(
       .addOperand(*builtIn);
   }
 
-  bool supportsRelativeAddressing = m_converter.getShaderInfo().getVersion().first == 3
-    && (m_converter.getShaderInfo().getType() == ShaderType::eVertex || isInput);
+  bool supportsRelativeAddressing = m_converter.getShaderInfo().getVersion().first == 3u
+    && (shaderType == ShaderType::eVertex || isInput);
 
   auto& mapping = m_variables.emplace_back();
   mapping.semantic = semantic;
@@ -363,8 +382,11 @@ bool IoMap::determineSemanticForRegister(RegisterType regType, uint32_t regIndex
       *semantic = Semantic { SemanticUsage::eTexCoord, regIndex };
       return true;
 
-    case RegisterType::eRasterizerOut:
     case RegisterType::eAttributeOut:
+      *semantic = Semantic { SemanticUsage::eColor, regIndex };
+      return true;
+
+    case RegisterType::eRasterizerOut:
       switch (regIndex) {
         case uint32_t(RasterizerOutIndex::eRasterOutFog):
             *semantic = Semantic { SemanticUsage::eFog, 0u };
