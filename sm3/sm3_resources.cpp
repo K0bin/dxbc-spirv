@@ -661,7 +661,8 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
 
     auto textureTypeSwitchEnd = builder.add(ir::Op::ScopedEndSwitch(textureTypeSwitch));
     builder.rewriteOp(textureTypeSwitch, ir::Op(builder.getOp(textureTypeSwitch)).setOperand(0u, textureTypeSwitchEnd));
-    builder.add(ir::Op::Return(ir::BasicType(ir::ScalarType::eF32, 4u), resultTmp));
+    auto returnVal = builder.add(ir::Op::TmpLoad(ir::BasicType(ir::ScalarType::eF32, 4u), resultTmp));
+    builder.add(ir::Op::Return(ir::BasicType(ir::ScalarType::eF32, 4u), returnVal));
   }
   builder.add(ir::Op::FunctionEnd());
 
