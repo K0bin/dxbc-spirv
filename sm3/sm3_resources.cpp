@@ -612,8 +612,8 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
     }
   }
   if (config & SamplingConfigBit::eExplicitDerivatives) {
-    dxParam = builder.add(ir::Op::DclParam(ir::ScalarType::eF32)); // Dx
-    dyParam = builder.add(ir::Op::DclParam(ir::ScalarType::eF32)); // Dy
+    dxParam = builder.add(ir::Op::DclParam(ir::BasicType(ir::ScalarType::eF32, 4u))); // Dx
+    dyParam = builder.add(ir::Op::DclParam(ir::BasicType(ir::ScalarType::eF32, 4u))); // Dy
     functionOp.addOperand(dxParam);
     functionOp.addOperand(dyParam);
     if (m_converter.getOptions().includeDebugNames) {
@@ -626,8 +626,8 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
   auto texCoord = builder.add(ir::Op::ParamLoad(vec4FType, function, texCoordParam));
   auto lod = lodParam ? builder.add(ir::Op::ParamLoad(ir::ScalarType::eF32, function, lodParam)) : ir::SsaDef();
   auto lodBias = lodBiasParam ? builder.add(ir::Op::ParamLoad(ir::ScalarType::eF32, function, lodBiasParam)) : ir::SsaDef();
-  auto dx = dxParam ? builder.add(ir::Op::ParamLoad(ir::ScalarType::eF32, function, dxParam)) : ir::SsaDef();
-  auto dy = dyParam ? builder.add(ir::Op::ParamLoad(ir::ScalarType::eF32, function, dyParam)) : ir::SsaDef();
+  auto dx = dxParam ? builder.add(ir::Op::ParamLoad(ir::BasicType(ir::ScalarType::eF32, 4u), function, dxParam)) : ir::SsaDef();
+  auto dy = dyParam ? builder.add(ir::Op::ParamLoad(ir::BasicType(ir::ScalarType::eF32, 4u), function, dyParam)) : ir::SsaDef();
 
   const auto& samplerInfo = m_samplers.at(samplerIndex);
   dxbc_spv_assert(samplerInfo.regIndex == samplerIndex);
@@ -763,6 +763,19 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
   }
   auto sizedTexCoord = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, texCoordComponents.data());
 
+  auto sizedDx = ir::SsaDef();
+  auto sizedDy = ir::SsaDef();
+  if (dx && dy) {
+    std::array<ir::SsaDef, 4u> dxComponents;
+    std::array<ir::SsaDef, 4u> dyComponents;
+    for (uint32_t i = 0u; i < texCoordComponentCount; i++) {
+      dxComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, dx, builder.makeConstant(i)));
+      dyComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, dy, builder.makeConstant(i)));
+    }
+    sizedDx = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, dxComponents.data());
+    sizedDy = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, dyComponents.data());
+  }
+
   auto color = builder.add(ir::Op::ImageSample(
     ir::BasicType(ir::ScalarType::eF32, 4u),
     descriptor,
@@ -773,8 +786,8 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
     lod,
     lodBias,
     ir::SsaDef(),
-    dx,
-    dy,
+    sizedDx,
+    sizedDy,
     ir::SsaDef()
   ));
 
@@ -907,6 +920,20 @@ ir::SsaDef ResourceMap::emitSampleDref(
     texCoordComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(i)));
   }
   auto sizedTexCoord = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, texCoordComponents.data());
+
+  auto sizedDx = ir::SsaDef();
+  auto sizedDy = ir::SsaDef();
+  if (dx && dy) {
+    std::array<ir::SsaDef, 4u> dxComponents;
+    std::array<ir::SsaDef, 4u> dyComponents;
+    for (uint32_t i = 0u; i < texCoordComponentCount; i++) {
+      dxComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, dx, builder.makeConstant(i)));
+      dyComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, dy, builder.makeConstant(i)));
+    }
+    sizedDx = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, dxComponents.data());
+    sizedDy = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, dyComponents.data());
+  }
+
   auto drefResult = builder.add(ir::Op::ImageSample(
     ir::ScalarType::eF32,
     descriptor,
@@ -917,8 +944,8 @@ ir::SsaDef ResourceMap::emitSampleDref(
     lod,
     lodBias,
     ir::SsaDef(),
-    dx,
-    dy,
+    sizedDx,
+    sizedDy,
     reference
   ));
   return broadcastScalar(builder, drefResult, WriteMask(ComponentBit::eAll));
