@@ -1416,7 +1416,7 @@ bool Converter::handleExpP(ir::Builder& builder, const Instruction& op) {
     }
   }
 
-  auto result = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
+  auto result = ir::buildVector(builder, scalarType, components.size(), components.data());
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
