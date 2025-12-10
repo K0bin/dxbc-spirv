@@ -652,7 +652,7 @@ bool Converter::handleMatrixArithmetic(ir::Builder& builder, const Instruction& 
 
   /* Load source operands */
   auto src0 = loadSrcModified(builder, op, op.getSrc(0u), srcMask, scalarType);
-  Operand src1Operand = op.getSrc(2u);
+  Operand src1Operand = op.getSrc(1u);
 
   std::array<ir::SsaDef, 4u> components = { };
   for (uint32_t i = 0u; i < rowCount; i++) {
