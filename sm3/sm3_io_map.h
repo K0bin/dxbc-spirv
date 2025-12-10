@@ -142,7 +142,6 @@ public:
 private:
 
   Converter&      m_converter;
-  ShaderType      m_shaderType = { };
 
   IoVarList       m_variables;
 
@@ -154,8 +153,9 @@ private:
 
   void flushOutputs(ir::Builder& builder) const;
 
-  static bool registerTypeIsInput(RegisterType regType) {
+  static bool registerTypeIsInput(RegisterType regType, ShaderType shaderType) {
     return regType == RegisterType::eInput
+      || (regType == RegisterType::eTexture && shaderType == ShaderType::ePixel)
       || regType == RegisterType::eMiscType
       || regType == RegisterType::ePixelTexCoord;
   }
