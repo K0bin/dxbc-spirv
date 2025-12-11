@@ -648,6 +648,7 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
     /* Shader model 1 does not require declaring samplers/textures with a DCL instruction.
      * We emit a switch() block with one case for each texture type. Decide based on a spec constant. */
     auto resultTmp = builder.add(ir::Op::DclTmp(ir::BasicType(ir::ScalarType::eF32, 4u), m_converter.getEntryPoint()));
+    builder.add(ir::Op::TmpStore(resultTmp, ir::broadcastScalar(builder, builder.makeConstant(0.0f), ComponentBit::eAll)));
     auto samplerTypeSpecConst = m_converter.m_specConstants.get(
       builder,
       SpecConstantId::eSpecSamplerType,
@@ -797,22 +798,23 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
     ir::SsaDef()
   ));
 
-  /* Load the spec constant that tells us if fetch4 (gather) is enabled for the sampler. */
-
-  auto fetch4EnabledSpecConst = m_converter.m_specConstants.get(
-    builder,
-    SpecConstantId::eSpecSamplerFetch4,
-    builder.makeConstant(specConstIdx),
-    builder.makeConstant(1u)
-  );
-  auto fetch4Enabled = builder.add(ir::Op::INe(ir::ScalarType::eBool, fetch4EnabledSpecConst, builder.makeConstant(0u)));
-
   /* Fetch4 */
   if (m_converter.getShaderInfo().getType() == ShaderType::ePixel && textureType != SpecConstTextureType::eTexture3D) {
     /* Doesn't really work for cubes...
      * D3D9 does support gather on 3D but we cannot :<
      * Nothing probably relies on that though.
      * If we come back to this ever, make sure to handle cube/3d differences. */
+
+    /* Load the spec constant that tells us if fetch4 (gather) is enabled for the sampler. */
+
+    auto fetch4EnabledSpecConst = m_converter.m_specConstants.get(
+      builder,
+      SpecConstantId::eSpecSamplerFetch4,
+      builder.makeConstant(specConstIdx),
+      builder.makeConstant(1u)
+    );
+    auto fetch4Enabled = builder.add(ir::Op::INe(ir::ScalarType::eBool, fetch4EnabledSpecConst, builder.makeConstant(0u)));
+
     if (textureType == SpecConstTextureType::eTexture2D) {
       /* Account for half texel offset...
        * texcoord += (1.0f - 1.0f / 256.0f) / float(2 * textureSize(sampler, 0)) */
