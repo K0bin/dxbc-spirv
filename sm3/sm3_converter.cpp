@@ -74,7 +74,7 @@ bool Converter::convertShader(ir::Builder& builder) {
 
       if (nextOp && nextOp.isCoissued()) {
         /* Execute the co-issued instruction first. */
-        if (!convertInstruction(builder, op)) {
+        if (!convertInstruction(builder, nextOp)) {
           return false;
         }
         nextOp = Instruction();
