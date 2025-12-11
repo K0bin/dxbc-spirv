@@ -108,7 +108,9 @@ public:
 
     ~ResourceMap();
 
-    void initialize(ir::Builder& builder, bool useCTabNames);
+    void initialize(ir::Builder& builder);
+
+    void emitNamedConstantRanges(ir::Builder& builder, const ConstantTable& ctab);
 
     /** Loads a resource or sampler descriptor and retrieves basic
      *  properties required to perform any operations on typed resources. */

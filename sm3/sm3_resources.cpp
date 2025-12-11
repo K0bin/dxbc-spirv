@@ -25,7 +25,7 @@ ResourceMap::~ResourceMap() {
 }
 
 
-void ResourceMap::initialize(ir::Builder& builder, bool useCTabNames) {
+void ResourceMap::initialize(ir::Builder& builder) {
   ShaderType shaderType = m_converter.getShaderInfo().getType();
   bool isSwvp = m_converter.getOptions().isSWVP;
   auto cbvStructType = ir::Type();
@@ -80,40 +80,45 @@ void ResourceMap::initialize(ir::Builder& builder, bool useCTabNames) {
     boolRange.count = (MaxOtherConstantsSoftware + 31u) / 32u;
     boolRange.namedBufferDef = m_boolConstants.bufferDef;
   }
+}
 
-  if (useCTabNames) {
-    /* If debug names are enabled, generate one buffer per named constant. They will all have the same regIdx. */
-    const ConstantTable& ctab = m_converter.m_ctab;
-    const auto& ctabFloatEntries = ctab.entries()[uint32_t(ConstantType::eFloat4)];
-    for (const auto& entry : ctabFloatEntries) {
-      auto& range = m_floatConstants.constantRanges.emplace_back();
-      range.startIndex = entry.index;
-      range.count = entry.count;
-      auto floatVec4Type = ir::Type(ir::ScalarType::eF32, 4u);
-      auto floatArrayType = ir::Type(floatVec4Type).addArrayDimension(isSwvp ? MaxFloatConstantsSoftware : hwvpConstantsArraySize);
-      range.namedBufferDef = builder.add(ir::Op::DclCbv(floatArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, isSwvp ? FloatSWVPCbvRegIdx : FloatIntHWVPCbvRegIdx, 1u));
-      builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
-    }
-    const auto& ctabIntEntries = ctab.entries()[uint32_t(ConstantType::eInt4)];
-    for (const auto& entry : ctabIntEntries) {
-      auto& range = m_intConstants.constantRanges.emplace_back();
+
+void ResourceMap::emitNamedConstantRanges(ir::Builder& builder, const ConstantTable& ctab) {
+  ShaderType shaderType = m_converter.getShaderInfo().getType();
+  bool isSwvp = m_converter.getOptions().isSWVP;
+  uint32_t hwvpFloatConstantsCount = (shaderType == ShaderType::ePixel ? MaxFloatConstantsPS : MaxFloatConstantsVS);
+  uint32_t hwvpConstantsArraySize = hwvpFloatConstantsCount + MaxOtherConstants;
+
+  /* If debug names are enabled, generate one buffer per named constant. They will all have the same regIdx. */
+  const auto& ctabFloatEntries = ctab.entries()[uint32_t(ConstantType::eFloat4)];
+  for (const auto& entry : ctabFloatEntries) {
+    auto& range = m_floatConstants.constantRanges.emplace_back();
+    range.startIndex = entry.index;
+    range.count = entry.count;
+    auto floatVec4Type = ir::Type(isSwvp ? ir::ScalarType::eF32 : ir::ScalarType::eUnknown, 4u);
+    auto floatArrayType = ir::Type(floatVec4Type).addArrayDimension(isSwvp ? MaxFloatConstantsSoftware : hwvpConstantsArraySize);
+    range.namedBufferDef = builder.add(ir::Op::DclCbv(floatArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, isSwvp ? FloatSWVPCbvRegIdx : FloatIntHWVPCbvRegIdx, 1u));
+    builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
+  }
+  const auto& ctabIntEntries = ctab.entries()[uint32_t(ConstantType::eInt4)];
+  for (const auto& entry : ctabIntEntries) {
+    auto& range = m_intConstants.constantRanges.emplace_back();
+    range.startIndex = entry.index;
+    range.count      = entry.count;
+    auto intVec4Type = ir::Type(isSwvp ? ir::ScalarType::eI32 : ir::ScalarType::eUnknown, 4u);
+    auto intArrayType = ir::Type(intVec4Type).addArrayDimension(isSwvp ? MaxOtherConstantsSoftware : hwvpConstantsArraySize);
+    range.namedBufferDef = builder.add(ir::Op::DclCbv(intArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, isSwvp ? IntSWVPCbvRegIdx : FloatIntHWVPCbvRegIdx, 1u));
+    builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
+  }
+  if (isSwvp) {
+    const auto& ctabBoolEntries = ctab.entries()[uint32_t(ConstantType::eBool)];
+    for (const auto& entry : ctabBoolEntries) {
+      auto& range = m_boolConstants.constantRanges.emplace_back();
       range.startIndex = entry.index;
       range.count      = entry.count;
-      auto intVec4Type = ir::Type(ir::ScalarType::eI32, 4u);
-      auto intArrayType = ir::Type(intVec4Type).addArrayDimension(isSwvp ? MaxOtherConstantsSoftware : hwvpConstantsArraySize);
-      range.namedBufferDef = builder.add(ir::Op::DclCbv(intArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, isSwvp ? IntSWVPCbvRegIdx : FloatIntHWVPCbvRegIdx, 1u));
+      auto boolBitMasksArrayType = ir::Type(ir::ScalarType::eU32).addArrayDimension(MaxOtherConstantsSoftware);
+      range.namedBufferDef = builder.add(ir::Op::DclCbv(boolBitMasksArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, BoolSWVPCbvRegIdx, 1u));
       builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
-    }
-    if (isSwvp) {
-      const auto& ctabBoolEntries = ctab.entries()[uint32_t(ConstantType::eBool)];
-      for (const auto& entry : ctabBoolEntries) {
-        auto& range = m_boolConstants.constantRanges.emplace_back();
-        range.startIndex = entry.index;
-        range.count      = entry.count;
-        auto boolBitMasksArrayType = ir::Type(ir::ScalarType::eU32).addArrayDimension(MaxOtherConstantsSoftware);
-        range.namedBufferDef = builder.add(ir::Op::DclCbv(boolBitMasksArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, BoolSWVPCbvRegIdx, 1u));
-        builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
-      }
     }
   }
 }

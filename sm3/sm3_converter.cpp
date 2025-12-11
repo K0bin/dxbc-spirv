@@ -102,12 +102,14 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
   m_instructionCount += 1u;
 
   switch (opCode) {
-    case OpCode::eComment:
     case OpCode::eNop:
     case OpCode::eReserved0:
     case OpCode::ePhase:
     case OpCode::eEnd:
       return true;
+
+    case OpCode::eComment:
+      return handleComment(builder, op);
 
     case OpCode::eDef:
     case OpCode::eDefI:
@@ -285,7 +287,7 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
   m_specConstants.dclBuffer(builder);
   m_ioMap.initialize(builder);
   m_regFile.initialize(builder);
-  m_resources.initialize(builder, m_options.includeDebugNames); // TODO: Separate option for Ctab names?
+  m_resources.initialize(builder);
 
   if (getShaderInfo().getType() == ShaderType::ePixel) {
     m_psSharedData = emitSharedConstants(builder);
@@ -1937,6 +1939,16 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
   }
 
   return storeDst(builder, op, operand, predicate, value);
+}
+
+
+bool Converter::handleComment(ir::Builder& builder, const Instruction& op) {
+  if (m_options.includeDebugNames && op.getOpCode() == sm3::OpCode::eComment && !m_ctab) {
+    auto ctabReader = util::ByteReader(op.getCommentData(), op.getCommentDataSize());
+    m_ctab = sm3::ConstantTable(ctabReader);
+    m_resources.emitNamedConstantRanges(builder, m_ctab);
+  }
+  return true;
 }
 
 
