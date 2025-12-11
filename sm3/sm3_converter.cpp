@@ -736,7 +736,7 @@ bool Converter::handleTexCoord(ir::Builder& builder, const Instruction& op) {
   } else {
     /* TexCoord (SM 1.1 - 1.3) */
     ir::BasicType vectorType = makeVectorType(scalarType, writeMask);
-    auto src = loadSrc(builder, op, op.getSrc(0u), writeMask, op.getSrc(0u).getSwizzle(getShaderInfo()), scalarType);
+    auto src = m_ioMap.emitTexCoordLoad(builder, op, op.getDst().getIndex(), writeMask, Swizzle::identity(), scalarType);
 
     /* Saturate */
     src = builder.add(ir::Op::FClamp(
