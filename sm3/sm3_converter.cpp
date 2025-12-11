@@ -1909,8 +1909,13 @@ bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Oper
 
   switch (operand.getRegisterType()) {
     case RegisterType::eTemp:
-    case RegisterType::eAddr:
       return m_regFile.emitStore(builder, operand, writeMask, predicateVec, value);
+
+    case RegisterType::eAddr:
+      if (getShaderInfo().getType() == ShaderType::eVertex)
+        return m_regFile.emitStore(builder, operand, writeMask, predicateVec, value);
+      else
+        return m_ioMap.emitStore(builder, op, operand, writeMask, predicateVec, value);
 
     case RegisterType::eOutput:
     case RegisterType::eRasterizerOut:
