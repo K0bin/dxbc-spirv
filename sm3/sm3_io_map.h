@@ -151,7 +151,7 @@ private:
   ir::SsaDef emitDynamicLoadFunction(ir::Builder& builder) const;
   ir::SsaDef emitDynamicStoreFunction(ir::Builder& builder) const;
 
-  void flushOutputs(ir::Builder& builder) const;
+  void flushOutputs(ir::Builder& builder);
 
   static bool registerTypeIsInput(RegisterType regType, ShaderType shaderType) {
     return regType == RegisterType::eInput

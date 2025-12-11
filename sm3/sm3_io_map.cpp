@@ -89,6 +89,17 @@ void IoMap::initialize(ir::Builder& builder) {
       { SemanticUsage::eFog, 0u },
       WriteMask(ComponentBit::eAll)
     );
+
+    if (info.getType() == ShaderType::ePixel) {
+      /* Declare a output register for PS 1 shaders. */
+      dclIoVar(
+        builder,
+        RegisterType::eColorOut,
+        0u,
+        { SemanticUsage::eColor, 0u },
+        WriteMask(ComponentBit::eAll)
+      );
+    }
   }
 }
 
@@ -286,7 +297,8 @@ void IoMap::dclIoVar(
       .addOperand(*builtIn);
   }
 
-  bool supportsRelativeAddressing = m_converter.getShaderInfo().getVersion().first == 3u
+  auto [versionMajor, versionMinor] = m_converter.getShaderInfo().getVersion();
+  bool supportsRelativeAddressing = versionMajor == 3u
     && (shaderType == ShaderType::eVertex || isInput);
 
   auto& mapping = m_variables.emplace_back();
@@ -299,7 +311,12 @@ void IoMap::dclIoVar(
   mapping.baseType = declaration.getType();
   mapping.baseDef = builder.add(std::move(declaration));
   mapping.tempDefs = { };
-  if (!isInput) {
+  if (!isInput || (registerType == RegisterType::eTexture
+    && versionMajor == 1u
+    && versionMinor < 4u
+    && shaderType == ShaderType::ePixel)) {
+    /* SM 1 texture ops write the texture data into the texture register which used to hold the texcoord.
+     * So we need writable temps for this input register. */
     for (uint32_t i = 0u; i < typeVectorSize; i++) {
       mapping.tempDefs[i] = builder.add(ir::Op::DclTmp(ir::ScalarType::eF32, m_converter.getEntryPoint()));
     }
@@ -327,6 +344,14 @@ void IoMap::dclIoVar(
       for (uint32_t i = 0u; i < typeVectorSize; i++) {
         builder.add(ir::Op::TmpStore(mapping.tempDefs[i], builder.makeConstant(0.0f)));
       }
+    }
+  } else if (mapping.tempDefs[0u]) {
+    /* Load the initial input tex coords. */
+    for (uint32_t i = 0u; i < typeVectorSize; i++) {
+      builder.add(ir::Op::TmpStore(
+        mapping.tempDefs[i],
+        builder.add(ir::Op::InputLoad(ir::ScalarType::eF32, mapping.baseDef, builder.makeConstant(i)))
+      ));
     }
   }
 
@@ -451,11 +476,16 @@ ir::SsaDef IoMap::emitLoad(
       if (!isFrontFaceBuiltin) {
         auto baseType = ioVar->baseType.getBaseType(0u);
         ir::ScalarType varScalarType = ioVar->baseType.getBaseType(0u).getBaseType();
-        ir::SsaDef addressConstant = ir::SsaDef();
-        if (!baseType.isScalar()) {
-          addressConstant = builder.makeConstant(uint32_t(componentIndex));
+        if (!ioVar->tempDefs[0u]) {
+          ir::SsaDef addressConstant = ir::SsaDef();
+          if (!baseType.isScalar()) {
+            addressConstant = builder.makeConstant(uint32_t(componentIndex));
+          }
+          value = builder.add(ir::Op::InputLoad(varScalarType, ioVar->baseDef, addressConstant));
+        } else {
+          /* The input register is writable. (SM 1 Texture register) */
+          value = builder.add(ir::Op::TmpLoad(varScalarType, ioVar->tempDefs[uint32_t(componentIndex)]));
         }
-        value = builder.add(ir::Op::InputLoad(varScalarType, ioVar->baseDef, addressConstant));
       } else {
         // The front face needs to be transformed from a bool to 1.0/-1.0.
         // It can only be loaded using a separate register, even on SM3.
@@ -522,9 +552,15 @@ ir::SsaDef IoMap::emitTexCoordLoad(
       continue;
     }
 
-    ir::SsaDef addressConstant = builder.makeConstant(componentIndex);
     auto varScalarType = ioVar->baseType.getBaseType(0u).getBaseType();
-    auto value = builder.add(ir::Op::InputLoad(varScalarType, ioVar->baseDef, addressConstant));
+    ir::SsaDef value;
+    if (!ioVar->tempDefs[0u]) {
+      ir::SsaDef addressConstant = builder.makeConstant(componentIndex);
+      value = builder.add(ir::Op::InputLoad(varScalarType, ioVar->baseDef, addressConstant));
+    } else {
+      /* The input register is writable. (SM 1 Texture register) */
+      value = builder.add(ir::Op::TmpLoad(varScalarType, ioVar->tempDefs[uint32_t(componentIndex)]));
+    }
     components[componentIndex] = convertScalar(builder, type, value);
   }
 
@@ -555,9 +591,17 @@ bool IoMap::emitStore(
       dclIoVar(builder, operand.getRegisterType(), operand.getIndex(), semantic,  WriteMask(ComponentBit::eAll));
       ioVar = &m_variables.back();
     }
+    if (operand.getRegisterType() == RegisterType::eTexture) {
+      /* PS 1 texture registers hold the texcoords at first which then gets replaced by the texture data when
+       * a texture sampling instruction is executed. */
+      dxbc_spv_assert(m_converter.getShaderInfo().getType() == ShaderType::ePixel);
+      auto [versionMajor, versionMinor] = m_converter.getShaderInfo().getVersion();
+      dxbc_spv_assert(versionMajor <= 1u && versionMinor <= 3u);
+    } else {
+      bool isOutput = !registerTypeIsInput(ioVar->registerType, m_converter.getShaderInfo().getType());
+      dxbc_spv_assert(isOutput);
+    }
 
-    bool isOutput = !registerTypeIsInput(ioVar->registerType, m_converter.getShaderInfo().getType());
-    dxbc_spv_assert(isOutput);
     auto ioVarBaseType = ioVar->baseType.getBaseType(0u);
     ir::ScalarType ioVarScalarType = ioVarBaseType.getBaseType();
 
@@ -569,7 +613,7 @@ bool IoMap::emitStore(
         valueScalar = builder.add(ir::Op::CompositeExtract(srcScalarType, value, componentIndexConst));
       }
       valueScalar = convertScalar(builder, ioVarScalarType, valueScalar);
-      if (ioVar->semantic.usage == SemanticUsage::eColor && ioVar->semantic.index < 2 && m_converter.getShaderInfo().getVersion().first < 3) {
+      if (ioVar->semantic.usage == SemanticUsage::eColor && ioVar->semantic.index < 2u && m_converter.getShaderInfo().getVersion().first < 3u) {
         // The color register cannot be dynamically indexed, so there's no need to do this in the dynamic store function.
         valueScalar = builder.add(ir::Op::FClamp(ioVarScalarType, valueScalar,
           builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
@@ -781,9 +825,24 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
 }
 
 
-void IoMap::flushOutputs(ir::Builder& builder) const {
+void IoMap::flushOutputs(ir::Builder& builder) {
+  if (m_converter.getShaderInfo().getType() == ShaderType::ePixel && m_converter.getShaderInfo().getVersion().first <= 1u) {
+    /* PS 1 doesn't have output registers. Instead, the first temporary register (r0) additionally serves
+     * as the output register. */
+    const IoVarInfo* ioVar = findIoVar(m_variables, RegisterType::eColorOut, 0u);
+    for (uint32_t i = 0u; i < 4u; i++) {
+      auto r0Comp = m_converter.m_regFile.emitTempLoad(builder, 0u, Swizzle::identity(),
+        util::componentBit(Component(i)), ir::ScalarType::eF32);
+      builder.add(ir::Op::TmpStore(ioVar->tempDefs[i], r0Comp));
+    }
+  }
+
   for (const auto& variable : m_variables) {
     if (!variable.tempDefs[0u])
+      continue;
+
+    auto op = builder.getOp(variable.baseDef);
+    if (op.getOpCode() != ir::OpCode::eDclOutput)
       continue;
 
     auto baseType = variable.baseType.getBaseType(0u);

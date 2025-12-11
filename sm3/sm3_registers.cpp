@@ -154,6 +154,7 @@ bool RegisterFile::emitStore(
 
       case RegisterType::eAddr: {
         dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 2u || c == ComponentBit::eX);
+        dxbc_spv_assert(m_converter.getShaderInfo().getType() == ShaderType::eVertex);
 
         if (!valueType.isIntType()) {
           // a0 can be written to using the mova instruction on SM2+
