@@ -924,14 +924,23 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         normal = normalizeVector(builder, normal);
 
         // 2*[(N*E)/(N*N)]*N - E
-        auto vectorType = makeVectorType(scalarType, 3u);
+        auto vectorType = ir::BasicType(scalarType, 3u);
 
         auto nDotE = builder.add(ir::Op::FDotLegacy(scalarType, normal, eyeRay));
         auto nDotN = builder.add(ir::Op::FDotLegacy(scalarType, normal, normal));
         auto dotDiv = builder.add(ir::Op::FDiv(scalarType, nDotE, nDotN));
         auto twoDotDiv = builder.add(ir::Op::FMulLegacy(scalarType, makeTypedConstant(builder, scalarType, 2.0f), dotDiv));
-        auto texCoord = builder.add(ir::Op::FMulLegacy(vectorType, result, broadcastScalar(builder, twoDotDiv, util::makeWriteMaskForComponents(3u))));
-        texCoord = builder.add(ir::Op::FSub(vectorType, result, eyeRay));
+        auto texCoord = builder.add(ir::Op::FMulLegacy(vectorType, normal, broadcastScalar(builder, twoDotDiv, util::makeWriteMaskForComponents(3u))));
+        texCoord = builder.add(ir::Op::FSub(vectorType, texCoord, eyeRay));
+
+        /* The sampling function requires a vec4. */
+        std::array<ir::SsaDef, 4u> texCoordComponents = {
+          builder.add(ir::Op::CompositeExtract(scalarType, texCoord, builder.makeConstant(0u))),
+          builder.add(ir::Op::CompositeExtract(scalarType, texCoord, builder.makeConstant(1u))),
+          builder.add(ir::Op::CompositeExtract(scalarType, texCoord, builder.makeConstant(2u))),
+          makeTypedConstant(builder, scalarType, 0.0f),
+        };
+        texCoord = buildVector(builder, scalarType, texCoordComponents.size(), texCoordComponents.data());
 
         result = m_resources.emitSample(builder, dst.getIndex(), texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
       }
@@ -946,9 +955,14 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       auto n = loadSrcModified(builder, op, src0, util::makeWriteMaskForComponents(3u), scalarType);
       auto dot = builder.add(ir::Op::FDotLegacy(scalarType, m, n));
       if (opCode == OpCode::eTexDp3Tex) {
-        /* Sample texture at register index of dst using (dot, 0, 0) as coordinates */
-        std::array<ir::SsaDef, 3u> texCoordComponents = { dot, makeTypedConstant(builder, scalarType, 0.0f), makeTypedConstant(builder, scalarType, 0.0f) };
-        auto texCoord = buildVector(builder, scalarType, 3u, texCoordComponents.data());
+        /* Sample texture at register index of dst using (dot, 0, 0, 0) as coordinates */
+        std::array<ir::SsaDef, 4u> texCoordComponents = {
+          dot,
+          makeTypedConstant(builder, scalarType, 0.0f),
+          makeTypedConstant(builder, scalarType, 0.0f),
+          makeTypedConstant(builder, scalarType, 0.0f),
+        };
+        auto texCoord = buildVector(builder, scalarType, texCoordComponents.size(), texCoordComponents.data());
         result = m_resources.emitSample(builder, dst.getIndex(), texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
       } else {
         /* Replicates the dot product to all four color channels. Doesn't actually sample. */
