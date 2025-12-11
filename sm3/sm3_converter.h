@@ -178,6 +178,8 @@ private:
 
   bool handleEndRep(ir::Builder& builder, const Instruction& op);
 
+  bool handleComment(ir::Builder& builder, const Instruction& op);
+
   ir::SsaDef emitComparison(ir::Builder& builder, ir::SsaDef a, ir::SsaDef b, ComparisonMode comparisonMode);
 
   ir::SsaDef applySrcModifiers(ir::Builder& builder, ir::SsaDef def, const Instruction& instruction, const Operand& operand, WriteMask mask);
