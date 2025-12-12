@@ -274,7 +274,7 @@ void IoMap::dclIoVar(
   ir::SsaDef declarationDef;
   uint32_t location = 0u;
   if (!builtIn) {
-    location = m_variables.size();
+    location = isInput ? m_nextInputLocation++ : m_nextOutputLocation++;
 
     ir::OpCode opCode = isInput
       ? ir::OpCode::eDclInput
