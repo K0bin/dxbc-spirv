@@ -2,7 +2,6 @@
 
 #include "sm3_parser.h"
 #include "sm3_types.h"
-#include "sm3_semantic_map.h"
 
 #include "../ir/ir_builder.h"
 

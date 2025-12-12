@@ -35,12 +35,10 @@ constexpr uint32_t TextureStageCount = 8u;
  */
 
 Converter::Converter(util::ByteReader code,
-  IoSemanticMap& semanticMap,
   SpecializationConstantLayout& specConstantsLayout,
   const Options &options)
 : m_code(code)
 , m_options(options)
-, m_semanticMap(semanticMap)
 , m_regFile(*this)
 , m_ioMap(*this)
 , m_resources(*this)

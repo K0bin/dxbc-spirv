@@ -82,28 +82,6 @@ struct SemanticHash
 };
 
 
-class SM3SemanticMap : public sm3::IoSemanticMap {
-
-public:
-
-  SM3SemanticMap() { }
-
-  uint32_t getIoLocation(sm3::Semantic semantic) override {
-    auto existing = m_map.find(semantic);
-    if (existing != m_map.end())
-      return existing->second;
-
-    uint32_t location = uint32_t(m_map.size());
-    m_map.insert(std::make_pair(semantic, location));
-
-    return location;
-  }
-
-private:
-
-  std::unordered_map<sm3::Semantic, uint32_t, SemanticHash> m_map = { };
-};
-
 class SM3SpecConstantsLayout : public sm3::SpecializationConstantLayout {
 
 public:
@@ -284,9 +262,8 @@ bool compileShader(util::ByteReader reader, const Options& options) {
       sm3::Converter::Options sm3Options = { };
       sm3Options.includeDebugNames = !options.noDebug;
 
-      auto ioMap = SM3SemanticMap();
       auto specConstLayout = SM3SpecConstantsLayout();
-      sm3::Converter converter(reader, ioMap, specConstLayout, sm3Options);
+      sm3::Converter converter(reader, specConstLayout, sm3Options);
 
       status = converter.convertShader(builder);
     } else {

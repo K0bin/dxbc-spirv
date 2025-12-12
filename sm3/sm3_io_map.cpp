@@ -270,16 +270,17 @@ void IoMap::dclIoVar(
     typeVectorSize
   );
 
-  ir::Op declaration;
+  ir::Type baseType;
+  ir::SsaDef declarationDef;
   uint32_t location = 0u;
   if (!builtIn) {
-    location = m_converter.getSemanticMap().getIoLocation(semantic);
+    location = m_variables.size();
 
     ir::OpCode opCode = isInput
       ? ir::OpCode::eDclInput
       : ir::OpCode::eDclOutput;
 
-    declaration = ir::Op(opCode, type)
+    auto declaration = ir::Op(opCode, type)
       .addOperand(m_converter.getEntryPoint())
       .addOperand(location)
       .addOperand(util::tzcnt(uint8_t(componentMask)));
@@ -287,14 +288,25 @@ void IoMap::dclIoVar(
     if (isInput && shaderType == ShaderType::ePixel && semantic.usage == SemanticUsage::eColor) {
       declaration.addOperand(ir::InterpolationModes(ir::InterpolationMode::eCentroid));
     }
+
+    baseType = declaration.getType();
+    declarationDef = builder.add(std::move(declaration));
+
+    std::stringstream semanticNameStream;
+    semanticNameStream << semantic.usage;
+    std::string semanticNameString = semanticNameStream.str();
+    builder.add(ir::Op::Semantic(declarationDef, semantic.index, semanticNameString.c_str()));
   } else {
     ir::OpCode opCode = isInput
       ? ir::OpCode::eDclInputBuiltIn
       : ir::OpCode::eDclOutputBuiltIn;
 
-    declaration = ir::Op(opCode, type)
+    auto declaration = ir::Op(opCode, type)
       .addOperand(m_converter.getEntryPoint())
       .addOperand(*builtIn);
+
+    baseType = declaration.getType();
+    declarationDef = builder.add(std::move(declaration));
   }
 
   auto [versionMajor, versionMinor] = m_converter.getShaderInfo().getVersion();
@@ -308,8 +320,8 @@ void IoMap::dclIoVar(
   mapping.location = location;
   mapping.wasWritten = supportsRelativeAddressing;
   mapping.componentMask = componentMask;
-  mapping.baseType = declaration.getType();
-  mapping.baseDef = builder.add(std::move(declaration));
+  mapping.baseType = baseType;
+  mapping.baseDef = declarationDef;
   mapping.tempDefs = { };
   if (!isInput || (registerType == RegisterType::eTexture
     && versionMajor == 1u
