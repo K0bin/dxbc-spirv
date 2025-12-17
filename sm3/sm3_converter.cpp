@@ -486,7 +486,19 @@ bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
     return ir::Op();
   } ();
 
-  return storeDstModifiedPredicated(builder, op, dst, builder.add(std::move(result)));
+  auto resultDef = builder.add(std::move(result));
+
+  if (m_options.fastFloatEmulation) {
+    if (opCode == OpCode::eRcp || opCode == OpCode::eRsq || opCode == OpCode::eExp) {
+      resultDef = builder.add(ir::Op::FMin(vectorType, resultDef,
+        ir::makeTypedConstant(builder, vectorType, std::numeric_limits<float>::max())));
+    } else if (opCode == OpCode::eLog || opCode == OpCode::eLogP) {
+      resultDef = builder.add(ir::Op::FMax(vectorType, resultDef,
+        ir::makeTypedConstant(builder, vectorType, -std::numeric_limits<float>::max())));
+    }
+  }
+
+  return storeDstModifiedPredicated(builder, op, dst, resultDef);
 }
 
 
@@ -1078,6 +1090,13 @@ bool Converter::handleNrm(ir::Builder& builder, const Instruction& op) {
 
   auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
   auto result = normalizeVector(builder, src0);
+
+  if (m_options.fastFloatEmulation) {
+    auto vectorType = ir::makeVectorType(scalarType, writeMask);
+    result = builder.add(ir::Op::FMin(vectorType, result,
+      ir::makeTypedConstant(builder, vectorType, std::numeric_limits<float>::max())));
+  }
+
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
@@ -1431,6 +1450,13 @@ bool Converter::handleExpP(ir::Builder& builder, const Instruction& op) {
   }
 
   auto result = ir::buildVector(builder, scalarType, components.size(), components.data());
+
+  if (m_options.fastFloatEmulation) {
+    auto vectorType = ir::makeVectorType(scalarType, writeMask);
+    result = builder.add(ir::Op::FMin(vectorType, result,
+      ir::makeTypedConstant(builder, vectorType, std::numeric_limits<float>::max())));
+  }
+
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
