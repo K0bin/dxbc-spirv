@@ -816,7 +816,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       if (m_parser.getShaderInfo().getVersion().first <= 1u && m_parser.getShaderInfo().getVersion().second < 4u)
         texCoord = m_resources.projectTexCoord(builder, samplerIdx, texCoord, true);
 
-      result = m_resources.emitSample(builder, samplerIdx, texCoord, lod, lodBias, ir::SsaDef(), ir::SsaDef());
+      result = m_resources.emitSample(builder, samplerIdx, texCoord, lod, lodBias, ir::SsaDef(), ir::SsaDef(), scalarType);
     } break;
 
     case OpCode::eTexLdl: {
@@ -826,7 +826,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
       uint32_t samplerIdx = src1.getIndex();
       auto lod = builder.add(ir::Op::CompositeExtract(scalarType, texCoord, builder.makeConstant(3u)));
-      result = m_resources.emitSample(builder, samplerIdx, texCoord, lod, ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
+      result = m_resources.emitSample(builder, samplerIdx, texCoord, lod, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), scalarType);
     } break;
 
     case OpCode::eTexLdd: {
@@ -839,7 +839,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       uint32_t samplerIdx = src1.getIndex();
       auto dx = loadSrcModified(builder, op, src2, ComponentBit::eAll, scalarType);
       auto dy = loadSrcModified(builder, op, src3, ComponentBit::eAll, scalarType);
-      result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), dx, dy);
+      result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), dx, dy, scalarType);
     } break;
 
     case OpCode::eTexReg2Ar:
@@ -862,7 +862,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       if (m_parser.getShaderInfo().getVersion().first <= 1u && m_parser.getShaderInfo().getVersion().second < 4u)
         texCoord = m_resources.projectTexCoord(builder, samplerIdx, texCoord, true);
 
-      result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
+      result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), scalarType);
     } break;
 
     case OpCode::eTexM3x2Tex:
@@ -893,7 +893,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
 
         /* TexM3x2Tex / TexM3x3Tex do a matrix multiplication and use the result as texture coordinate. */
         auto texCoord = buildVector(builder, scalarType, rows, components.data());
-        result = m_resources.emitSample(builder, lastIndex, texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
+        result = m_resources.emitSample(builder, lastIndex, texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), scalarType);
 
       } else if (opCode == OpCode::eTexM3x2Depth) {
 
@@ -952,7 +952,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         };
         texCoord = buildVector(builder, scalarType, texCoordComponents.size(), texCoordComponents.data());
 
-        result = m_resources.emitSample(builder, dst.getIndex(), texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
+        result = m_resources.emitSample(builder, dst.getIndex(), texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), scalarType);
       }
     } break;
 
@@ -972,7 +972,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
           makeTypedConstant(builder, scalarType, 0.0f),
         };
         auto texCoord = buildVector(builder, scalarType, texCoordComponents.size(), texCoordComponents.data());
-        result = m_resources.emitSample(builder, dst.getIndex(), texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
+        result = m_resources.emitSample(builder, dst.getIndex(), texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), scalarType);
       } else {
         /* Replicates the dot product to all four color channels. Doesn't actually sample. */
         result = broadcastScalar(builder, dot, util::makeWriteMaskForComponents(4u));
@@ -997,7 +997,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(scalarType, 4u), texCoord, builder.makeConstant(0u), u));
       texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(scalarType, 4u), texCoord, builder.makeConstant(1u), v));
 
-      result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
+      result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), scalarType);
 
       if (opCode == OpCode::eTexBemL) {
         /* Additionally does luminance correction */

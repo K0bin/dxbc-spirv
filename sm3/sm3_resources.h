@@ -23,7 +23,6 @@ enum class SamplingConfigBit : uint8_t {
   eExplicitLod         = 1u << 0u,
   eLodBias             = 1u << 1u,
   eExplicitDerivatives = 1u << 2u,
-  eFMin16              = 1u << 3u,
 
   eFlagEnum            = 0u,
 };
@@ -39,10 +38,6 @@ struct SamplerRegister {
    * One for each texture type on SM1 and only one on SM2+ */
   std::array<ir::SsaDef, 3u> textureDefs = { };
 
-  /** Declaration of the texture with partial precision
-   * One for each texture type on SM1 and only one on SM2+ */
-  std::array<ir::SsaDef, 3u> textureMinF16Defs = { };
-
   /** The type of the texture. This is only set on SM2+ as there are no dcl_samplerType instructions
    * on SM1. This texture type represents the index of the one valid `textureDef` on SM2. */
   std::optional<SpecConstTextureType> textureType = std::nullopt;
@@ -55,7 +50,7 @@ struct SamplerRegister {
    * Each function takes in an F32 vec4 for the texCoords and some
    * will take additional arguments for LODs and/or derivatives depending
    * on the flags. */
-  std::array<ir::SsaDef, 16u> samplingFunctions = { };
+  std::array<ir::SsaDef, 8u> samplingFunctions = { };
 };
 
 struct ConstantRange {
@@ -120,13 +115,14 @@ public:
     /** Loads a resource or sampler descriptor and retrieves basic
      *  properties required to perform any operations on typed resources. */
     ir::SsaDef emitSample(
-            ir::Builder& builder,
-            uint32_t     samplerIndex,
-            ir::SsaDef   texCoord,
-            ir::SsaDef   lod,
-            ir::SsaDef   lodBias,
-            ir::SsaDef   dx,
-            ir::SsaDef   dy);
+            ir::Builder&   builder,
+            uint32_t       samplerIndex,
+            ir::SsaDef     texCoord,
+            ir::SsaDef     lod,
+            ir::SsaDef     lodBias,
+            ir::SsaDef     dx,
+            ir::SsaDef     dy,
+            ir::ScalarType scalarType);
 
   /** Loads data from a constant buffer using one or more BufferLoad
    *  instruction. If possible this will emit a vectorized load. */
@@ -168,7 +164,7 @@ private:
 
   ir::SsaDef dclSampler(ir::Builder& builder, uint32_t samplerIndex);
 
-  ir::SsaDef dclTexture(ir::Builder& builder, SpecConstTextureType textureType, uint32_t samplerIndex, ir::ScalarType scalarType);
+  ir::SsaDef dclTexture(ir::Builder& builder, SpecConstTextureType textureType, uint32_t samplerIndex);
 
   ir::SsaDef emitSampleImageFunction(
     ir::Builder& builder,

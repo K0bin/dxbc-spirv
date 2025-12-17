@@ -420,13 +420,14 @@ void ResourceMap::emitDefineConstant(
 
 
 ir::SsaDef ResourceMap::emitSample(
-            ir::Builder& builder,
-            uint32_t     samplerIndex,
-            ir::SsaDef   texCoord,
-            ir::SsaDef   lod,
-            ir::SsaDef   lodBias,
-            ir::SsaDef   dx,
-            ir::SsaDef   dy) {
+            ir::Builder&   builder,
+            uint32_t       samplerIndex,
+            ir::SsaDef     texCoord,
+            ir::SsaDef     lod,
+            ir::SsaDef     lodBias,
+            ir::SsaDef     dx,
+            ir::SsaDef     dy,
+            ir::ScalarType scalarType) {
   auto& samplerInfo = m_samplers.at(samplerIndex);
   if (!samplerInfo.samplerDef) {
     dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first < 2u);
@@ -443,36 +444,51 @@ ir::SsaDef ResourceMap::emitSample(
   if (dx || dy)
     samplingConfig |= SamplingConfigBit::eExplicitDerivatives;
 
-  auto scalarType = builder.getOp(texCoord).getType().getBaseType(0u).getBaseType();
-  if (scalarType == ir::ScalarType::eMinF16)
-    samplingConfig |= SamplingConfigBit::eFMin16;
-  else
-    dxbc_spv_assert(scalarType == ir::ScalarType::eF32);
-
   auto& samplingFunction = samplerInfo.samplingFunctions.at(uint8_t(samplingConfig));
   if (!samplingFunction) {
     samplingFunction = emitSampleImageFunction(builder, samplerIndex, samplingConfig);
   }
 
-  auto funcCall = ir::Op::FunctionCall(ir::BasicType(scalarType, 4u), samplingFunction)
+  auto texCoordType = builder.getOp(texCoord).getType().getBaseType(0u);
+  if (texCoordType.getBaseType() != ir::ScalarType::eF32) {
+    texCoord = builder.add(ir::Op::ConsumeAs(ir::BasicType(ir::ScalarType::eF32, texCoordType.getVectorSize()), texCoord));
+  }
+
+  auto funcCall = ir::Op::FunctionCall(ir::BasicType(ir::ScalarType::eF32, 4u), samplingFunction)
     .addParam(texCoord);
 
   if (lod) {
+    auto lodType = builder.getOp(lod).getType().getBaseType(0u);
+    if (lodType.getBaseType() != ir::ScalarType::eF32) {
+      lod = builder.add(ir::Op::ConsumeAs(ir::BasicType(ir::ScalarType::eF32, lodType.getVectorSize()), lod));
+    }
     funcCall.addParam(lod);
-    dxbc_spv_assert(scalarType == builder.getOp(lod).getType().getBaseType(0u).getBaseType());
   }
   if (lodBias) {
+    auto lodBiasType = builder.getOp(lodBias).getType().getBaseType(0u);
+    if (lodBiasType.getBaseType() != ir::ScalarType::eF32) {
+      lodBias = builder.add(ir::Op::ConsumeAs(ir::BasicType(ir::ScalarType::eF32, lodBiasType.getVectorSize()), lodBias));
+    }
     funcCall.addParam(lodBias);
-    dxbc_spv_assert(scalarType == builder.getOp(lodBias).getType().getBaseType(0u).getBaseType());
   }
   if (dx || dy) {
+    auto dxType = builder.getOp(dx).getType().getBaseType(0u);
+    if (dxType.getBaseType() != ir::ScalarType::eF32) {
+      dx = builder.add(ir::Op::ConsumeAs(ir::BasicType(ir::ScalarType::eF32, dxType.getVectorSize()), dx));
+    }
+    auto dyType = builder.getOp(dy).getType().getBaseType(0u);
+    if (dyType.getBaseType() != ir::ScalarType::eF32) {
+      dy = builder.add(ir::Op::ConsumeAs(ir::BasicType(ir::ScalarType::eF32, dyType.getVectorSize()), dy));
+    }
     funcCall.addParam(dx);
     funcCall.addParam(dy);
-    dxbc_spv_assert(scalarType == builder.getOp(dx).getType().getBaseType(0u).getBaseType());
-    dxbc_spv_assert(scalarType == builder.getOp(dy).getType().getBaseType(0u).getBaseType());
   }
 
-  return builder.add(std::move(funcCall));
+  auto result = builder.add(std::move(funcCall));
+  if (scalarType != ir::ScalarType::eF32)
+    result = builder.add(ir::Op::ConsumeAs(ir::BasicType(scalarType, 4u), result));
+
+  return result;
 }
 
 
@@ -511,14 +527,12 @@ bool ResourceMap::handleDclSampler(ir::Builder& builder, const Instruction& op) 
   SpecConstTextureType textureType = specConstTextureTypeFromTextureType(dcl.getTextureType());
 
   auto sampler = dclSampler(builder, samplerIndex);
-  auto texture = dclTexture(builder, textureType, samplerIndex, ir::ScalarType::eF32);
-  auto textureMinF16 = dclTexture(builder, textureType, samplerIndex, ir::ScalarType::eMinF16);
+  auto texture = dclTexture(builder, textureType, samplerIndex);
 
   auto& resourceInfo = m_samplers.at(samplerIndex);
   resourceInfo.regIndex = samplerIndex;
   resourceInfo.samplerDef = sampler;
   resourceInfo.textureDefs[uint32_t(textureType)] = texture;
-  resourceInfo.textureMinF16Defs[uint32_t(textureType)] = textureMinF16;
   resourceInfo.textureType = std::optional(textureType);
   return true;
 }
@@ -527,18 +541,15 @@ bool ResourceMap::handleDclSampler(ir::Builder& builder, const Instruction& op) 
 bool ResourceMap::dclSamplerAndAllTextureTypes(ir::Builder& builder, uint32_t samplerIndex) {
   auto sampler = dclSampler(builder, samplerIndex);
   std::array<ir::SsaDef, uint32_t(SpecConstTextureType::eTexture3D) + 1u> textures;
-  std::array<ir::SsaDef, uint32_t(SpecConstTextureType::eTexture3D) + 1u> texturesMinF16;
   for (uint32_t i = 0; i < textures.size(); i++) {
     SpecConstTextureType textureType = SpecConstTextureType(i);
-    textures[i] = dclTexture(builder, textureType, samplerIndex, ir::ScalarType::eF32);
-    texturesMinF16[i] = dclTexture(builder, textureType, samplerIndex, ir::ScalarType::eMinF16);
+    textures[i] = dclTexture(builder, textureType, samplerIndex);
   }
 
   auto& resourceInfo = m_samplers.at(samplerIndex);
   resourceInfo.regIndex = samplerIndex;
   resourceInfo.samplerDef = sampler;
   resourceInfo.textureDefs = textures;
-  resourceInfo.textureMinF16Defs = texturesMinF16;
   return true;
 }
 
@@ -569,8 +580,8 @@ ir::SsaDef ResourceMap::dclSampler(ir::Builder& builder, uint32_t samplerIndex) 
 }
 
 
-ir::SsaDef ResourceMap::dclTexture(ir::Builder& builder, SpecConstTextureType textureType, uint32_t samplerIndex, ir::ScalarType scalarType) {
-  auto textureDef = builder.add(ir::Op::DclSrv(scalarType, m_converter.getEntryPoint(), TextureBindingsRegSpace,
+ir::SsaDef ResourceMap::dclTexture(ir::Builder& builder, SpecConstTextureType textureType, uint32_t samplerIndex) {
+  auto textureDef = builder.add(ir::Op::DclSrv(ir::ScalarType::eF32, m_converter.getEntryPoint(), TextureBindingsRegSpace,
     samplerIndex, 1u, resourceKindFromTextureType(textureTypeFromSpecConstTextureType(textureType))));
   if (m_converter.m_options.includeDebugNames) {
     const ConstantInfo* ctabEntry = nullptr;
@@ -590,8 +601,6 @@ ir::SsaDef ResourceMap::dclTexture(ir::Builder& builder, SpecConstTextureType te
     }
     nameStream << "_";
     nameStream << textureTypeFromSpecConstTextureType(textureType);
-    if (scalarType == ir::ScalarType::eMinF16)
-      nameStream << "_pp";
 
     std::string name = nameStream.str();
     builder.add(ir::Op::DebugName(textureDef, name.c_str()));
@@ -605,11 +614,10 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
   uint32_t samplerIndex,
   SamplingConfig config
 ) {
-  ir::ScalarType scalarType = (config & SamplingConfigBit::eFMin16) ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   uint32_t specConstIdx = m_converter.m_specConstants.getSamplerSpecConstIndex(
     m_converter.getShaderInfo().getType(), samplerIndex);
 
-  auto vec4FType = ir::BasicType(scalarType, 4u);
+  auto vec4FType = ir::BasicType(ir::ScalarType::eF32, 4u);
   auto cursor = builder.setCursor(m_functionInsertPoint);
   auto functionOp = ir::Op::Function(vec4FType);
 
@@ -623,22 +631,22 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
   ir::SsaDef dxParam = { };
   ir::SsaDef dyParam = { };
   if (config & SamplingConfigBit::eExplicitLod) {
-    lodParam = builder.add(ir::Op::DclParam(scalarType)); // Lod
+    lodParam = builder.add(ir::Op::DclParam(ir::ScalarType::eF32)); // Lod
     functionOp.addOperand(lodParam);
     if (m_converter.getOptions().includeDebugNames) {
       builder.add(ir::Op::DebugName(lodParam, "lod"));
     }
   }
   if (config & SamplingConfigBit::eLodBias) {
-    lodBiasParam = builder.add(ir::Op::DclParam(scalarType)); // LodBias
+    lodBiasParam = builder.add(ir::Op::DclParam(ir::ScalarType::eF32)); // LodBias
     functionOp.addOperand(lodBiasParam);
     if (m_converter.getOptions().includeDebugNames) {
       builder.add(ir::Op::DebugName(lodBiasParam, "lodBias"));
     }
   }
   if (config & SamplingConfigBit::eExplicitDerivatives) {
-    dxParam = builder.add(ir::Op::DclParam(ir::BasicType(scalarType, 4u))); // Dx
-    dyParam = builder.add(ir::Op::DclParam(ir::BasicType(scalarType, 4u))); // Dy
+    dxParam = builder.add(ir::Op::DclParam(ir::BasicType(ir::ScalarType::eF32, 4u))); // Dx
+    dyParam = builder.add(ir::Op::DclParam(ir::BasicType(ir::ScalarType::eF32, 4u))); // Dy
     functionOp.addOperand(dxParam);
     functionOp.addOperand(dyParam);
     if (m_converter.getOptions().includeDebugNames) {
@@ -649,10 +657,10 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
   auto function = builder.add(std::move(functionOp));
 
   auto texCoord = builder.add(ir::Op::ParamLoad(vec4FType, function, texCoordParam));
-  auto lod = lodParam ? builder.add(ir::Op::ParamLoad(scalarType, function, lodParam)) : ir::SsaDef();
-  auto lodBias = lodBiasParam ? builder.add(ir::Op::ParamLoad(scalarType, function, lodBiasParam)) : ir::SsaDef();
-  auto dx = dxParam ? builder.add(ir::Op::ParamLoad(ir::BasicType(scalarType, 4u), function, dxParam)) : ir::SsaDef();
-  auto dy = dyParam ? builder.add(ir::Op::ParamLoad(ir::BasicType(scalarType, 4u), function, dyParam)) : ir::SsaDef();
+  auto lod = lodParam ? builder.add(ir::Op::ParamLoad(ir::ScalarType::eF32, function, lodParam)) : ir::SsaDef();
+  auto lodBias = lodBiasParam ? builder.add(ir::Op::ParamLoad(ir::ScalarType::eF32, function, lodBiasParam)) : ir::SsaDef();
+  auto dx = dxParam ? builder.add(ir::Op::ParamLoad(ir::BasicType(ir::ScalarType::eF32, 4u), function, dxParam)) : ir::SsaDef();
+  auto dy = dyParam ? builder.add(ir::Op::ParamLoad(ir::BasicType(ir::ScalarType::eF32, 4u), function, dyParam)) : ir::SsaDef();
 
   const auto& samplerInfo = m_samplers.at(samplerIndex);
   dxbc_spv_assert(samplerInfo.regIndex == samplerIndex);
@@ -663,14 +671,14 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
     dxbc_spv_assert(samplerInfo.textureType.has_value());
     auto specConstTextureType = samplerInfo.textureType.value();
     auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eSrv,
-      scalarType == ir::ScalarType::eMinF16 ? samplerInfo.textureMinF16Defs[uint32_t(specConstTextureType)] : samplerInfo.textureDefs[uint32_t(specConstTextureType)],
+      samplerInfo.textureDefs[uint32_t(specConstTextureType)],
       ir::SsaDef()));
-    builder.add(ir::Op::Return(ir::BasicType(scalarType, 4u), emitSampleColorOrDref(builder, texCoord, specConstTextureType, samplerIndex, descriptor, sampler, lod, lodBias, dx, dy)));
+    builder.add(ir::Op::Return(ir::BasicType(ir::ScalarType::eF32, 4u), emitSampleColorOrDref(builder, texCoord, specConstTextureType, samplerIndex, descriptor, sampler, lod, lodBias, dx, dy)));
   } else {
     /* Shader model 1 does not require declaring samplers/textures with a DCL instruction.
      * We emit a switch() block with one case for each texture type. Decide based on a spec constant. */
-    auto resultTmp = builder.add(ir::Op::DclTmp(ir::BasicType(scalarType, 4u), m_converter.getEntryPoint()));
-    builder.add(ir::Op::TmpStore(resultTmp, ir::broadcastScalar(builder, ir::makeTypedConstant(builder, scalarType, 0.0f), ComponentBit::eAll)));
+    auto resultTmp = builder.add(ir::Op::DclTmp(ir::BasicType(ir::ScalarType::eF32, 4u), m_converter.getEntryPoint()));
+    builder.add(ir::Op::TmpStore(resultTmp, ir::broadcastScalar(builder, builder.makeConstant(0.0f), ComponentBit::eAll)));
     auto samplerTypeSpecConst = m_converter.m_specConstants.get(
       builder,
       SpecConstantId::eSpecSamplerType,
@@ -682,7 +690,7 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
     for (uint32_t i = 0; i <= uint32_t(SpecConstTextureType::eTexture3D); i++) {
       builder.add(ir::Op::ScopedSwitchCase(textureTypeSwitch, i));
       auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eSrv,
-        scalarType == ir::ScalarType::eMinF16 ? samplerInfo.textureMinF16Defs[i] : samplerInfo.textureDefs[i],
+        samplerInfo.textureDefs[i],
         ir::SsaDef()));
       auto typeResult = emitSampleColorOrDref(builder, texCoord, SpecConstTextureType(i), samplerIndex, descriptor, sampler, lod, lodBias, dx, dy);
       builder.add(ir::Op::TmpStore(resultTmp, typeResult));
@@ -691,8 +699,8 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
 
     auto textureTypeSwitchEnd = builder.add(ir::Op::ScopedEndSwitch(textureTypeSwitch));
     builder.rewriteOp(textureTypeSwitch, ir::Op(builder.getOp(textureTypeSwitch)).setOperand(0u, textureTypeSwitchEnd));
-    auto returnVal = builder.add(ir::Op::TmpLoad(ir::BasicType(scalarType, 4u), resultTmp));
-    builder.add(ir::Op::Return(ir::BasicType(scalarType, 4u), returnVal));
+    auto returnVal = builder.add(ir::Op::TmpLoad(ir::BasicType(ir::ScalarType::eF32, 4u), resultTmp));
+    builder.add(ir::Op::Return(ir::BasicType(ir::ScalarType::eF32, 4u), returnVal));
   }
   builder.add(ir::Op::FunctionEnd());
 
@@ -718,8 +726,6 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
       nameStream << "_bias";
     if (config & SamplingConfigBit::eExplicitDerivatives)
       nameStream << "_grad";
-    if (config & SamplingConfigBit::eFMin16)
-      nameStream << "_pp";
 
     std::string name = nameStream.str();
     builder.add(ir::Op::DebugName(function, name.c_str()));
@@ -742,13 +748,11 @@ ir::SsaDef ResourceMap::emitSampleColorOrDref(
   ir::SsaDef dx,
   ir::SsaDef dy
 ) {
-  auto scalarType = builder.getOp(texCoord).getType().getBaseType(0u).getBaseType();
-
   uint32_t specConstIdx = m_converter.m_specConstants.getSamplerSpecConstIndex(
     m_converter.getShaderInfo().getType(), samplerIndex);
 
   if (textureType != SpecConstTextureType::eTexture3D) {
-    auto resultTmp = builder.add(ir::Op::DclTmp(ir::BasicType(scalarType, 4u), m_converter.getEntryPoint()));
+    auto resultTmp = builder.add(ir::Op::DclTmp(ir::BasicType(ir::ScalarType::eF32, 4u), m_converter.getEntryPoint()));
     auto isDepth = m_converter.m_specConstants.get(
       builder,
       SpecConstantId::eSpecSamplerDepthMode,
@@ -769,7 +773,7 @@ ir::SsaDef ResourceMap::emitSampleColorOrDref(
 
     auto isDepthEnd = builder.add(ir::Op::ScopedEndIf(isDepthIf));
     builder.rewriteOp(isDepthIf, ir::Op(builder.getOp(isDepthIf)).setOperand(0u, isDepthEnd));
-    return builder.add(ir::Op::TmpLoad(ir::BasicType(scalarType, 4u), resultTmp));
+    return builder.add(ir::Op::TmpLoad(ir::BasicType(ir::ScalarType::eF32, 4u), resultTmp));
   } else {
     return emitSampleColorImageType(builder, texCoord, textureType, samplerIndex, descriptor, sampler, lod, lodBias, dx, dy);
   }
@@ -788,17 +792,15 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
   ir::SsaDef dx,
   ir::SsaDef dy
 ) {
-  auto scalarType = builder.getOp(texCoord).getType().getBaseType(0u).getBaseType();
-
   uint32_t specConstIdx = m_converter.m_specConstants.getSamplerSpecConstIndex(
     m_converter.getShaderInfo().getType(), samplerIndex);
 
   uint32_t texCoordComponentCount = textureType == SpecConstTextureType::eTexture2D ? 2u : 3u;
   std::array<ir::SsaDef, 4u> texCoordComponents;
   for (uint32_t i = 0u; i < texCoordComponentCount; i++) {
-    texCoordComponents[i] = builder.add(ir::Op::CompositeExtract(scalarType, texCoord, builder.makeConstant(i)));
+    texCoordComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(i)));
   }
-  auto sizedTexCoord = buildVector(builder, scalarType, texCoordComponentCount, texCoordComponents.data());
+  auto sizedTexCoord = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, texCoordComponents.data());
 
   auto sizedDx = ir::SsaDef();
   auto sizedDy = ir::SsaDef();
@@ -806,15 +808,15 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
     std::array<ir::SsaDef, 4u> dxComponents;
     std::array<ir::SsaDef, 4u> dyComponents;
     for (uint32_t i = 0u; i < texCoordComponentCount; i++) {
-      dxComponents[i] = builder.add(ir::Op::CompositeExtract(scalarType, dx, builder.makeConstant(i)));
-      dyComponents[i] = builder.add(ir::Op::CompositeExtract(scalarType, dy, builder.makeConstant(i)));
+      dxComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, dx, builder.makeConstant(i)));
+      dyComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, dy, builder.makeConstant(i)));
     }
-    sizedDx = buildVector(builder, scalarType, texCoordComponentCount, dxComponents.data());
-    sizedDy = buildVector(builder, scalarType, texCoordComponentCount, dyComponents.data());
+    sizedDx = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, dxComponents.data());
+    sizedDy = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, dyComponents.data());
   }
 
   auto color = builder.add(ir::Op::ImageSample(
-    ir::BasicType(scalarType, 4u),
+    ir::BasicType(ir::ScalarType::eF32, 4u),
     descriptor,
     sampler,
     ir::SsaDef(),
@@ -859,7 +861,7 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
       auto textureSizeI = builder.add(ir::Op::CompositeExtract(textureSizeTypeI, textureSizeStruct, builder.makeConstant(0u)));
       auto const2vec = broadcastScalar(builder, builder.makeConstant(2u), util::makeWriteMaskForComponents(coordDims));
       auto scaledTextureSizeI = builder.add(ir::Op::IMul(textureSizeTypeI, textureSizeI, const2vec));
-      auto textureSizeType = ir::BasicType(scalarType, coordDims);
+      auto textureSizeType = ir::BasicType(ir::ScalarType::eF32, coordDims);
       auto scaledTextureSizeF = builder.add(ir::Op::ConvertItoF(textureSizeType, scaledTextureSizeI));
 
       /* invTextureSize = (1.0f - 1.0f / 256.0f) / scaledTextureSizeF */
@@ -869,7 +871,7 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
        * as only then does the imprecision need to be biased
        * towards infinity -- but that's not really worth doing... */
       numerator -= 1.0f / 256.0f;
-      auto numeratorVec = broadcastScalar(builder, ir::makeTypedConstant(builder, scalarType, numerator), util::makeWriteMaskForComponents(coordDims));
+      auto numeratorVec = broadcastScalar(builder, builder.makeConstant(numerator), util::makeWriteMaskForComponents(coordDims));
       auto invTextureSize = builder.add(ir::Op::FDiv(textureSizeType, numeratorVec, scaledTextureSizeF));
 
       /* texcoord += invTextureSize */
@@ -877,7 +879,7 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
     }
 
     auto fetch4Val = builder.add(ir::Op::ImageGather(
-      ir::BasicType(scalarType, 4u),
+      ir::BasicType(ir::ScalarType::eF32, 4u),
       descriptor,
       sampler,
       ir::SsaDef(),
@@ -889,7 +891,7 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
     /* Shuffle the vector to match the funny D3D9 order: B R G A */
     fetch4Val = swizzleVector(builder, fetch4Val, Swizzle(Component::eY, Component::eX, Component::eZ, Component::eW), WriteMask(ComponentBit::eAll));
     /* Use Fetch4 value if spec constant bit is set and regular sampled color if not. */
-    color = builder.add(ir::Op::Select(ir::BasicType(scalarType, 4u),
+    color = builder.add(ir::Op::Select(ir::BasicType(ir::ScalarType::eF32, 4u),
     broadcastScalar(builder, fetch4Enabled, WriteMask(ComponentBit::eAll)),
     fetch4Val, color));
   }
@@ -904,13 +906,10 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
   );
   auto isNull = builder.add(ir::Op::INe(ir::ScalarType::eBool, isNullSpecConst, builder.makeConstant(0u)));
 
-  ir::SsaDef fallback = builder.add(ir::Op(ir::OpCode::eConstant, ir::BasicType(scalarType, 4u))
-    .addOperands(0.0f, 0.0f, 0.0f, 1.0f));
-
   return builder.add(ir::Op::Select(
-    ir::BasicType(scalarType, 4u),
+    ir::BasicType(ir::ScalarType::eF32, 4u),
     broadcastScalar(builder, isNull, WriteMask(ComponentBit::eAll)),
-    fallback,
+    builder.makeConstant(0.0f, 0.0f, 0.0f, 1.0f),
     color));
 }
 
@@ -928,11 +927,9 @@ ir::SsaDef ResourceMap::emitSampleDref(
 ) {
   /* We don't check for NULL here because if there's no texture bound, we always end up in the color path. */
 
-  auto scalarType = builder.getOp(texCoord).getType().getBaseType(0u).getBaseType();
-
   uint32_t texCoordComponentCount = textureType == SpecConstTextureType::eTexture2D ? 2u : 3u;
   auto referenceComponentIdx = builder.makeConstant(texCoordComponentCount);
-  auto reference = builder.add(ir::Op::CompositeExtract(scalarType, texCoord, referenceComponentIdx));
+  auto reference = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, referenceComponentIdx));
 
   // [D3D8] Scale Dref from [0..(2^N - 1)] for D24S8 and D16 if Dref scaling is enabled
   auto drefScaleShift = m_converter.m_specConstants.get(
@@ -940,12 +937,12 @@ ir::SsaDef ResourceMap::emitSampleDref(
     SpecConstantId::eSpecDrefScaling
   );
   auto drefScale = builder.add(ir::Op::IShl(ir::ScalarType::eU32, builder.makeConstant(1u), drefScaleShift));
-  drefScale      = builder.add(ir::Op::ConvertItoF(scalarType, drefScale));
-  drefScale      = builder.add(ir::Op::FSub(scalarType, drefScale, ir::makeTypedConstant(builder, scalarType, 1.0f)));
-  drefScale      = builder.add(ir::Op::FDiv(scalarType, ir::makeTypedConstant(builder, scalarType, 1.0f), drefScale));
-  reference      = builder.add(ir::Op::Select(scalarType,
+  drefScale      = builder.add(ir::Op::ConvertItoF(ir::ScalarType::eF32, drefScale));
+  drefScale      = builder.add(ir::Op::FSub(ir::ScalarType::eF32, drefScale, builder.makeConstant(1.0f)));
+  drefScale      = builder.add(ir::Op::FDiv(ir::ScalarType::eF32, builder.makeConstant(1.0f), drefScale));
+  reference      = builder.add(ir::Op::Select(ir::ScalarType::eF32,
     builder.add(ir::Op::INe(ir::ScalarType::eBool, drefScaleShift, builder.makeConstant(0u))),
-    builder.add(ir::Op::FMul(scalarType, reference, drefScale)),
+    builder.add(ir::Op::FMul(ir::ScalarType::eF32, reference, drefScale)),
     reference
   ));
 
@@ -955,17 +952,14 @@ ir::SsaDef ResourceMap::emitSampleDref(
     SpecConstantId::eSpecSamplerDrefClamp
   );
   clampDref      = builder.add(ir::Op::INe(ir::ScalarType::eBool, clampDref, builder.makeConstant(0u)));
-  auto clampedDref = builder.add(ir::Op::FClamp(scalarType, reference, ir::makeTypedConstant(builder, scalarType, 0.0f), ir::makeTypedConstant(builder, scalarType, 1.0f)));
-  reference = builder.add(ir::Op::Select(scalarType, clampDref, clampedDref, reference));
-  /* SPIR-V needs the reference to be a 32bit float. */
-  if (scalarType != ir::ScalarType::eF32)
-    reference = builder.add(ir::Op::ConsumeAs(ir::ScalarType::eF32, reference));
+  auto clampedDref = builder.add(ir::Op::FClamp(ir::ScalarType::eF32, reference, builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
+  reference = builder.add(ir::Op::Select(ir::ScalarType::eF32, clampDref, clampedDref, reference));
 
   std::array<ir::SsaDef, 4u> texCoordComponents;
   for (uint32_t i = 0u; i < texCoordComponentCount; i++) {
-    texCoordComponents[i] = builder.add(ir::Op::CompositeExtract(scalarType, texCoord, builder.makeConstant(i)));
+    texCoordComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(i)));
   }
-  auto sizedTexCoord = buildVector(builder, scalarType, texCoordComponentCount, texCoordComponents.data());
+  auto sizedTexCoord = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, texCoordComponents.data());
 
   auto sizedDx = ir::SsaDef();
   auto sizedDy = ir::SsaDef();
@@ -973,15 +967,15 @@ ir::SsaDef ResourceMap::emitSampleDref(
     std::array<ir::SsaDef, 4u> dxComponents;
     std::array<ir::SsaDef, 4u> dyComponents;
     for (uint32_t i = 0u; i < texCoordComponentCount; i++) {
-      dxComponents[i] = builder.add(ir::Op::CompositeExtract(scalarType, dx, builder.makeConstant(i)));
-      dyComponents[i] = builder.add(ir::Op::CompositeExtract(scalarType, dy, builder.makeConstant(i)));
+      dxComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, dx, builder.makeConstant(i)));
+      dyComponents[i] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, dy, builder.makeConstant(i)));
     }
-    sizedDx = buildVector(builder, scalarType, texCoordComponentCount, dxComponents.data());
-    sizedDy = buildVector(builder, scalarType, texCoordComponentCount, dyComponents.data());
+    sizedDx = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, dxComponents.data());
+    sizedDy = buildVector(builder, ir::ScalarType::eF32, texCoordComponentCount, dyComponents.data());
   }
 
   auto drefResult = builder.add(ir::Op::ImageSample(
-    scalarType,
+    ir::ScalarType::eF32,
     descriptor,
     sampler,
     ir::SsaDef(),
