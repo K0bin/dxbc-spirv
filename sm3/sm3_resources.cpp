@@ -949,7 +949,7 @@ ir::SsaDef ResourceMap::emitSampleDref(
     reference
   ));
 
-  // Clamp Dref to [0..1] for D32F emulating UNORM textures
+  /* Clamp Dref to [0..1] for D32F emulating UNORM textures */
   auto clampDref = m_converter.m_specConstants.get(
     builder,
     SpecConstantId::eSpecSamplerDrefClamp
@@ -957,6 +957,7 @@ ir::SsaDef ResourceMap::emitSampleDref(
   clampDref      = builder.add(ir::Op::INe(ir::ScalarType::eBool, clampDref, builder.makeConstant(0u)));
   auto clampedDref = builder.add(ir::Op::FClamp(scalarType, reference, ir::makeTypedConstant(builder, scalarType, 0.0f), ir::makeTypedConstant(builder, scalarType, 1.0f)));
   reference = builder.add(ir::Op::Select(scalarType, clampDref, clampedDref, reference));
+  /* SPIR-V needs the reference to be a 32bit float. */
   if (scalarType != ir::ScalarType::eF32)
     reference = builder.add(ir::Op::ConsumeAs(ir::ScalarType::eF32, reference));
 
