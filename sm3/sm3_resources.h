@@ -23,6 +23,7 @@ enum class SamplingConfigBit : uint8_t {
   eExplicitLod         = 1u << 0u,
   eLodBias             = 1u << 1u,
   eExplicitDerivatives = 1u << 2u,
+  eFMin16              = 1u << 4u,
 
   eFlagEnum            = 0u,
 };
@@ -37,6 +38,10 @@ struct SamplerRegister {
   /** Declaration of the texture
    * One for each texture type on SM1 and only one on SM2+ */
   std::array<ir::SsaDef, 3u> textureDefs = { };
+
+  /** Declaration of the texture with partial precision
+   * One for each texture type on SM1 and only one on SM2+ */
+  std::array<ir::SsaDef, 3u> textureMinF16Defs = { };
 
   /** The type of the texture. This is only set on SM2+ as there are no dcl_samplerType instructions
    * on SM1. This texture type represents the index of the one valid `textureDef` on SM2. */
@@ -163,7 +168,7 @@ private:
 
   ir::SsaDef dclSampler(ir::Builder& builder, uint32_t samplerIndex);
 
-  ir::SsaDef dclTexture(ir::Builder& builder, SpecConstTextureType textureType, uint32_t samplerIndex);
+  ir::SsaDef dclTexture(ir::Builder& builder, SpecConstTextureType textureType, uint32_t samplerIndex, ir::ScalarType scalarType);
 
   ir::SsaDef emitSampleImageFunction(
     ir::Builder& builder,

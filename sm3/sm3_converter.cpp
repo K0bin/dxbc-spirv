@@ -769,6 +769,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
   ir::SsaDef result = ir::SsaDef();
   auto dst = op.getDst();
   auto opCode = op.getOpCode();
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
 
   switch (opCode) {
     case OpCode::eTexLd: {
@@ -788,17 +789,17 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         if (getShaderInfo().getVersion().second >= 4u) {
           /* texld - ps_1_4 */
           auto src0 = op.getSrc(0u);
-          texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, ir::ScalarType::eF32);
+          texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
         } else {
           /* tex - ps_1_1 - ps_1_3 */
           /* The destination register index decides the sampler and texture coord index. */
-          texCoord = m_ioMap.emitTexCoordLoad(builder, op, samplerIdx, ComponentBit::eAll, Swizzle::identity(), ir::ScalarType::eF32);
+          texCoord = m_ioMap.emitTexCoordLoad(builder, op, samplerIdx, ComponentBit::eAll, Swizzle::identity(), scalarType);
         }
       } else {
         /* texld - sm_2_0 and up */
         auto src0 = op.getSrc(0u);
         auto src1 = op.getSrc(1u);
-        texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, ir::ScalarType::eF32);
+        texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
         samplerIdx = src1.getIndex();
 
         switch (op.getTexLdMode()) {
@@ -806,7 +807,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
             texCoord = m_resources.projectTexCoord(builder, samplerIdx, texCoord, false);
             break;
           case TexLdMode::eBias:
-            lodBias = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(3u)));
+            lodBias = builder.add(ir::Op::CompositeExtract(scalarType, texCoord, builder.makeConstant(3u)));
             break;
           default: break;
         }
@@ -822,9 +823,9 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       /* Sample with explicit LOD */
       auto src0 = op.getSrc(0u);
       auto src1 = op.getSrc(1u);
-      auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, ir::ScalarType::eF32);
+      auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
       uint32_t samplerIdx = src1.getIndex();
-      auto lod = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, texCoord, builder.makeConstant(3u)));
+      auto lod = builder.add(ir::Op::CompositeExtract(scalarType, texCoord, builder.makeConstant(3u)));
       result = m_resources.emitSample(builder, samplerIdx, texCoord, lod, ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
     } break;
 
@@ -834,10 +835,10 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       auto src1 = op.getSrc(1u);
       auto src2 = op.getSrc(2u);
       auto src3 = op.getSrc(3u);
-      auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, ir::ScalarType::eF32);
+      auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
       uint32_t samplerIdx = src1.getIndex();
-      auto dx = loadSrcModified(builder, op, src2, ComponentBit::eAll, ir::ScalarType::eF32);
-      auto dy = loadSrcModified(builder, op, src3, ComponentBit::eAll, ir::ScalarType::eF32);
+      auto dx = loadSrcModified(builder, op, src2, ComponentBit::eAll, scalarType);
+      auto dy = loadSrcModified(builder, op, src3, ComponentBit::eAll, scalarType);
       result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), dx, dy);
     } break;
 
@@ -854,7 +855,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       }
 
       auto src0 = op.getSrc(0u);
-      auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, ir::ScalarType::eF32);
+      auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
       texCoord = swizzleVector(builder, texCoord, swizzle, ComponentBit::eAll);
       uint32_t samplerIdx = dst.getIndex();
 
@@ -872,7 +873,6 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     case OpCode::eTexM3x3VSpec: {
       /* All of those instructions start with a matrix multiplication. */
       const uint32_t rows = opCode == OpCode::eTexM3x2Tex ? 2u : 3u;
-      auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
 
       auto src0 = op.getSrc(0u);
       auto n = loadSrcModified(builder, op, src0, util::makeWriteMaskForComponents(3u), scalarType);
@@ -959,7 +959,6 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     case OpCode::eTexDp3Tex:
     case OpCode::eTexDp3: {
       /* Calculate a dot product of the texcoord data and src0 (and optionally use that for 1D texture lookup) */
-      auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
       auto src0 = op.getSrc(0u);
       auto m = m_ioMap.emitTexCoordLoad(builder, op, dst.getIndex(), util::makeWriteMaskForComponents(3u), Swizzle::identity(), scalarType);
       auto n = loadSrcModified(builder, op, src0, util::makeWriteMaskForComponents(3u), scalarType);
@@ -984,8 +983,8 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     case OpCode::eTexBemL: {
       /* Apply a fake bump environment-map transform */
       uint32_t samplerIdx = dst.getIndex();
-      auto texCoord = m_ioMap.emitTexCoordLoad(builder, op, samplerIdx, ComponentBit::eAll, Swizzle::identity(), ir::ScalarType::eF32);
-      auto src0 = loadSrcModified(builder, op, op.getSrc(0u), WriteMask(ComponentBit::eX | ComponentBit::eY), ir::ScalarType::eF32);
+      auto texCoord = m_ioMap.emitTexCoordLoad(builder, op, samplerIdx, ComponentBit::eAll, Swizzle::identity(), scalarType);
+      auto src0 = loadSrcModified(builder, op, op.getSrc(0u), WriteMask(ComponentBit::eX | ComponentBit::eY), scalarType);
 
       dxbc_spv_assert(getShaderInfo().getVersion().first < 2u);
       texCoord = m_resources.projectTexCoord(builder, samplerIdx, texCoord, true);
@@ -993,10 +992,10 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       auto bumpMappedTexCoord = applyBumpMapping(builder, samplerIdx, texCoord, src0);
 
       /* Insert it back into the original tex coord, so we have a z and w component in case we need them. */
-      auto u = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, bumpMappedTexCoord, builder.makeConstant(0u)));
-      auto v = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, bumpMappedTexCoord, builder.makeConstant(1u)));
-      texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(ir::ScalarType::eF32, 4u), texCoord, builder.makeConstant(0u), u));
-      texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(ir::ScalarType::eF32, 4u), texCoord, builder.makeConstant(1u), v));
+      auto u = builder.add(ir::Op::CompositeExtract(scalarType, bumpMappedTexCoord, builder.makeConstant(0u)));
+      auto v = builder.add(ir::Op::CompositeExtract(scalarType, bumpMappedTexCoord, builder.makeConstant(1u)));
+      texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(scalarType, 4u), texCoord, builder.makeConstant(0u), u));
+      texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(scalarType, 4u), texCoord, builder.makeConstant(1u), v));
 
       result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef());
 
@@ -1005,16 +1004,20 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
         auto bumpEnvLScale = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 3u), 16u));
         auto bumpEnvLOffset = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 2u), 8u));
-        auto scale = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, result, builder.makeConstant(2u)));
-        scale = builder.add(OpFMul(ir::ScalarType::eF32, scale, bumpEnvLScale));
-        scale = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, scale, bumpEnvLOffset));
-        std::array<ir::SsaDef, 4u> scaledComponents = {};
-        scale = builder.add(ir::Op::FClamp(ir::ScalarType::eF32, scale, builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
-        for (uint32_t i = 0u; i < 4u; i++) {
-          auto resultComponent = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, result, builder.makeConstant(i)));
-          scaledComponents[i] = builder.add(OpFMul(ir::ScalarType::eF32, resultComponent, scale));
+        if (scalarType != ir::ScalarType::eF32) {
+          bumpEnvLScale = builder.add(ir::Op::ConsumeAs(ir::BasicType(scalarType, 2u), bumpEnvLScale));
+          bumpEnvLOffset = builder.add(ir::Op::ConsumeAs(ir::BasicType(scalarType, 2u), bumpEnvLOffset));
         }
-        result = buildVector(builder, ir::ScalarType::eF32, scaledComponents.size(), scaledComponents.data());
+        auto scale = builder.add(ir::Op::CompositeExtract(scalarType, result, builder.makeConstant(2u)));
+        scale = builder.add(OpFMul(scalarType, scale, bumpEnvLScale));
+        scale = builder.add(ir::Op::FAdd(scalarType, scale, bumpEnvLOffset));
+        std::array<ir::SsaDef, 4u> scaledComponents = {};
+        scale = builder.add(ir::Op::FClamp(scalarType, scale, builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
+        for (uint32_t i = 0u; i < 4u; i++) {
+          auto resultComponent = builder.add(ir::Op::CompositeExtract(scalarType, result, builder.makeConstant(i)));
+          scaledComponents[i] = builder.add(OpFMul(scalarType, resultComponent, scale));
+        }
+        result = buildVector(builder, scalarType, scaledComponents.size(), scaledComponents.data());
       }
     } break;
 
@@ -1208,14 +1211,14 @@ bool Converter::handleBem(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(!!m_psSharedData);
   auto dst = op.getDst();
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   /* Dst register index determines the bumpmapping stage index. */
   auto stageIdx = dst.getIndex();
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
   /* Write mask must be .xy */
   dxbc_spv_assert(writeMask == WriteMask(ComponentBit::eX | ComponentBit::eY));
-  /* No point trying to use partial precision (FP16) here because we're loading the bump env matrices as FP32 anyway. */
-  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, ir::ScalarType::eF32);
-  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, ir::ScalarType::eF32);
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
+  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
 
   auto result = applyBumpMapping(builder, stageIdx, src0, src1);
   return storeDstModifiedPredicated(builder, op, dst, result);
@@ -2043,22 +2046,29 @@ ir::SsaDef Converter::applyBumpMapping(ir::Builder& builder, uint32_t stageIdx, 
    *                + D3DTSS_BUMPENVMAT11(stage n) * src1.y
    */
 
+  auto type = builder.getOp(src0).getType().getBaseType(0u);
+  auto scalarType = type.getBaseType();
+  dxbc_spv_assert(type == builder.getOp(src1).getType().getBaseType(0u));
+
   auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
   std::array<ir::SsaDef, 2> components = {};
   for (uint32_t i = 0u; i < components.size(); i++) {
     /* Load bump matrix */
     auto bumpEnvMat0 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 1u), 16u));
     auto bumpEnvMat1 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 2u), 8u));
-
-    auto src1r = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src1, builder.makeConstant(0u)));
-    auto bumped0 = builder.add(OpFMul(ir::ScalarType::eF32, bumpEnvMat0, src1r));
-    auto src1g = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src1, builder.makeConstant(1u)));
-    auto bumped1 = builder.add(OpFMul(ir::ScalarType::eF32, bumpEnvMat1, src1g));
-    auto bumpedSum = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, bumped0, bumped1));
-    auto src0Component = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src0, builder.makeConstant(i)));
-    components[i] = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, src0Component, bumpedSum));
+    if (scalarType != ir::ScalarType::eF32) {
+      bumpEnvMat0 = builder.add(ir::Op::ConsumeAs(ir::BasicType(scalarType, 2u), bumpEnvMat0));
+      bumpEnvMat1 = builder.add(ir::Op::ConsumeAs(ir::BasicType(scalarType, 2u), bumpEnvMat1));
+    }
+    auto src1r = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(0u)));
+    auto bumped0 = builder.add(OpFMul(scalarType, bumpEnvMat0, src1r));
+    auto src1g = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(1u)));
+    auto bumped1 = builder.add(OpFMul(scalarType, bumpEnvMat1, src1g));
+    auto bumpedSum = builder.add(ir::Op::FAdd(scalarType, bumped0, bumped1));
+    auto src0Component = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(i)));
+    components[i] = builder.add(ir::Op::FAdd(scalarType, src0Component, bumpedSum));
   }
-  return buildVector(builder, ir::ScalarType::eF32, components.size(), components.data());
+  return buildVector(builder, scalarType, components.size(), components.data());
 }
 
 
