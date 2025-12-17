@@ -701,8 +701,8 @@ bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
   auto power = builder.add(ir::Op::FClamp(scalarType, srcW,
     builder.makeConstant(-127.9961f), builder.makeConstant(127.9961f)));
 
-  auto zeroFConst = builder.makeConstant(0.0f);
-  auto oneFConst = builder.makeConstant(1.0f);
+  auto zeroFConst = ir::makeTypedConstant(builder, scalarType, 0.0f);
+  auto oneFConst = ir::makeTypedConstant(builder, scalarType, 1.0f);
 
   util::small_vector<ir::SsaDef, 4u> components;
   if (writeMask & ComponentBit::eX)
@@ -758,7 +758,7 @@ bool Converter::handleTexCoord(ir::Builder& builder, const Instruction& op) {
 
     /* w = 1.0 */
     if (writeMask & ComponentBit::eW)
-      src = builder.add(ir::Op::CompositeInsert(vectorType, src, builder.makeConstant(3u), builder.makeConstant(1.0f)));
+      src = builder.add(ir::Op::CompositeInsert(vectorType, src, builder.makeConstant(3u), ir::makeTypedConstant(builder, scalarType, 1.0f)));
 
     return storeDstModifiedPredicated(builder, op, dst, src);
   }
@@ -1012,7 +1012,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         scale = builder.add(OpFMul(scalarType, scale, bumpEnvLScale));
         scale = builder.add(ir::Op::FAdd(scalarType, scale, bumpEnvLOffset));
         std::array<ir::SsaDef, 4u> scaledComponents = {};
-        scale = builder.add(ir::Op::FClamp(scalarType, scale, builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
+        scale = builder.add(ir::Op::FClamp(scalarType, scale, ir::makeTypedConstant(builder, scalarType, 0.0f), ir::makeTypedConstant(builder, scalarType, 1.0f)));
         for (uint32_t i = 0u; i < 4u; i++) {
           auto resultComponent = builder.add(ir::Op::CompositeExtract(scalarType, result, builder.makeConstant(i)));
           scaledComponents[i] = builder.add(OpFMul(scalarType, resultComponent, scale));
@@ -2048,7 +2048,7 @@ ir::SsaDef Converter::applyBumpMapping(ir::Builder& builder, uint32_t stageIdx, 
 
   auto type = builder.getOp(src0).getType().getBaseType(0u);
   auto scalarType = type.getBaseType();
-  dxbc_spv_assert(type == builder.getOp(src1).getType().getBaseType(0u));
+  dxbc_spv_assert(scalarType == builder.getOp(src1).getType().getBaseType(0u).getBaseType());
 
   auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
   std::array<ir::SsaDef, 2> components = {};

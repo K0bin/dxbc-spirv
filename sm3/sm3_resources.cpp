@@ -590,6 +590,8 @@ ir::SsaDef ResourceMap::dclTexture(ir::Builder& builder, SpecConstTextureType te
     }
     nameStream << "_";
     nameStream << textureTypeFromSpecConstTextureType(textureType);
+    if (scalarType == ir::ScalarType::eMinF16)
+      nameStream << "_pp";
 
     std::string name = nameStream.str();
     builder.add(ir::Op::DebugName(textureDef, name.c_str()));
@@ -668,7 +670,7 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
     /* Shader model 1 does not require declaring samplers/textures with a DCL instruction.
      * We emit a switch() block with one case for each texture type. Decide based on a spec constant. */
     auto resultTmp = builder.add(ir::Op::DclTmp(ir::BasicType(scalarType, 4u), m_converter.getEntryPoint()));
-    builder.add(ir::Op::TmpStore(resultTmp, ir::broadcastScalar(builder, builder.makeConstant(0.0f), ComponentBit::eAll)));
+    builder.add(ir::Op::TmpStore(resultTmp, ir::broadcastScalar(builder, ir::makeTypedConstant(builder, scalarType, 0.0f), ComponentBit::eAll)));
     auto samplerTypeSpecConst = m_converter.m_specConstants.get(
       builder,
       SpecConstantId::eSpecSamplerType,
@@ -716,6 +718,8 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
       nameStream << "_bias";
     if (config & SamplingConfigBit::eExplicitDerivatives)
       nameStream << "_grad";
+    if (config & SamplingConfigBit::eFMin16)
+      nameStream << "_pp";
 
     std::string name = nameStream.str();
     builder.add(ir::Op::DebugName(function, name.c_str()));
@@ -865,7 +869,7 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
        * as only then does the imprecision need to be biased
        * towards infinity -- but that's not really worth doing... */
       numerator -= 1.0f / 256.0f;
-      auto numeratorVec = broadcastScalar(builder, builder.makeConstant(numerator), util::makeWriteMaskForComponents(coordDims));
+      auto numeratorVec = broadcastScalar(builder, ir::makeTypedConstant(builder, scalarType, numerator), util::makeWriteMaskForComponents(coordDims));
       auto invTextureSize = builder.add(ir::Op::FDiv(textureSizeType, numeratorVec, scaledTextureSizeF));
 
       /* texcoord += invTextureSize */
@@ -900,10 +904,13 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
   );
   auto isNull = builder.add(ir::Op::INe(ir::ScalarType::eBool, isNullSpecConst, builder.makeConstant(0u)));
 
+  ir::SsaDef fallback = builder.add(ir::Op(ir::OpCode::eConstant, ir::BasicType(scalarType, 4u))
+    .addOperands(0.0f, 0.0f, 0.0f, 1.0f));
+
   return builder.add(ir::Op::Select(
     ir::BasicType(scalarType, 4u),
     broadcastScalar(builder, isNull, WriteMask(ComponentBit::eAll)),
-    builder.makeConstant(0.0f, 0.0f, 0.0f, 1.0f),
+    fallback,
     color));
 }
 
@@ -932,10 +939,10 @@ ir::SsaDef ResourceMap::emitSampleDref(
     builder,
     SpecConstantId::eSpecDrefScaling
   );
-  auto drefScale = builder.add(ir::Op::IShl(scalarType, builder.makeConstant(1u), drefScaleShift));
+  auto drefScale = builder.add(ir::Op::IShl(ir::ScalarType::eU32, builder.makeConstant(1u), drefScaleShift));
   drefScale      = builder.add(ir::Op::ConvertItoF(scalarType, drefScale));
-  drefScale      = builder.add(ir::Op::FSub(scalarType, drefScale, builder.makeConstant(1.0f)));
-  drefScale      = builder.add(ir::Op::FDiv(scalarType, builder.makeConstant(1.0f), drefScale));
+  drefScale      = builder.add(ir::Op::FSub(scalarType, drefScale, ir::makeTypedConstant(builder, scalarType, 1.0f)));
+  drefScale      = builder.add(ir::Op::FDiv(scalarType, ir::makeTypedConstant(builder, scalarType, 1.0f), drefScale));
   reference      = builder.add(ir::Op::Select(scalarType,
     builder.add(ir::Op::INe(ir::ScalarType::eBool, drefScaleShift, builder.makeConstant(0u))),
     builder.add(ir::Op::FMul(scalarType, reference, drefScale)),
@@ -948,8 +955,10 @@ ir::SsaDef ResourceMap::emitSampleDref(
     SpecConstantId::eSpecSamplerDrefClamp
   );
   clampDref      = builder.add(ir::Op::INe(ir::ScalarType::eBool, clampDref, builder.makeConstant(0u)));
-  auto clampedDref = builder.add(ir::Op::FClamp(scalarType, reference, builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
+  auto clampedDref = builder.add(ir::Op::FClamp(scalarType, reference, ir::makeTypedConstant(builder, scalarType, 0.0f), ir::makeTypedConstant(builder, scalarType, 1.0f)));
   reference = builder.add(ir::Op::Select(scalarType, clampDref, clampedDref, reference));
+  if (scalarType != ir::ScalarType::eF32)
+    reference = builder.add(ir::Op::ConsumeAs(ir::ScalarType::eF32, reference));
 
   std::array<ir::SsaDef, 4u> texCoordComponents;
   for (uint32_t i = 0u; i < texCoordComponentCount; i++) {

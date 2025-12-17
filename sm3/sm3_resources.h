@@ -23,7 +23,7 @@ enum class SamplingConfigBit : uint8_t {
   eExplicitLod         = 1u << 0u,
   eLodBias             = 1u << 1u,
   eExplicitDerivatives = 1u << 2u,
-  eFMin16              = 1u << 4u,
+  eFMin16              = 1u << 3u,
 
   eFlagEnum            = 0u,
 };
@@ -55,7 +55,7 @@ struct SamplerRegister {
    * Each function takes in an F32 vec4 for the texCoords and some
    * will take additional arguments for LODs and/or derivatives depending
    * on the flags. */
-  std::array<ir::SsaDef, 6u> samplingFunctions = { };
+  std::array<ir::SsaDef, 16u> samplingFunctions = { };
 };
 
 struct ConstantRange {
