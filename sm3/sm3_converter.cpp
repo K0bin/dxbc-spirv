@@ -1439,8 +1439,13 @@ bool Converter::handleIf(ir::Builder& builder, const Instruction& op) {
   ir::SsaDef cond;
 
   if (op.getOpCode() == OpCode::eIf) {
-    dxbc_spv_assert(op.getSrc(0u).getModifier() == OperandModifier::eNone);
     cond = loadSrc(builder, op, op.getSrc(0u), ComponentBit::eX, op.getSrc(0u).getSwizzle(getShaderInfo()), ir::ScalarType::eBool);
+    if (op.getSrc(0u).getModifier() == OperandModifier::eNot) {
+      cond = builder.add(ir::Op::BNot(ir::ScalarType::eBool, cond));
+    } else if (op.getSrc(0u).getModifier() != OperandModifier::eNone) {
+      Logger::log(LogLevel::eError, "Unknown if condition modifier: ", uint32_t(op.getSrc(0u).getModifier()));
+      dxbc_spv_assert(false);
+    }
   } else if (op.getOpCode() == OpCode::eIfC) {
     ir::SsaDef src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, ir::ScalarType::eF32);
     ir::SsaDef src1 = loadSrcModified(builder, op, op.getSrc(1u), ComponentBit::eX, ir::ScalarType::eF32);
@@ -1952,6 +1957,7 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
       predicate = buildVector(builder, ir::ScalarType::eBool, components.size(), components.data());
     } else if (operand.getPredicateModifier() != OperandModifier::eNone) {
       Logger::log(LogLevel::eError, "Unknown predicate modifier: ", uint32_t(operand.getPredicateModifier()));
+      dxbc_spv_assert(false);
     }
   }
 
