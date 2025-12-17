@@ -14,12 +14,6 @@
 
 namespace dxbc_spv::sm3 {
 
-enum class FloatEmulation {
-  eDisabled,
-  eFast,
-  eStrict,
-};
-
 /** Shader converter from SM3 DXBC to custom IR.
  *
  * The generated IR will contain temporaries rather than pure SSA form,
@@ -47,7 +41,8 @@ public:
      * limits. Only applies to vertex shaders. */
     bool isSWVP = false;
 
-    FloatEmulation floatEmulation;
+    /** Whether D3D9 fmulz floats are emulated by strategically clamping in the right spots. */
+    bool fastFloatEmulation = false;
   };
 
   Converter(util::ByteReader code, SpecializationConstantLayout& specConstantsLayout, const Options& options);
@@ -103,6 +98,27 @@ private:
 
   const Options& getOptions() const {
     return m_options;
+  }
+
+  ir::Op OpFMul(ir::Type type, ir::SsaDef a, ir::SsaDef b) const {
+    return !m_options.fastFloatEmulation
+      ? ir::Op::FMulLegacy(type, a, b)
+      : ir::Op::FMul(type, a, b);
+  }
+  ir::Op OpFMad(ir::Type type, ir::SsaDef a, ir::SsaDef b, ir::SsaDef c) const {
+    return !m_options.fastFloatEmulation
+      ? ir::Op::FMadLegacy(type, a, b, c)
+      : ir::Op::FMad(type, a, b, c);
+  }
+  ir::Op OpFDot(ir::Type type, ir::SsaDef a, ir::SsaDef b) const {
+    return !m_options.fastFloatEmulation
+      ? ir::Op::FDotLegacy(type, a, b)
+      : ir::Op::FDot(type, a, b);
+  }
+  ir::Op OpFPow(ir::Type type, ir::SsaDef base, ir::SsaDef exp) const {
+    return !m_options.fastFloatEmulation
+      ? ir::Op::FPowLegacy(type, base, exp)
+      : ir::Op::FPow(type, base, exp);
   }
 
   bool handleDcl(ir::Builder& builder, const Instruction& op);

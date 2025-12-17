@@ -464,7 +464,7 @@ bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
     src.push_back(value);
   }
 
-  ir::Op result = [opCode, vectorType, &src] {
+  ir::Op result = [this, opCode, vectorType, &src] {
     switch (opCode) {
       case OpCode::eAdd:        return ir::Op::FAdd(vectorType, src.at(0u), src.at(1u));
       case OpCode::eSub:        return ir::Op::FSub(vectorType, src.at(0u), src.at(1u));
@@ -474,7 +474,7 @@ bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
       case OpCode::eLogP:       return ir::Op::FLog2(vectorType, src.at(0u));
       case OpCode::eMax:        return ir::Op::FMax(vectorType, src.at(0u), src.at(1u));
       case OpCode::eMin:        return ir::Op::FMin(vectorType, src.at(0u), src.at(1u));
-      case OpCode::eMul:        return ir::Op::FMulLegacy(vectorType, src.at(0u), src.at(1u));
+      case OpCode::eMul:        return OpFMul(vectorType, src.at(0u), src.at(1u));
       case OpCode::eRcp:        return ir::Op::FRcp(vectorType, src.at(0u));
       case OpCode::eRsq:        return ir::Op::FRsq(vectorType, src.at(0u));
       case OpCode::eAbs:        return ir::Op::FAbs(vectorType, src.at(0u));
@@ -508,7 +508,7 @@ bool Converter::handleMad(ir::Builder& builder, const Instruction& op) {
   auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
   auto src2 = loadSrcModified(builder, op, op.getSrc(2u), writeMask, scalarType);
 
-  auto result = ir::Op::FMadLegacy(vectorType, src0, src1, src2);
+  auto result = OpFMad(vectorType, src0, src1, src2);
 
   return storeDstModifiedPredicated(builder, op, dst, builder.add(std::move(result)));
 }
@@ -548,7 +548,7 @@ bool Converter::handleDot(ir::Builder& builder, const Instruction& op) {
   auto vectorA = loadSrcModified(builder, op, op.getSrc(0u), readMask, scalarType);
   auto vectorB = loadSrcModified(builder, op, op.getSrc(1u), readMask, scalarType);
 
-  auto result = builder.add(ir::Op::FDotLegacy(scalarType, vectorA, vectorB));
+  auto result = builder.add(OpFDot(scalarType, vectorA, vectorB));
 
   if (opCode == OpCode::eDp2Add) {
     /* src2 needs to have a replicate swizzle, so just get the first component. */
@@ -662,7 +662,7 @@ bool Converter::handleMatrixArithmetic(ir::Builder& builder, const Instruction& 
     auto src1 = loadSrcModified(builder, op, src1iOperand, srcMask, scalarType);
 
     /* Calculate vector component */
-    components[i] = builder.add(ir::Op::FDotLegacy(scalarType, src0, src1));
+    components[i] = builder.add(OpFDot(scalarType, src0, src1));
   }
 
   auto result = buildVector(builder, scalarType, rowCount, components.data());
@@ -870,7 +870,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       for (uint32_t i = 0u; i < components.size(); i++) {
         if (i < rows) {
           auto mi = m_ioMap.emitTexCoordLoad(builder, op, lastIndex + i - rows - 1u, util::makeWriteMaskForComponents(3u), Swizzle::identity(), scalarType);
-          components[i] = builder.add(ir::Op::FDotLegacy(scalarType, mi, n));
+          components[i] = builder.add(OpFDot(scalarType, mi, n));
         } else {
           // w is defined to be 1.0 in eTexM3x3.
           components[i] = makeTypedConstant(builder, scalarType, 1.0f);
@@ -924,11 +924,11 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         // 2*[(N*E)/(N*N)]*N - E
         auto vectorType = ir::BasicType(scalarType, 3u);
 
-        auto nDotE = builder.add(ir::Op::FDotLegacy(scalarType, normal, eyeRay));
-        auto nDotN = builder.add(ir::Op::FDotLegacy(scalarType, normal, normal));
+        auto nDotE = builder.add(OpFDot(scalarType, normal, eyeRay));
+        auto nDotN = builder.add(OpFDot(scalarType, normal, normal));
         auto dotDiv = builder.add(ir::Op::FDiv(scalarType, nDotE, nDotN));
-        auto twoDotDiv = builder.add(ir::Op::FMulLegacy(scalarType, makeTypedConstant(builder, scalarType, 2.0f), dotDiv));
-        auto texCoord = builder.add(ir::Op::FMulLegacy(vectorType, normal, broadcastScalar(builder, twoDotDiv, util::makeWriteMaskForComponents(3u))));
+        auto twoDotDiv = builder.add(OpFMul(scalarType, makeTypedConstant(builder, scalarType, 2.0f), dotDiv));
+        auto texCoord = builder.add(OpFMul(vectorType, normal, broadcastScalar(builder, twoDotDiv, util::makeWriteMaskForComponents(3u))));
         texCoord = builder.add(ir::Op::FSub(vectorType, texCoord, eyeRay));
 
         /* The sampling function requires a vec4. */
@@ -951,7 +951,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       auto src0 = op.getSrc(0u);
       auto m = m_ioMap.emitTexCoordLoad(builder, op, dst.getIndex(), util::makeWriteMaskForComponents(3u), Swizzle::identity(), scalarType);
       auto n = loadSrcModified(builder, op, src0, util::makeWriteMaskForComponents(3u), scalarType);
-      auto dot = builder.add(ir::Op::FDotLegacy(scalarType, m, n));
+      auto dot = builder.add(OpFDot(scalarType, m, n));
       if (opCode == OpCode::eTexDp3Tex) {
         /* Sample texture at register index of dst using (dot, 0, 0, 0) as coordinates */
         std::array<ir::SsaDef, 4u> texCoordComponents = {
@@ -994,13 +994,13 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         auto bumpEnvLScale = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 3u), 16u));
         auto bumpEnvLOffset = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 2u), 8u));
         auto scale = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, result, builder.makeConstant(2u)));
-        scale = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, scale, bumpEnvLScale));
+        scale = builder.add(OpFMul(ir::ScalarType::eF32, scale, bumpEnvLScale));
         scale = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, scale, bumpEnvLOffset));
         std::array<ir::SsaDef, 4u> scaledComponents = {};
         scale = builder.add(ir::Op::FClamp(ir::ScalarType::eF32, scale, builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
         for (uint32_t i = 0u; i < 4u; i++) {
           auto resultComponent = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, result, builder.makeConstant(i)));
-          scaledComponents[i] = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, resultComponent, scale));
+          scaledComponents[i] = builder.add(OpFMul(ir::ScalarType::eF32, resultComponent, scale));
         }
         result = buildVector(builder, ir::ScalarType::eF32, scaledComponents.size(), scaledComponents.data());
       }
@@ -1128,7 +1128,7 @@ bool Converter::handlePow(ir::Builder& builder, const Instruction& op) {
   auto src1 = loadSrcModified(builder, op, op.getSrc(1u), ComponentBit::eX, scalarType);
 
   auto absSrc0 = builder.add(ir::Op::FAbs(scalarType, src0));
-  auto val = builder.add(ir::Op::FPowLegacy(scalarType, absSrc0, src1));
+  auto val = builder.add(OpFPow(scalarType, absSrc0, src1));
   auto vec = broadcastScalar(builder, val, writeMask);
   return storeDstModifiedPredicated(builder, op, dst, vec);
 }
@@ -1153,7 +1153,7 @@ bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
     /* dest = src0 * (src1 - src2) + src2 */
     result = builder.add(ir::Op::FSub(type, src1, src2));
     result = builder.add(ir::Op::FAdd(type, result, src2));
-    result = builder.add(ir::Op::FMulLegacy(type, src0, result));
+    result = builder.add(OpFMul(type, src0, result));
   } else if (op.getOpCode() == OpCode::eCmp || op.getOpCode() == OpCode::eCnd) {
     util::small_vector<ir::SsaDef, 4u> components;
     for (auto _ : writeMask) {
@@ -1237,7 +1237,7 @@ bool Converter::handleDst(ir::Builder& builder, const Instruction& op) {
     /* dst.y = src0.y * src1.y */
     auto src0y = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(1u)));
     auto src1y = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(1u)));
-    components.push_back(builder.add(ir::Op::FMulLegacy(scalarType, src0y, src1y)));
+    components.push_back(builder.add(OpFMul(scalarType, src0y, src1y)));
   }
   if (writeMask & ComponentBit::eZ) {
     /* dst.z = src0.z */
@@ -1305,18 +1305,18 @@ bool Converter::handleCrs(ir::Builder& builder, const Instruction& op) {
 
   util::small_vector<ir::SsaDef, 4u> components;
   if (writeMask & ComponentBit::eX) {
-    auto a = builder.add(ir::Op::FMulLegacy(scalarType, src0y, src1z));
-    auto b = builder.add(ir::Op::FMulLegacy(scalarType, src0z, src1y));
+    auto a = builder.add(OpFMul(scalarType, src0y, src1z));
+    auto b = builder.add(OpFMul(scalarType, src0z, src1y));
     components.push_back(builder.add(ir::Op::FSub(scalarType, a, b)));
   }
   if (writeMask & ComponentBit::eY) {
-    auto a = builder.add(ir::Op::FMulLegacy(scalarType, src0z, src1x));
-    auto b = builder.add(ir::Op::FMulLegacy(scalarType, src0x, src1z));
+    auto a = builder.add(OpFMul(scalarType, src0z, src1x));
+    auto b = builder.add(OpFMul(scalarType, src0x, src1z));
     components.push_back(builder.add(ir::Op::FSub(scalarType, a, b)));
   }
   if (writeMask & ComponentBit::eZ) {
-    auto a = builder.add(ir::Op::FMulLegacy(scalarType, src0x, src1y));
-    auto b = builder.add(ir::Op::FMulLegacy(scalarType, src0y, src1x));
+    auto a = builder.add(OpFMul(scalarType, src0x, src1y));
+    auto b = builder.add(OpFMul(scalarType, src0y, src1x));
     components.push_back(builder.add(ir::Op::FSub(scalarType, a, b)));
   }
   auto res = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
@@ -1795,7 +1795,7 @@ ir::SsaDef Converter::applyDstModifiers(ir::Builder& builder, ir::SsaDef def, co
             ? 1.0f / (1 << -shift)
             : float(1 << shift);
 
-    def = builder.add(ir::Op::FMulLegacy(type, def, makeTypedConstant(builder, type, shiftAmount)));
+    def = builder.add(OpFMul(type, def, makeTypedConstant(builder, type, shiftAmount)));
   }
 
   /* Saturate dst */
@@ -2002,7 +2002,7 @@ ir::SsaDef Converter::normalizeVector(ir::Builder& builder, ir::SsaDef def) {
   auto type = builder.getOp(def).getType().getBaseType(0u);
   auto scalarType = type.getBaseType();
   uint32_t vecSize = type.getVectorSize();
-  auto lengthSquared = builder.add(ir::Op::FDotLegacy(scalarType, def, def));
+  auto lengthSquared = builder.add(OpFDot(scalarType, def, def));
   auto length = builder.add(ir::Op::FSqrt(scalarType, lengthSquared));
   return builder.add(ir::Op::FDiv(type, def, broadcastScalar(builder, length, WriteMask((1u << vecSize) - 1u))));
 }
@@ -2025,9 +2025,9 @@ ir::SsaDef Converter::applyBumpMapping(ir::Builder& builder, uint32_t stageIdx, 
     auto bumpEnvMat1 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 2u), 8u));
 
     auto src1r = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src1, builder.makeConstant(0u)));
-    auto bumped0 = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, bumpEnvMat0, src1r));
+    auto bumped0 = builder.add(OpFMul(ir::ScalarType::eF32, bumpEnvMat0, src1r));
     auto src1g = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src1, builder.makeConstant(1u)));
-    auto bumped1 = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, bumpEnvMat1, src1g));
+    auto bumped1 = builder.add(OpFMul(ir::ScalarType::eF32, bumpEnvMat1, src1g));
     auto bumpedSum = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, bumped0, bumped1));
     auto src0Component = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, src0, builder.makeConstant(i)));
     components[i] = builder.add(ir::Op::FAdd(ir::ScalarType::eF32, src0Component, bumpedSum));
