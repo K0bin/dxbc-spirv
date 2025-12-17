@@ -1749,7 +1749,8 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
 
       auto indexConst = builder.makeConstant(componentIndex);
       auto zComp = builder.add(ir::Op::CompositeExtract(type.getBaseType(), modifiedDef, indexConst));
-      modifiedDef = builder.add(ir::Op::FDiv(type, modifiedDef, zComp));
+      auto zCompVec = ir::broadcastScalar(builder, zComp, mask);
+      modifiedDef = builder.add(ir::Op::FDiv(type, modifiedDef, zCompVec));
     } break;
 
     case OperandModifier::eNeg: {
