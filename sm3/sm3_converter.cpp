@@ -403,8 +403,8 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
   if (!value)
     return false;
 
-  /* Mova writes to the address register. On <= SM2.1 mov *can* write to the address register. */
-  if (dst.getRegisterType() == RegisterType::eAddr) {
+  /* Mova writes to the address register. On <= SM2.1 mov *can* write to the address register (which only exists for VS). */
+  if (dst.getRegisterType() == RegisterType::eAddr && getShaderInfo().getType() == ShaderType::eVertex) {
     uint32_t componentCount = util::popcnt(uint8_t(writeMask));
     util::small_vector<ir::SsaDef, 4u> components;
     for (auto _ : writeMask) {
