@@ -1358,7 +1358,7 @@ bool Converter::handleSetP(ir::Builder& builder, const Instruction& op) {
   auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
 
   util::small_vector<ir::SsaDef, 4u> components;
-  for (auto c : writeMask) {
+  for (auto _ : writeMask) {
     /* The comparison is done for each component separately. */
     ir::SsaDef src0c = ir::extractFromVector(builder, src0, uint32_t(components.size()));
     ir::SsaDef src1c = ir::extractFromVector(builder, src1, uint32_t(components.size()));
