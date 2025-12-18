@@ -489,6 +489,11 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
 }
 
 
+ir::SsaDef Converter::loadAddress(ir::Builder& builder, RegisterType registerType, Swizzle swizzle) {
+  return m_regFile.emitAddressLoad(builder, registerType, swizzle);
+}
+
+
 void Converter::logOp(LogLevel severity, const Instruction& op) const {
   Disassembler::Options options = { };
   options.indent = false;

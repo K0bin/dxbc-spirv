@@ -102,6 +102,8 @@ private:
 
   bool storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef value);
 
+  ir::SsaDef loadAddress(ir::Builder& builder, RegisterType registerType, Swizzle swizzle);
+
   void logOp(LogLevel severity, const Instruction& op) const;
 
   template<typename... Args>
