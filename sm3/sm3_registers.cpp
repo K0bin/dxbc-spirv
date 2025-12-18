@@ -88,6 +88,22 @@ ir::SsaDef RegisterFile::emitTempLoad(
 }
 
 
+ir::SsaDef RegisterFile::emitPredicateLoad(
+            ir::Builder&            builder,
+            Swizzle                 swizzle,
+            WriteMask               componentMask) {
+  auto returnType = makeVectorType(ir::ScalarType::eBool, componentMask);
+
+  std::array<ir::SsaDef, 4u> components = { };
+  for (auto c : swizzle.getReadMask(componentMask)) {
+    auto component = componentFromBit(c);
+    components[uint8_t(component)] = builder.add(ir::Op::TmpLoad(ir::ScalarType::eBool, m_pReg[uint8_t(component)]));
+  }
+
+  return composite(builder, returnType, components.data(), swizzle, componentMask);
+}
+
+
 ir::SsaDef RegisterFile::emitAddressLoad(
             ir::Builder&            builder,
             RegisterType            registerType,
@@ -127,6 +143,7 @@ bool RegisterFile::emitStore(
           ir::SsaDef              value) {
   const auto& valueDef = builder.getOp(value);
   auto valueType = valueDef.getType().getBaseType(0u);
+  ir::BasicType regType;
 
   auto regIndex = operand.getIndex();
 
@@ -143,6 +160,7 @@ bool RegisterFile::emitStore(
     switch (operand.getRegisterType()) {
       case RegisterType::eTemp: {
         reg = getOrDeclareTemp(builder, regIndex, component);
+        regType = ir::ScalarType::eUnknown;
 
         if (!valueType.isUnknownType())
           scalar = builder.add(ir::Op::ConsumeAs(ir::ScalarType::eUnknown, scalar));
@@ -151,6 +169,7 @@ bool RegisterFile::emitStore(
       case RegisterType::eAddr: {
         dxbc_spv_assert(m_converter.getShaderInfo().getVersion().first >= 2u || c == ComponentBit::eX);
         dxbc_spv_assert(m_converter.getShaderInfo().getType() == ShaderType::eVertex);
+        regType = ir::ScalarType::eI32;
 
         if (!valueType.isIntType()) {
           /* a0 can be written to using the mova instruction on SM2+
@@ -167,11 +186,21 @@ bool RegisterFile::emitStore(
       case RegisterType::ePredicate: {
         dxbc_spv_assert(valueType.isBoolType());
         reg = m_pReg[uint8_t(component)];
+        regType = ir::ScalarType::eBool;
       } break;
 
       default:
         dxbc_spv_unreachable();
         return false;
+    }
+
+    if (predicateVec) {
+      /* Check if the matching component of the predicate register vector is true first.
+       * Pick the old value if not. */
+      auto condComponent = extractFromVector(builder, predicateVec, componentIndex);
+
+      auto oldValue = builder.add(ir::Op::TmpLoad(regType, reg));
+      scalar = builder.add(ir::Op::Select(regType, condComponent, scalar, oldValue));
     }
 
     builder.add(ir::Op::TmpStore(reg, scalar));
