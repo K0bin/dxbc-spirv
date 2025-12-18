@@ -570,15 +570,6 @@ public:
     return m_commentData.size();
   }
 
-  bool isSetupInstruction() const {
-    OpCode opCode = getOpCode();
-    return opCode == OpCode::eDcl
-      || opCode == OpCode::eDef
-      || opCode == OpCode::eDefI
-      || opCode == OpCode::eDefB
-      || opCode == OpCode::eComment;
-  }
-
   /** Checks whether instruction is valid */
   explicit operator bool () const {
     return m_isValid;
