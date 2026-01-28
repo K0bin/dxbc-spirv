@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <type_traits>
 #include <vector>
 
@@ -29,6 +30,10 @@ public:
   ByteReader(const void* data, size_t size)
   : m_data(reinterpret_cast<const unsigned char*>(data))
   , m_size(size), m_offset(0u), m_eof(!m_data) { }
+
+  ByteReader(const void* data)
+  : m_data(reinterpret_cast<const unsigned char*>(data))
+  , m_size(std::numeric_limits<size_t>::max()), m_offset(0u), m_eof(!m_data) { }
 
   /** Retrieves raw data pointer at the given offset */
   const void* getData(size_t offset) const {
