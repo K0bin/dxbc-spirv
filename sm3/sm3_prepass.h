@@ -1,0 +1,85 @@
+#pragma once
+
+#include "../util/util_byte_stream.h"
+
+#include "sm3_types.h"
+#include "sm3_parser.h"
+#include "sm3_resources.h"
+
+namespace dxbc_spv::sm3 {
+
+struct ImmediateFloatConstant {
+  uint32_t index;
+
+  Vec4<float> value;
+};
+
+using ImmediateFloatConstants = std::vector<ImmediateFloatConstant>;
+
+struct ImmediateConstants {
+  uint32_t maxFloatIndex = 0u;
+  uint32_t maxIntIndex   = 0u;
+  uint32_t maxBoolIndex  = 0u;
+
+  ImmediateFloatConstants floats;
+};
+
+struct PrepassConstants {
+  bool floatsAccessedDynamically = false;
+
+  uint32_t maxFloatIndex = 0u;
+  uint32_t maxIntIndex   = 0u;
+  uint32_t maxBoolIndex  = 0u;
+
+  uint32_t boolMask = 0u;
+};
+
+using RenderTargetMask = uint8_t;
+using SamplerMask      = uint32_t;
+using TextureTypes     = uint32_t;
+
+class Prepass {
+
+public:
+
+  Prepass(util::ByteReader code, bool isSWVP);
+
+  bool runPrepass();
+
+  ShaderInfo getShaderInfo() const {
+    return m_parser.getShaderInfo();
+  }
+
+private:
+
+  bool initParser(Parser& parser, util::ByteReader reader);
+
+  bool handleInstruction(const Instruction& op);
+
+  bool handleDef(const Instruction& op);
+
+  bool handleTextureSample(const Instruction& op);
+
+  bool handleDcl(const Instruction& op);
+
+  util::ByteReader m_code;
+
+  Parser           m_parser;
+
+  bool             m_isSWVP;
+
+  size_t m_length = 0u;
+
+  PrepassConstants m_constants;
+
+  ImmediateConstants m_immediateConstants;
+
+  RenderTargetMask m_usedRTs = 0u;
+
+  SamplerMask m_usedSamplers = 0u;
+
+  TextureTypes m_textureTypes = 0u;
+
+};
+
+}
