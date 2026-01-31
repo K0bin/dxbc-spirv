@@ -70,9 +70,7 @@ struct Vec4 {
   T w;
 };
 
-template<typename T>
-struct DefinedConst {
-  T value;
+struct ImmediateConstDef {
   uint32_t index;
   ir::SsaDef def;
 };
@@ -83,14 +81,8 @@ struct Constants {
    * one element if debug names are enabled. */
   util::small_vector<ConstantRange, 8u> constantRanges;
 
-  /** The highest index of any constant of this type that gets read. */
-  uint32_t maxAccessedConstant = 0u;
-
   /** All statically defined constants of this constant type. */
-  util::small_vector<DefinedConst<T>, 2u> definedConstants;
-
-  /** The highest index of any constant of this type that gets statically defined. */
-  uint32_t maxDefinedConstant = 0u;
+  util::small_vector<ImmediateConstDef, 2u> definedConstants;
 
   ir::SsaDef bufferDef = { };
 };

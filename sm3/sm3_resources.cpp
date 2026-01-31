@@ -233,7 +233,6 @@ ir::SsaDef ResourceMap::emitConstantLoad(
 
   const util::small_vector<ConstantRange, 8u>* ranges = nullptr;
   uint32_t constantTypeOffset = 0u;
-  uint32_t accessedCount = 0u;
   ir::ScalarType bufferElementScalarType = ir::ScalarType::eUnknown;
 
   switch (registerType) {
@@ -248,16 +247,6 @@ ir::SsaDef ResourceMap::emitConstantLoad(
 
       /* In HWVP float constants and int constants are packed into the same buffer and the int constants come first. */
       constantTypeOffset = isSwvp ? 0u : MaxOtherConstants;
-
-      if (operand.hasRelativeAddressing()) {
-        if (info.getType() == ShaderType::eVertex) {
-          accessedCount = (isSwvp ? MaxFloatConstantsSoftware : MaxFloatConstantsVS) - 1u;
-        } else {
-          accessedCount = MaxFloatConstantsPS - 1u;
-        }
-      }
-
-      m_floatConstants.maxAccessedConstant = std::max(m_floatConstants.maxAccessedConstant, registerIndex + accessedCount);
       break;
 
     case RegisterType::eConstInt:
@@ -265,19 +254,10 @@ ir::SsaDef ResourceMap::emitConstantLoad(
 
       if (isSwvp)
         bufferElementScalarType = ir::ScalarType::eI32;
-
-      if (operand.hasRelativeAddressing())
-          accessedCount = (info.getType() == ShaderType::eVertex && isSwvp ? MaxOtherConstantsSoftware : MaxOtherConstants) - 1u;
-
-      m_intConstants.maxAccessedConstant = std::max(m_intConstants.maxAccessedConstant, registerIndex + accessedCount);
       break;
 
     case RegisterType::eConstBool:
       ranges = &m_boolConstants.constantRanges;
-      if (operand.hasRelativeAddressing())
-        accessedCount = (info.getType() == ShaderType::eVertex && isSwvp ? MaxOtherConstantsSoftware : MaxOtherConstants) - 1u;
-
-      m_boolConstants.maxAccessedConstant = std::max(m_boolConstants.maxAccessedConstant, registerIndex + accessedCount);
       break;
 
     default:
@@ -422,8 +402,7 @@ void ResourceMap::emitDefineConstant(
 
       auto def = builder.makeConstant(values.x, values.y, values.z, values.w);
 
-      m_floatConstants.definedConstants.push_back({values, index, def});
-      m_floatConstants.maxDefinedConstant = std::max(m_floatConstants.maxDefinedConstant, index);
+      m_floatConstants.definedConstants.push_back({index, def});
     } break;
 
     case RegisterType::eConstInt: {
@@ -434,8 +413,7 @@ void ResourceMap::emitDefineConstant(
 
       auto def = builder.makeConstant(values.x, values.y, values.z, values.w);
 
-      m_intConstants.definedConstants.push_back({values, index, def});
-      m_intConstants.maxDefinedConstant = std::max(m_intConstants.maxDefinedConstant, index);
+      m_intConstants.definedConstants.push_back({index, def});
     } break;
 
     case RegisterType::eConstBool: {
@@ -443,8 +421,7 @@ void ResourceMap::emitDefineConstant(
 
       auto def = builder.makeConstant(value);
 
-      m_boolConstants.definedConstants.push_back({value, index, def});
-      m_boolConstants.maxDefinedConstant = std::max(m_boolConstants.maxDefinedConstant, index);
+      m_boolConstants.definedConstants.push_back({index, def});
     } break;
 
     default:
