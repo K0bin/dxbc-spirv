@@ -36,7 +36,7 @@ struct PrepassConstants {
 
 using RenderTargetMask = uint8_t;
 using SamplerMask      = uint32_t;
-using TextureTypes     = uint32_t;
+using Signature        = util::small_vector<Semantic, 4u>;
 
 class Prepass {
 
@@ -50,6 +50,42 @@ public:
     return m_parser.getShaderInfo();
   }
 
+  size_t getLength() const {
+    return m_length;
+  }
+
+  const PrepassConstants& getConstantsInfo() const {
+    return m_constants;
+  }
+
+  const ImmediateConstants& getImmediateConstants() const {
+    return m_immediateConstants;
+  }
+
+  RenderTargetMask getRenderTargetMask() const {
+    return m_usedRTs;
+  }
+
+  SamplerMask getSamplerMask() const {
+    return m_usedSamplers;
+  }
+
+  TextureType getTextureType(uint32_t index) const {
+    return m_textureTypes[index];
+  }
+
+  bool isSWVP() const {
+    return m_isSWVP;
+  }
+
+  uint32_t getInputSignatureSize() const {
+    return m_inputSignature.size();
+  }
+
+  Semantic getInputSignatureElement(uint32_t index) {
+    return m_inputSignature[index];
+  }
+
 private:
 
   bool initParser(Parser& parser, util::ByteReader reader);
@@ -61,6 +97,13 @@ private:
   bool handleTextureSample(const Instruction& op);
 
   bool handleDcl(const Instruction& op);
+
+  void setInputSignatureElement(uint32_t index, Semantic element) {
+    if (m_inputSignature.size() < index + 1u)
+      m_inputSignature.resize(index + 1u);
+
+    m_inputSignature[index] = element;
+  }
 
   util::ByteReader m_code;
 
@@ -78,7 +121,9 @@ private:
 
   SamplerMask m_usedSamplers = 0u;
 
-  TextureTypes m_textureTypes = 0u;
+  std::array<TextureType, 16u> m_textureTypes = {};
+
+  Signature m_inputSignature = {};
 
 };
 

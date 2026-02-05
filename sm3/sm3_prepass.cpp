@@ -54,6 +54,13 @@ namespace dxbc_spv::sm3 {
         m_usedRTs |= 1u << op.getDst().getIndex();
       }
 
+      if (getShaderInfo().getType() == ShaderType::eVertex
+        && registerType == RegisterType::eInput
+        && (m_inputSignature.size() < index + 1u || m_inputSignature[index] == Semantic { })) {
+        setInputSignatureElement(index, { SemanticUsage::eColor, index });
+        continue;
+      }
+
       if (registerType == RegisterType::eConstInt) {
         m_constants.maxIntIndex = std::max(m_constants.maxIntIndex, index);
         continue;
@@ -198,16 +205,20 @@ namespace dxbc_spv::sm3 {
     dxbc_spv_assert(op.hasDst());
     const auto& dst = op.getDst();
 
-    if (dst.getRegisterType() != RegisterType::eSampler)
-      return true;
-
-    TextureType textureType = dcl.getTextureType();
-    uint32_t textureTypeIndex = uint32_t(textureType) - uint32_t(TextureType::eTexture2D);
-
+    RegisterType registerType = dst.getRegisterType();
     uint32_t index = dst.getIndex();
 
-    m_textureTypes |= textureTypeIndex << (index * 2u);
-    m_usedSamplers |= 1u << index;
+    if (registerType == RegisterType::eSampler) {
+      m_textureTypes[index] = dcl.getTextureType();
+      m_usedSamplers |= 1u << index;
+      return true;
+    }
+
+    if (registerType == RegisterType::eInput && getShaderInfo().getType() == ShaderType::eVertex) {
+      setInputSignatureElement(index, { dcl.getSemanticUsage(), dcl.getSemanticIndex() });
+      return true;
+    }
+
     return true;
   }
 
