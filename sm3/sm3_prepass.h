@@ -98,13 +98,6 @@ private:
 
   bool handleDcl(const Instruction& op);
 
-  void setInputSignatureElement(uint32_t index, Semantic element) {
-    if (m_inputSignature.size() < index + 1u)
-      m_inputSignature.resize(index + 1u);
-
-    m_inputSignature[index] = element;
-  }
-
   util::ByteReader m_code;
 
   Parser           m_parser;

@@ -54,13 +54,6 @@ namespace dxbc_spv::sm3 {
         m_usedRTs |= 1u << op.getDst().getIndex();
       }
 
-      if (getShaderInfo().getType() == ShaderType::eVertex
-        && registerType == RegisterType::eInput
-        && (m_inputSignature.size() < index + 1u || m_inputSignature[index] == Semantic { })) {
-        setInputSignatureElement(index, { SemanticUsage::eColor, index });
-        continue;
-      }
-
       if (registerType == RegisterType::eConstInt) {
         m_constants.maxIntIndex = std::max(m_constants.maxIntIndex, index);
         continue;
@@ -215,7 +208,10 @@ namespace dxbc_spv::sm3 {
     }
 
     if (registerType == RegisterType::eInput && getShaderInfo().getType() == ShaderType::eVertex) {
-      setInputSignatureElement(index, { dcl.getSemanticUsage(), dcl.getSemanticIndex() });
+      if (m_inputSignature.size() < index + 1u)
+        m_inputSignature.resize(index + 1u);
+
+      m_inputSignature[index] = { dcl.getSemanticUsage(), dcl.getSemanticIndex() };
       return true;
     }
 
