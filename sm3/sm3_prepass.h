@@ -82,7 +82,7 @@ public:
     return m_inputSignature.size();
   }
 
-  Semantic getInputSignatureElement(uint32_t index) {
+  Semantic getInputSignatureElement(uint32_t index) const {
     return m_inputSignature[index];
   }
 
