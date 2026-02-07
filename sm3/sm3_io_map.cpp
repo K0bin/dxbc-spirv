@@ -928,7 +928,7 @@ void IoMap::flushOutputs(ir::Builder& builder) {
 
     auto op = builder.getOp(variable.baseDef);
 
-    if (op.getOpCode() != ir::OpCode::eDclOutput)
+    if (op.getOpCode() != ir::OpCode::eDclOutput && op.getOpCode() != ir::OpCode::eDclOutputBuiltIn)
       continue;
 
     auto baseType = variable.baseType.getBaseType(0u);
