@@ -370,7 +370,7 @@ ir::SsaDef Converter::applyBumpMapping(ir::Builder& builder, uint32_t stageIdx, 
   auto scalarType = type.getBaseType();
   dxbc_spv_assert(scalarType == builder.getOp(src1).getType().getBaseType(0u).getBaseType());
 
-  auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
+  auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, builder.makeConstant(0u)));
   std::array<ir::SsaDef, 2> components = {};
   for (uint32_t i = 0u; i < components.size(); i++) {
     /* Load bump matrix */
@@ -1101,7 +1101,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
 
       if (opCode == OpCode::eTexBemL) {
         /* Additionally does luminance correction */
-        auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
+        auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, builder.makeConstant(0u)));
         auto bumpEnvLScale = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 3u), 16u));
         auto bumpEnvLOffset = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(samplerIdx * 5u + 2u), 8u));
         if (scalarType != ir::ScalarType::eF32) {
