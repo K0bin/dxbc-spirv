@@ -8,12 +8,6 @@
 
 namespace dxbc_spv::sm3 {
 
-constexpr uint32_t MaxFloatConstantsVS       = 256;
-constexpr uint32_t MaxFloatConstantsPS       = 224;
-constexpr uint32_t MaxOtherConstants         = 16;
-constexpr uint32_t MaxFloatConstantsSoftware = 8192;
-constexpr uint32_t MaxOtherConstantsSoftware = 2048;
-
 ResourceMap::ResourceMap(Converter& converter)
 : m_converter (converter) {
 
@@ -27,7 +21,7 @@ ResourceMap::~ResourceMap() {
 
 void ResourceMap::initialize(ir::Builder& builder) {
   ShaderType shaderType = m_converter.getShaderInfo().getType();
-  uint32_t hwvpFloatConstantsCount = (shaderType == ShaderType::ePixel ? MaxFloatConstantsPS : MaxFloatConstantsVS);
+  uint32_t hwvpFloatConstantsCount = shaderType == ShaderType::ePixel ? MaxFloatConstantsPS : MaxFloatConstantsVS;
   uint32_t hwvpConstantsArraySize = hwvpFloatConstantsCount + MaxOtherConstants;
 
   bool isSwvp = m_converter.getOptions().isSWVP;

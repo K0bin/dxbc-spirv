@@ -26,6 +26,12 @@ constexpr uint32_t SpecialBindingsRegSpace = 3u;
 constexpr uint32_t FastSpecConstCbvRegIdx  = 0u;
 constexpr uint32_t PSSharedDataCbvRegIdx   = 1u;
 
+constexpr uint32_t MaxFloatConstantsVS       = 256;
+constexpr uint32_t MaxFloatConstantsPS       = 224;
+constexpr uint32_t MaxOtherConstants         = 16;
+constexpr uint32_t MaxFloatConstantsSoftware = 8192;
+constexpr uint32_t MaxOtherConstantsSoftware = 2048;
+
 /** Opcode */
 enum class OpCode : uint32_t {
   eNop          = 0u,

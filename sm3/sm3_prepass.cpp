@@ -79,9 +79,15 @@ namespace dxbc_spv::sm3 {
 
       m_constants.maxFloatIndex = std::max(m_constants.maxFloatIndex, index + 1u);
 
-      if (src.hasRelativeAddressing())
+      if (!src.hasRelativeAddressing())
         continue;
 
+      uint32_t hwvpFloatConstantsCount = getShaderInfo().getType() == ShaderType::ePixel ? MaxFloatConstantsPS : MaxFloatConstantsVS;
+
+      m_constants.maxFloatIndex = std::max(
+        m_constants.maxFloatIndex,
+        m_isSWVP ? MaxFloatConstantsSoftware : hwvpFloatConstantsCount
+      );
       m_constants.floatsAccessedDynamically = true;
     }
 
