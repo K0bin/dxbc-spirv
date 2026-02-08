@@ -54,13 +54,17 @@ namespace dxbc_spv::sm3 {
         m_usedRTs |= 1u << op.getDst().getIndex();
       }
 
+      /* The indices start counting at 1 to differentiate between a shader
+       * that doesn't access any constants at all and one that accesses the
+       * first one. */
+
       if (registerType == RegisterType::eConstInt) {
-        m_constants.maxIntIndex = std::max(m_constants.maxIntIndex, index);
+        m_constants.maxIntIndex = std::max(m_constants.maxIntIndex, index + 1u);
         continue;
       }
 
       if (registerType == RegisterType::eConstBool) {
-        m_constants.maxBoolIndex = std::max(m_constants.maxBoolIndex, index);
+        m_constants.maxBoolIndex = std::max(m_constants.maxBoolIndex, index + 1u);
         if (!m_isSWVP)
           m_constants.boolMask |= 1u << index;
 
@@ -73,7 +77,7 @@ namespace dxbc_spv::sm3 {
         && registerType != RegisterType::eConst4)
         continue;
 
-      m_constants.maxFloatIndex = std::max(m_constants.maxFloatIndex, index);
+      m_constants.maxFloatIndex = std::max(m_constants.maxFloatIndex, index + 1u);
 
       if (src.hasRelativeAddressing())
         continue;
