@@ -214,7 +214,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
 
     auto bit = m_converter.m_specConstants.get(builder,
       info.getType() == ShaderType::eVertex ? SpecConstantId::eSpecVertexShaderBools : SpecConstantId::eSpecPixelShaderBools,
-      builder.makeConstant(operand.getIndex()), builder.makeConstant(1u));
+      builder.makeConstant(registerIndex), builder.makeConstant(1u));
 
     auto boolVal = builder.add(ir::Op::INe(ir::ScalarType::eBool, bit, builder.makeConstant(0u)));
 
@@ -283,7 +283,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
 
   uint32_t arrayIndex = constantTypeOffset;
   ir::SsaDef offset;
-  arrayIndex += registerType == RegisterType::eConstBool ? (operand.getIndex() / 32u) : operand.getIndex();
+  arrayIndex += registerType == RegisterType::eConstBool ? (registerIndex / 32u) : registerIndex;
 
   if (!operand.hasRelativeAddressing()) {
     offset = builder.makeConstant(arrayIndex);
@@ -313,7 +313,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
     auto bit = builder.add(ir::Op::UBitExtract(
       ir::ScalarType::eU32,
       dword,
-      builder.makeConstant(operand.getIndex() % 32u),
+      builder.makeConstant(registerIndex % 32u),
       builder.makeConstant(1u)));
 
     auto boolVal = builder.add(ir::Op::INe(ir::ScalarType::eBool, bit, builder.makeConstant(0u)));
