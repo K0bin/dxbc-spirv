@@ -521,7 +521,7 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
       else
         roundedValue = builder.add(ir::Op::FRound(scalarType, scalarValue, ir::RoundMode::eNearestEven));
 
-      components.push_back(builder.add(ir::Op::Cast(ir::ScalarType::eI32, roundedValue)));
+      components.push_back(builder.add(ir::Op::ConvertFtoI(ir::ScalarType::eI32, roundedValue)));
     }
     value = buildVector(builder, ir::ScalarType::eI32, componentCount, components.data());
   }
