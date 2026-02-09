@@ -507,8 +507,15 @@ ir::SsaDef IoMap::emitLoad(
         if (!ioVar->tempDefs[0u]) {
           ir::SsaDef addressConstant = ir::SsaDef();
 
+          uint32_t indexInIoVar = 0u;
+          for (uint32_t i = 0u; i < componentIndex; i++) {
+            if (ioVar->componentMask & ComponentBit(1u << i)) {
+              indexInIoVar++;
+            }
+          }
+
           if (!baseType.isScalar()) {
-            addressConstant = builder.makeConstant(uint32_t(componentIndex));
+            addressConstant = builder.makeConstant(uint32_t(indexInIoVar));
           }
 
           value = builder.add(ir::Op::InputLoad(varScalarType, ioVar->baseDef, addressConstant));
@@ -654,7 +661,7 @@ bool IoMap::emitStore(
 
     uint32_t componentIndex = 0u;
 
-    for (auto c : writeMask) {
+    for (auto c : (writeMask & ioVar->componentMask)) {
       ir::SsaDef valueScalar = value;
 
       if (srcType.isVectorType()) {
@@ -677,7 +684,6 @@ bool IoMap::emitStore(
         auto condComponent = extractFromVector(builder, predicateVec, componentIndex);
         predicateIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), condComponent));
       }
-
       builder.add(ir::Op::TmpStore(ioVar->tempDefs[uint32_t(util::componentFromBit(c))], valueScalar));
 
       if (predicateIf) {
@@ -806,8 +812,8 @@ ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
       std::array<ir::SsaDef, 4u> components;
 
       for (uint32_t j = 0u; j < 4u; j++) {
-        if ((baseType.isScalar() && j == 0) || j < baseType.getVectorSize()) {
-          components[j] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, input, builder.makeConstant(i)));;
+        if (ioVar->componentMask & util::componentBit(Component(j))) {
+          components[j] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, input, builder.makeConstant(j)));;
         } else {
           components[j] = builder.makeConstant(0.0f);
         }
@@ -884,10 +890,13 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
     if (!baseType.isScalar()) {
       auto componentSwitchDef = builder.add(ir::Op::ScopedSwitch(ir::SsaDef(), componentArg));
 
-      for (uint32_t j = 0u; j < baseType.getVectorSize(); j++) {
-        builder.add(ir::Op::ScopedSwitchCase(componentSwitchDef, j));
+      uint32_t j = 0u;
+      for (auto c : ioVar->componentMask) {
+        Component component = util::componentFromBit(c);
+        builder.add(ir::Op::ScopedSwitchCase(componentSwitchDef, uint32_t(component)));
         builder.add(ir::Op::TmpStore(ioVar->tempDefs[j], valueArg));
         builder.add(ir::Op::ScopedSwitchBreak(componentSwitchDef));
+        j++;
       }
 
       auto componentSwitchEnd = builder.add(ir::Op::ScopedEndSwitch(componentSwitchDef));
