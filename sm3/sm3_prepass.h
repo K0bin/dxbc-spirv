@@ -17,9 +17,9 @@ struct ImmediateFloatConstant {
 using ImmediateFloatConstants = std::vector<ImmediateFloatConstant>;
 
 struct ImmediateConstants {
-  uint32_t maxFloatIndex = 0u;
-  uint32_t maxIntIndex   = 0u;
-  uint32_t maxBoolIndex  = 0u;
+  int32_t maxFloatIndex = -1;
+  int32_t maxIntIndex   = -1;
+  int32_t maxBoolIndex  = -1;
 
   ImmediateFloatConstants floats;
 };
@@ -27,9 +27,9 @@ struct ImmediateConstants {
 struct PrepassConstants {
   bool floatsAccessedDynamically = false;
 
-  uint32_t maxFloatIndex = 0u;
-  uint32_t maxIntIndex   = 0u;
-  uint32_t maxBoolIndex  = 0u;
+  int32_t maxFloatIndex = -1;
+  int32_t maxIntIndex   = -1;
+  int32_t maxBoolIndex  = -1;
 
   uint32_t boolMask = 0u;
 };

@@ -59,12 +59,12 @@ namespace dxbc_spv::sm3 {
        * first one. */
 
       if (registerType == RegisterType::eConstInt) {
-        m_constants.maxIntIndex = std::max(m_constants.maxIntIndex, index + 1u);
+        m_constants.maxIntIndex = std::max(m_constants.maxIntIndex, int32_t(index));
         continue;
       }
 
       if (registerType == RegisterType::eConstBool) {
-        m_constants.maxBoolIndex = std::max(m_constants.maxBoolIndex, index + 1u);
+        m_constants.maxBoolIndex = std::max(m_constants.maxBoolIndex, int32_t(index));
         if (!m_isSWVP)
           m_constants.boolMask |= 1u << index;
 
@@ -77,7 +77,7 @@ namespace dxbc_spv::sm3 {
         && registerType != RegisterType::eConst4)
         continue;
 
-      m_constants.maxFloatIndex = std::max(m_constants.maxFloatIndex, index + 1u);
+      m_constants.maxFloatIndex = std::max(m_constants.maxFloatIndex, int32_t(index));
 
       if (!src.hasRelativeAddressing())
         continue;
@@ -86,7 +86,7 @@ namespace dxbc_spv::sm3 {
 
       m_constants.maxFloatIndex = std::max(
         m_constants.maxFloatIndex,
-        m_isSWVP ? MaxFloatConstantsSoftware : hwvpFloatConstantsCount
+        int32_t(m_isSWVP ? MaxFloatConstantsSoftware : hwvpFloatConstantsCount)
       );
       m_constants.floatsAccessedDynamically = true;
     }
@@ -135,7 +135,7 @@ namespace dxbc_spv::sm3 {
     uint32_t index = op.getDst().getIndex();
 
     if (op.getOpCode() == OpCode::eDef) {
-      m_immediateConstants.maxFloatIndex = std::max(m_immediateConstants.maxFloatIndex, index);
+      m_immediateConstants.maxFloatIndex = std::max(m_immediateConstants.maxFloatIndex, int32_t(index));
 
       dxbc_spv_assert(op.hasImm());
       auto imm = op.getImm();
@@ -146,9 +146,9 @@ namespace dxbc_spv::sm3 {
       };
       m_immediateConstants.floats.push_back({ index, value });
     } else if (op.getOpCode() == OpCode::eDefI) {
-      m_immediateConstants.maxIntIndex = std::max(m_immediateConstants.maxIntIndex, index);
+      m_immediateConstants.maxIntIndex = std::max(m_immediateConstants.maxIntIndex, int32_t(index));
     } else if (op.getOpCode() == OpCode::eDefB) {
-      m_immediateConstants.maxBoolIndex = std::max(m_immediateConstants.maxBoolIndex, index);
+      m_immediateConstants.maxBoolIndex = std::max(m_immediateConstants.maxBoolIndex, int32_t(index));
     } else {
       return false;
     }
