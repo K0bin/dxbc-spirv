@@ -64,7 +64,7 @@ class IoMap {
   constexpr static uint32_t MaxIoArraySize = SM3VSInputArraySize;
 
   constexpr static uint32_t SM2TexCoordCount = 8u;
-  constexpr static uint32_t SM2ColorCount = 8u;
+  constexpr static uint32_t SM2ColorCount = 2u;
 
   using IoVarList = util::small_vector<IoVarInfo, MaxIoArraySize>;
 public:

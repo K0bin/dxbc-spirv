@@ -69,7 +69,7 @@ void IoMap::initialize(ir::Builder& builder) {
     for (uint32_t i = 0u; i < SM2ColorCount; i++) {
       dclIoVar(
         builder,
-        isInput ? RegisterType::eInput : RegisterType::eColorOut,
+        isInput ? RegisterType::eInput : RegisterType::eAttributeOut,
         i,
         { SemanticUsage::eColor, i }
       );
