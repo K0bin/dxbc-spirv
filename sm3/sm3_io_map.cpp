@@ -968,7 +968,7 @@ void IoMap::emitDebugName(
 
   std::stringstream nameStream;
 
-  if (semantic.usage != SemanticUsage::eNormal
+  if ((isInput || semantic.usage != SemanticUsage::eNormal)
     || (isInput && registerType == RegisterType::eRasterizerOut)
     || (!isInput && registerType == RegisterType::eMiscType)) {
     /* There is no register type for normals, it's only emitted for FF emulation.
