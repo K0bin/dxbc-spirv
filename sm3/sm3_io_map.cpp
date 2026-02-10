@@ -267,7 +267,10 @@ void IoMap::dclIoVar(
   uint32_t location = 0u;
 
   if (!builtIn) {
-    location = isInput ? m_nextInputLocation++ : m_nextOutputLocation++;
+    if (shaderType == ShaderType::eVertex || isInput)
+      location = isInput ? m_nextInputLocation++ : m_nextOutputLocation++;
+    else
+      location = registerIndex;
 
     ir::OpCode opCode = isInput
       ? ir::OpCode::eDclInput
