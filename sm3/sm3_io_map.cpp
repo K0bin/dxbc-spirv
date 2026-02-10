@@ -51,8 +51,7 @@ void IoMap::initialize(ir::Builder& builder) {
         builder,
         RegisterType::eOutput,
         SM3VSOutputArraySize,
-        { SemanticUsage::eNormal, 0u },
-        WriteMask(ComponentBit::eAll)
+        { SemanticUsage::eNormal, 0u }
       );
     }
 
@@ -62,8 +61,7 @@ void IoMap::initialize(ir::Builder& builder) {
         builder,
         isInput ? RegisterType::ePixelTexCoord : RegisterType::eTexCoordOut,
         i,
-        { SemanticUsage::eTexCoord, i },
-        WriteMask(ComponentBit::eAll)
+        { SemanticUsage::eTexCoord, i }
       );
     }
 
@@ -73,8 +71,7 @@ void IoMap::initialize(ir::Builder& builder) {
         builder,
         isInput ? RegisterType::eInput : RegisterType::eColorOut,
         i,
-        { SemanticUsage::eColor, i },
-        WriteMask(ComponentBit::eAll)
+        { SemanticUsage::eColor, i }
       );
     }
 
@@ -86,8 +83,7 @@ void IoMap::initialize(ir::Builder& builder) {
       builder,
       !isInput ? RegisterType::eRasterizerOut : RegisterType::eInput,
       !isInput ? uint32_t(RasterizerOutIndex::eRasterOutFog) : SM3PSInputArraySize,
-      { SemanticUsage::eFog, 0u },
-      WriteMask(ComponentBit::eAll)
+      { SemanticUsage::eFog, 0u }
     );
 
     if (info.getType() == ShaderType::ePixel) {
@@ -96,8 +92,7 @@ void IoMap::initialize(ir::Builder& builder) {
         builder,
         RegisterType::eColorOut,
         0u,
-        { SemanticUsage::eColor, 0u },
-        WriteMask(ComponentBit::eAll)
+        { SemanticUsage::eColor, 0u }
       );
     }
   }
@@ -149,13 +144,7 @@ bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
     dxbc_spv_assert(foundSemantic);
   }
 
-  WriteMask componentMask = dst.getWriteMask(info);
-
-  if (info.getVersion().first < 3u) {
-    componentMask = WriteMask(ComponentBit::eAll);
-  }
-
-  dclIoVar(builder, dst.getRegisterType(), dst.getIndex(), semantic, componentMask);
+  dclIoVar(builder, dst.getRegisterType(), dst.getIndex(), semantic);
   return true;
 }
 
@@ -234,8 +223,7 @@ void IoMap::dclIoVar(
    ir::Builder& builder,
    RegisterType registerType,
    uint32_t     registerIndex,
-   Semantic     semantic,
-   WriteMask    componentMask) {
+   Semantic     semantic) {
 
   auto shaderType = m_converter.getShaderInfo().getType();
   bool isInput = registerTypeIsInput(registerType, shaderType);
@@ -268,7 +256,7 @@ void IoMap::dclIoVar(
     || registerIndex == uint32_t(RasterizerOutIndex::eRasterOutPointSize));
   isScalar |= registerType == RegisterType::eMiscType && registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace);
 
-  uint32_t typeVectorSize = isScalar ? 1u : util::popcnt(uint8_t(componentMask));
+  uint32_t typeVectorSize = isScalar ? 1u : 4u;
   ir::Type type(
     builtIn == ir::BuiltIn::eIsFrontFace ? ir::ScalarType::eBool : ir::ScalarType::eF32,
     typeVectorSize
@@ -288,7 +276,7 @@ void IoMap::dclIoVar(
     auto declaration = ir::Op(opCode, type)
       .addOperand(m_converter.getEntryPoint())
       .addOperand(location)
-      .addOperand(util::tzcnt(uint8_t(componentMask)));
+      .addOperand(0u);
 
     if (isInput && shaderType == ShaderType::ePixel && semantic.usage == SemanticUsage::eColor) {
       declaration.addOperand(ir::InterpolationModes(ir::InterpolationMode::eCentroid));
@@ -324,7 +312,6 @@ void IoMap::dclIoVar(
   mapping.registerIndex = registerIndex;
   mapping.location = location;
   mapping.wasWritten = supportsRelativeAddressing;
-  mapping.componentMask = componentMask;
   mapping.baseType = baseType;
   mapping.baseDef = declarationDef;
   mapping.tempDefs = { };
@@ -380,7 +367,7 @@ void IoMap::dclIoVar(
     mapping.baseDef,
     registerType,
     registerIndex,
-    componentMask,
+    WriteMask(ComponentBit::eAll),
     mapping.semantic,
     isInput,
     false
@@ -484,7 +471,7 @@ ir::SsaDef IoMap::emitLoad(
       if (!foundSemantic) {
         m_converter.logOpError(op, "Failed to process I/O load.");
       } else {
-        dclIoVar(builder, operand.getRegisterType(), operand.getIndex(), semantic,  WriteMask(ComponentBit::eAll));
+        dclIoVar(builder, operand.getRegisterType(), operand.getIndex(), semantic);
         ioVar = &m_variables.back();
       }
     }
@@ -507,16 +494,8 @@ ir::SsaDef IoMap::emitLoad(
         if (!ioVar->tempDefs[0u]) {
           ir::SsaDef addressConstant = ir::SsaDef();
 
-          uint32_t indexInIoVar = 0u;
-          for (uint32_t i = 0u; i < componentIndex; i++) {
-            if (ioVar->componentMask & ComponentBit(1u << i)) {
-              indexInIoVar++;
-            }
-          }
-
-          if (!baseType.isScalar()) {
-            addressConstant = builder.makeConstant(uint32_t(indexInIoVar));
-          }
+          if (!baseType.isScalar())
+            addressConstant = builder.makeConstant(uint32_t(componentIndex));
 
           value = builder.add(ir::Op::InputLoad(varScalarType, ioVar->baseDef, addressConstant));
         } else {
@@ -587,7 +566,7 @@ ir::SsaDef IoMap::emitTexCoordLoad(
     if (!foundSemantic) {
       m_converter.logOpError(op, "Failed to process I/O load.");
     } else {
-      dclIoVar(builder, RegisterType::ePixelTexCoord, regIdx, semantic,  WriteMask(ComponentBit::eAll));
+      dclIoVar(builder, RegisterType::ePixelTexCoord, regIdx, semantic);
       ioVar = &m_variables.back();
     }
   }
@@ -641,7 +620,7 @@ bool IoMap::emitStore(
         return false;
       }
 
-      dclIoVar(builder, operand.getRegisterType(), operand.getIndex(), semantic,  WriteMask(ComponentBit::eAll));
+      dclIoVar(builder, operand.getRegisterType(), operand.getIndex(), semantic);
       ioVar = &m_variables.back();
     }
 
@@ -661,7 +640,7 @@ bool IoMap::emitStore(
 
     uint32_t componentIndex = 0u;
 
-    for (auto c : (writeMask & ioVar->componentMask)) {
+    for (auto c : writeMask) {
       ir::SsaDef valueScalar = value;
 
       if (srcType.isVectorType()) {
@@ -759,7 +738,7 @@ bool IoMap::emitDepthStore(ir::Builder &builder, const Instruction &op, ir::SsaD
       return false;
     }
 
-    dclIoVar(builder, RegisterType::eDepthOut, 0u, semantic,  WriteMask(ComponentBit::eAll));
+    dclIoVar(builder, RegisterType::eDepthOut, 0u, semantic);
     ioVar = &m_variables.back();
   }
 
@@ -811,13 +790,8 @@ ir::SsaDef IoMap::emitDynamicLoadFunction(ir::Builder& builder) const {
     if (baseType.getVectorSize() != 4u) {
       std::array<ir::SsaDef, 4u> components;
 
-      for (uint32_t j = 0u; j < 4u; j++) {
-        if (ioVar->componentMask & util::componentBit(Component(j))) {
-          components[j] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, input, builder.makeConstant(j)));;
-        } else {
-          components[j] = builder.makeConstant(0.0f);
-        }
-      }
+      for (uint32_t j = 0u; j < 4u; j++)
+        components[j] = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, input, builder.makeConstant(j)));
 
       vec4 = buildVector(builder, ir::ScalarType::eF32, components.size(), components.data());
     }
@@ -890,13 +864,10 @@ ir::SsaDef IoMap::emitDynamicStoreFunction(ir::Builder& builder) const {
     if (!baseType.isScalar()) {
       auto componentSwitchDef = builder.add(ir::Op::ScopedSwitch(ir::SsaDef(), componentArg));
 
-      uint32_t j = 0u;
-      for (auto c : ioVar->componentMask) {
-        Component component = util::componentFromBit(c);
-        builder.add(ir::Op::ScopedSwitchCase(componentSwitchDef, uint32_t(component)));
+      for (uint32_t j = 0u; j < 4u; j++) {
+        builder.add(ir::Op::ScopedSwitchCase(componentSwitchDef, j));
         builder.add(ir::Op::TmpStore(ioVar->tempDefs[j], valueArg));
         builder.add(ir::Op::ScopedSwitchBreak(componentSwitchDef));
-        j++;
       }
 
       auto componentSwitchEnd = builder.add(ir::Op::ScopedEndSwitch(componentSwitchDef));

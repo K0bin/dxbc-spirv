@@ -35,9 +35,6 @@ struct IoVarInfo {
    * linking to be done based on the semantic. */
   uint32_t location = 0u;
 
-  /* Component write mask to match, if applicable. */
-  WriteMask componentMask = { };
-
   /* Whether this variable has been written to.
    * Used to emit defaults if the shader itself doesn't write
    * to specific output registers. */
@@ -167,8 +164,7 @@ private:
    ir::Builder& builder,
    RegisterType registerType,
    uint32_t     registerIndex,
-   Semantic     semantic,
-   WriteMask    componentMask);
+   Semantic     semantic);
 
   /** Turns a front face boolean into a float. 1.0 for the front face, -1.0 for the back face. */
   ir::SsaDef emitFrontFaceFloat(ir::Builder& builder, ir::SsaDef isFrontFaceDef) const;
