@@ -1268,8 +1268,7 @@ bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
   if (op.getOpCode() == OpCode::eLrp) {
     /* dest = src0 * (src1 - src2) + src2 */
     result = builder.add(ir::Op::FSub(type, src1, src2));
-    result = builder.add(ir::Op::FAdd(type, result, src2));
-    result = builder.add(OpFMul(type, src0, result));
+    result = builder.add(OpFMad(type, src0, result, src2));
   } else if (op.getOpCode() == OpCode::eCmp || op.getOpCode() == OpCode::eCnd) {
     util::small_vector<ir::SsaDef, 4u> components;
     for (auto _ : writeMask) {
