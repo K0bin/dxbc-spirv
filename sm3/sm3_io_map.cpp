@@ -255,6 +255,7 @@ void IoMap::dclIoVar(
     && (registerIndex == uint32_t(RasterizerOutIndex::eRasterOutFog)
     || registerIndex == uint32_t(RasterizerOutIndex::eRasterOutPointSize));
   isScalar |= registerType == RegisterType::eMiscType && registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace);
+  isScalar |= registerType == RegisterType::eDepthOut;
 
   uint32_t typeVectorSize = isScalar ? 1u : 4u;
   ir::Type type(
