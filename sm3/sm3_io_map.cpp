@@ -254,8 +254,9 @@ void IoMap::dclIoVar(
   bool isScalar = registerType == RegisterType::eRasterizerOut
     && (registerIndex == uint32_t(RasterizerOutIndex::eRasterOutFog)
     || registerIndex == uint32_t(RasterizerOutIndex::eRasterOutPointSize));
-  isScalar |= registerType == RegisterType::eMiscType && registerIndex == uint32_t(MiscTypeIndex::eMiscTypeFace);
-  isScalar |= registerType == RegisterType::eDepthOut;
+  isScalar |= builtIn == ir::BuiltIn::eIsFrontFace;
+  isScalar |= builtIn == ir::BuiltIn::eDepth;
+  isScalar |= builtIn == ir::BuiltIn::ePointSize;
 
   uint32_t typeVectorSize = isScalar ? 1u : 4u;
   ir::Type type(
@@ -320,13 +321,19 @@ void IoMap::dclIoVar(
   mapping.baseDef = declarationDef;
   mapping.tempDefs = { };
 
+  uint32_t tempVectorSize = typeVectorSize;
+
+  /* Point Size always has a full 4 component vector but only one component is used for the builtin. */
+  if (builtIn == ir::BuiltIn::ePointSize)
+    tempVectorSize = 4u;
+
   if (!isInput || (registerType == RegisterType::eTexture
     && versionMajor == 1u
     && versionMinor < 4u
     && shaderType == ShaderType::ePixel)) {
     /* SM 1 texture ops write the texture data into the texture register which used to hold the texcoord.
      * So we need writable temps for this input register. */
-    for (uint32_t i = 0u; i < typeVectorSize; i++) {
+    for (uint32_t i = 0u; i < tempVectorSize; i++) {
       mapping.tempDefs[i] = builder.add(ir::Op::DclTmp(ir::ScalarType::eF32, m_converter.getEntryPoint()));
     }
   }
