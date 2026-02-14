@@ -31,14 +31,14 @@ void ResourceMap::initialize(ir::Builder& builder) {
      * robustness2 to keep them small. */
     auto floatVec4Type = ir::Type(ir::ScalarType::eF32, 4u);
     auto floatArrayType = ir::Type(floatVec4Type).addArrayDimension(MaxFloatConstantsSoftware);
-    m_floatConstants.bufferDef = builder.add(ir::Op::DclCbv(floatArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, FloatSWVPCbvRegIdx, 1u));
+    m_floatConstants.bufferDef = builder.add(ir::Op::DclCbv(floatArrayType, m_converter.getEntryPoint(), 0u, SWVPFloatCbvRegIdx, 1u));
 
     auto intVec4Type = ir::Type(ir::ScalarType::eI32, 4u);
     auto intArrayType = ir::Type(intVec4Type).addArrayDimension(MaxOtherConstantsSoftware);
-    m_intConstants.bufferDef = builder.add(ir::Op::DclCbv(intArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, IntSWVPCbvRegIdx, 1u));
+    m_intConstants.bufferDef = builder.add(ir::Op::DclCbv(intArrayType, m_converter.getEntryPoint(), 0u, SWVPIntCbvRegIdx, 1u));
 
     auto boolBitMasksArrayType = ir::Type(ir::ScalarType::eU32).addArrayDimension((MaxOtherConstantsSoftware + 31u) / 32u);
-    m_boolConstants.bufferDef = builder.add(ir::Op::DclCbv(boolBitMasksArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, BoolSWVPCbvRegIdx, 1u));
+    m_boolConstants.bufferDef = builder.add(ir::Op::DclCbv(boolBitMasksArrayType, m_converter.getEntryPoint(), 0u, SWVPBoolCbvRegIdx, 1u));
 
     if (m_converter.getOptions().includeDebugNames) {
       builder.add(ir::Op::DebugName(m_floatConstants.bufferDef, "cF"));
@@ -52,7 +52,7 @@ void ResourceMap::initialize(ir::Builder& builder) {
      * float constants that weren't defined by the application can use robustness2 and the buffer stays small. */
     auto floatBufferMemberType = ir::Type(ir::ScalarType::eUnknown, 4u);
     auto constantsArrayType = ir::Type(floatBufferMemberType).addArrayDimension(hwvpConstantsArraySize);
-    auto constantsBufferDef = builder.add(ir::Op::DclCbv(constantsArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, FloatIntHWVPCbvRegIdx, 1u));
+    auto constantsBufferDef = builder.add(ir::Op::DclCbv(constantsArrayType, m_converter.getEntryPoint(), 0u, FloatIntCbvRegIdx, 1u));
     m_floatConstants.bufferDef = constantsBufferDef;
     m_intConstants.bufferDef = constantsBufferDef;
 
@@ -96,7 +96,7 @@ void ResourceMap::emitNamedConstantRanges(ir::Builder& builder, const ConstantTa
     range.count = entry.count;
     auto floatVec4Type = ir::Type(isSwvp ? ir::ScalarType::eF32 : ir::ScalarType::eUnknown, 4u);
     auto floatArrayType = ir::Type(floatVec4Type).addArrayDimension(isSwvp ? MaxFloatConstantsSoftware : hwvpConstantsArraySize);
-    range.namedBufferDef = builder.add(ir::Op::DclCbv(floatArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, isSwvp ? FloatSWVPCbvRegIdx : FloatIntHWVPCbvRegIdx, 1u));
+    range.namedBufferDef = builder.add(ir::Op::DclCbv(floatArrayType, m_converter.getEntryPoint(), 0u, isSwvp ? SWVPFloatCbvRegIdx : FloatIntCbvRegIdx, 1u));
     builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
   }
 
@@ -108,7 +108,7 @@ void ResourceMap::emitNamedConstantRanges(ir::Builder& builder, const ConstantTa
     range.count      = entry.count;
     auto intVec4Type = ir::Type(isSwvp ? ir::ScalarType::eI32 : ir::ScalarType::eUnknown, 4u);
     auto intArrayType = ir::Type(intVec4Type).addArrayDimension(isSwvp ? MaxOtherConstantsSoftware : hwvpConstantsArraySize);
-    range.namedBufferDef = builder.add(ir::Op::DclCbv(intArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, isSwvp ? IntSWVPCbvRegIdx : FloatIntHWVPCbvRegIdx, 1u));
+    range.namedBufferDef = builder.add(ir::Op::DclCbv(intArrayType, m_converter.getEntryPoint(), 0u, isSwvp ? SWVPIntCbvRegIdx : FloatIntCbvRegIdx, 1u));
     builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
   }
 
@@ -120,7 +120,7 @@ void ResourceMap::emitNamedConstantRanges(ir::Builder& builder, const ConstantTa
       range.startIndex = entry.index;
       range.count      = entry.count;
       auto boolBitMasksArrayType = ir::Type(ir::ScalarType::eU32).addArrayDimension(MaxOtherConstantsSoftware);
-      range.namedBufferDef = builder.add(ir::Op::DclCbv(boolBitMasksArrayType, m_converter.getEntryPoint(), ConstantBufferRegSpace, BoolSWVPCbvRegIdx, 1u));
+      range.namedBufferDef = builder.add(ir::Op::DclCbv(boolBitMasksArrayType, m_converter.getEntryPoint(), 0u, SWVPBoolCbvRegIdx, 1u));
       builder.add(ir::Op::DebugName(range.namedBufferDef, entry.name.c_str()));
     }
   }
@@ -588,7 +588,7 @@ bool ResourceMap::dclSamplerAndAllTextureTypes(ir::Builder& builder, uint32_t sa
 
 
 ir::SsaDef ResourceMap::dclSampler(ir::Builder& builder, uint32_t samplerIndex) {
-  auto samplerDef = builder.add(ir::Op::DclSampler(m_converter.getEntryPoint(), SamplerBindingsRegSpace, samplerIndex, 1u));
+  auto samplerDef = builder.add(ir::Op::DclSampler(m_converter.getEntryPoint(), 0u, samplerIndex, 1u));
 
   if (m_converter.m_options.includeDebugNames) {
     const ConstantInfo* ctabEntry = nullptr;
@@ -618,7 +618,7 @@ ir::SsaDef ResourceMap::dclSampler(ir::Builder& builder, uint32_t samplerIndex) 
 
 
 ir::SsaDef ResourceMap::dclTexture(ir::Builder& builder, SpecConstTextureType textureType, uint32_t samplerIndex) {
-  auto textureDef = builder.add(ir::Op::DclSrv(ir::ScalarType::eF32, m_converter.getEntryPoint(), TextureBindingsRegSpace,
+  auto textureDef = builder.add(ir::Op::DclSrv(ir::ScalarType::eF32, m_converter.getEntryPoint(), 0u,
     samplerIndex, 1u, resourceKindFromTextureType(textureTypeFromSpecConstTextureType(textureType))));
 
   if (m_converter.m_options.includeDebugNames) {

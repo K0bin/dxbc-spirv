@@ -329,7 +329,7 @@ ir::SsaDef Converter::emitSharedConstants(ir::Builder& builder) {
     bufferStruct.addStructMember(ir::ScalarType::eF32);
   }
 
-  auto buffer = builder.add(ir::Op::DclCbv(bufferStruct, getEntryPoint(), SpecialBindingsRegSpace, PSSharedDataCbvRegIdx, 1u));
+  auto buffer = builder.add(ir::Op::DclCbv(bufferStruct, getEntryPoint(), 0u, PSSharedDataCbvRegIdx, 1u));
 
   if (getOptions().includeDebugNames) {
     builder.add(ir::Op::DebugName(buffer, "PSSharedData"));

@@ -12,19 +12,18 @@ using util::ComponentBit;
 using util::WriteMask;
 using util::Swizzle;
 
-constexpr uint32_t TextureBindingsRegSpace = 0u;
+/* Cbv Register indices */
 
-constexpr uint32_t SamplerBindingsRegSpace = 1u;
+constexpr uint32_t FastSpecConstCbvRegIdx = 0u;
+constexpr uint32_t PSSharedDataCbvRegIdx  = 1u;
+constexpr uint32_t VSClipPlanesCbvRegIdx  = 1u;
 
-constexpr uint32_t ConstantBufferRegSpace  = 2u;
-constexpr uint32_t FloatIntHWVPCbvRegIdx   = 0u;
-constexpr uint32_t FloatSWVPCbvRegIdx      = 0u;
-constexpr uint32_t IntSWVPCbvRegIdx        = 1u;
-constexpr uint32_t BoolSWVPCbvRegIdx       = 2u;
+constexpr uint32_t FloatIntCbvRegIdx  = 2u;
+constexpr uint32_t SWVPFloatCbvRegIdx = 2u;
+constexpr uint32_t SWVPIntCbvRegIdx   = 3u;
+constexpr uint32_t SWVPBoolCbvRegIdx  = 4u;
 
-constexpr uint32_t SpecialBindingsRegSpace = 3u;
-constexpr uint32_t FastSpecConstCbvRegIdx  = 0u;
-constexpr uint32_t PSSharedDataCbvRegIdx   = 1u;
+/* Constant limits */
 
 constexpr uint32_t MaxFloatConstantsVS       = 256;
 constexpr uint32_t MaxFloatConstantsPS       = 224;
