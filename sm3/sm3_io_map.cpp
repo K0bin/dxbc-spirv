@@ -157,8 +157,9 @@ bool IoMap::handleDclIoVar(ir::Builder& builder, const Instruction& op) {
   } else {
     /* SM2 doesn't have semantics for VS outputs or PS inputs.
      * Generate a matching semantic so we can use the same code. */
-    bool foundSemantic = determineSemanticForRegister(dst.getRegisterType(), dst.getIndex(), &semantic);
-    dxbc_spv_assert(foundSemantic);
+    auto semanticOpt = determineSemanticForRegister(dst.getRegisterType(), dst.getIndex());
+    dxbc_spv_assert(semanticOpt.has_value());
+    semantic = semanticOpt.value();
   }
 
   dclIoVar(builder, dst.getRegisterType(), dst.getIndex(), semantic);
@@ -413,7 +414,6 @@ void IoMap::dclIoVar(
     registerIndex,
     WriteMask(ComponentBit::eAll),
     mapping.semantic,
-    isInput,
     false
   );
 
@@ -425,74 +425,62 @@ void IoMap::dclIoVar(
       registerIndex,
       util::componentBit(Component(i)),
       mapping.semantic,
-      isInput,
       true
     );
   }
 }
 
 
-bool IoMap::determineSemanticForRegister(RegisterType regType, uint32_t regIndex, Semantic* semantic) {
+  std::optional<Semantic> IoMap::determineSemanticForRegister(RegisterType regType, uint32_t regIndex) {
   switch (regType) {
     case RegisterType::eColorOut:
-      *semantic = Semantic { SemanticUsage::eColor, regIndex };
-      return true;
+      return std::make_optional(Semantic { SemanticUsage::eColor, regIndex });
 
     case RegisterType::eInput:
-      *semantic = Semantic { SemanticUsage::eColor, regIndex };
-      return true;
+      return std::make_optional(Semantic { SemanticUsage::eColor, regIndex });
 
     case RegisterType::eTexCoordOut:
-      *semantic = Semantic { SemanticUsage::eTexCoord, regIndex };
-      return true;
+      return std::make_optional(Semantic { SemanticUsage::eTexCoord, regIndex });
 
     case RegisterType::ePixelTexCoord:
-      *semantic = Semantic { SemanticUsage::eTexCoord, regIndex };
-      return true;
+      return std::make_optional(Semantic { SemanticUsage::eTexCoord, regIndex });
 
     case RegisterType::eDepthOut:
-      *semantic = Semantic { SemanticUsage::eDepth, regIndex };
-      return true;
+      return std::make_optional(Semantic { SemanticUsage::eDepth, regIndex });
 
     case RegisterType::eTexture:
-      *semantic = Semantic { SemanticUsage::eTexCoord, regIndex };
-      return true;
+      return std::make_optional(Semantic { SemanticUsage::eTexCoord, regIndex });
 
     case RegisterType::eAttributeOut:
-      *semantic = Semantic { SemanticUsage::eColor, regIndex };
-      return true;
+      return std::make_optional(Semantic { SemanticUsage::eColor, regIndex });
 
     case RegisterType::eRasterizerOut:
       switch (regIndex) {
-        case uint32_t(RasterizerOutIndex::eRasterOutFog):
-            *semantic = Semantic { SemanticUsage::eFog, 0u };
-            return true;
+      case uint32_t(RasterizerOutIndex::eRasterOutFog):
+          return std::make_optional(Semantic { SemanticUsage::eFog, 0u });
 
-        case uint32_t(RasterizerOutIndex::eRasterOutPointSize):
-            *semantic = Semantic { SemanticUsage::ePointSize, 0u };
-            return true;
+      case uint32_t(RasterizerOutIndex::eRasterOutPointSize):
+          return std::make_optional(Semantic { SemanticUsage::ePointSize, 0u });
 
-        case uint32_t(RasterizerOutIndex::eRasterOutPosition):
-            *semantic = Semantic { SemanticUsage::ePosition, 0u };
-            return true;
+      case uint32_t(RasterizerOutIndex::eRasterOutPosition):
+          return std::make_optional(Semantic { SemanticUsage::ePosition, 0u });
       }
       break;
 
     case RegisterType::eMiscType:
       switch (regIndex) {
-        case uint32_t(MiscTypeIndex::eMiscTypePosition):
-            *semantic = Semantic { SemanticUsage::ePosition, 0u };
-            return true;
+      case uint32_t(MiscTypeIndex::eMiscTypePosition):
+          return std::make_optional(Semantic { SemanticUsage::ePosition, 0u });
 
-        case uint32_t(MiscTypeIndex::eMiscTypeFace):
-            /* There is no semantic usage for the front face. */
-            break;
+      case uint32_t(MiscTypeIndex::eMiscTypeFace):
+          /* There is no semantic usage for the front face. */
+          break;
       }
       break;
 
     default: break;
   }
-  return false;
+  return std::nullopt;
 }
 
 
@@ -509,13 +497,12 @@ ir::SsaDef IoMap::emitLoad(
     const IoVarInfo* ioVar = findIoVar(m_variables, operand.getRegisterType(), operand.getIndex());
 
     if (ioVar == nullptr) {
-      Semantic semantic;
-      bool foundSemantic = determineSemanticForRegister(operand.getRegisterType(), operand.getIndex(), &semantic);
+      std::optional<Semantic> semantic = determineSemanticForRegister(operand.getRegisterType(), operand.getIndex());
 
-      if (!foundSemantic) {
+      if (!semantic.has_value()) {
         m_converter.logOpError(op, "Failed to process I/O load.");
       } else {
-        dclIoVar(builder, operand.getRegisterType(), operand.getIndex(), semantic);
+        dclIoVar(builder, operand.getRegisterType(), operand.getIndex(), semantic.value());
         ioVar = &m_variables.back();
       }
     }
@@ -604,13 +591,12 @@ ir::SsaDef IoMap::emitTexCoordLoad(
   const IoVarInfo* ioVar = findIoVar(m_variables, RegisterType::ePixelTexCoord, regIdx);
 
   if (ioVar == nullptr) {
-    Semantic semantic;
-    bool foundSemantic = determineSemanticForRegister(RegisterType::ePixelTexCoord, regIdx, &semantic);
+    std::optional<Semantic> semantic = determineSemanticForRegister(RegisterType::ePixelTexCoord, regIdx);
 
-    if (!foundSemantic) {
-      m_converter.logOpError(op, "Failed to process I/O load.");
+    if (!semantic.has_value()) {
+      m_converter.logOpError(op, "Failed to process I/O store.");
     } else {
-      dclIoVar(builder, RegisterType::ePixelTexCoord, regIdx, semantic);
+      dclIoVar(builder, RegisterType::ePixelTexCoord, regIdx, semantic.value());
       ioVar = &m_variables.back();
     }
   }
@@ -656,15 +642,15 @@ bool IoMap::emitStore(
     const IoVarInfo* ioVar = findIoVar(m_variables, operand.getRegisterType(), operand.getIndex());
 
     if (ioVar == nullptr) {
-      Semantic semantic;
-      bool foundSemantic = determineSemanticForRegister(operand.getRegisterType(), operand.getIndex(), &semantic);
+      std::optional<Semantic> semantic;
+      semantic = determineSemanticForRegister(operand.getRegisterType(), operand.getIndex());
 
-      if (!foundSemantic) {
+      if (!semantic.has_value()) {
         m_converter.logOpError(op, "Failed to process I/O store.");
         return false;
       }
 
-      dclIoVar(builder, operand.getRegisterType(), operand.getIndex(), semantic);
+      dclIoVar(builder, operand.getRegisterType(), operand.getIndex(), semantic.value());
       ioVar = &m_variables.back();
     }
 
@@ -774,15 +760,14 @@ bool IoMap::emitDepthStore(ir::Builder &builder, const Instruction &op, ir::SsaD
   const IoVarInfo* ioVar = findIoVar(m_variables, RegisterType::eDepthOut, 0u);
 
   if (ioVar == nullptr) {
-    Semantic semantic;
-    bool foundSemantic = determineSemanticForRegister(RegisterType::eDepthOut, 0u, &semantic);
+    std::optional<Semantic> semantic = determineSemanticForRegister(RegisterType::eDepthOut, 0u);
 
-    if (!foundSemantic) {
+    if (!semantic.has_value()) {
       m_converter.logOpError(op, "Failed to process I/O depth store.");
       return false;
     }
 
-    dclIoVar(builder, RegisterType::eDepthOut, 0u, semantic);
+    dclIoVar(builder, RegisterType::eDepthOut, 0u, semantic.value());
     ioVar = &m_variables.back();
   }
 
@@ -997,29 +982,30 @@ ir::SsaDef IoMap::convertScalar(ir::Builder& builder, ir::ScalarType dstType, ir
 }
 
 
-void IoMap::emitDebugName(
-  ir::Builder& builder,
-  ir::SsaDef def,
-  RegisterType registerType,
-  uint32_t registerIndex,
-  WriteMask writeMask,
-  Semantic semantic,
-  bool isInput,
-  bool isTemp) const {
+  void IoMap::emitDebugName(
+    ir::Builder& builder,
+    ir::SsaDef def,
+    RegisterType registerType,
+    uint32_t registerIndex,
+    WriteMask writeMask,
+    Semantic semantic,
+    bool isTemp) const {
 
   if (!m_converter.getOptions().includeDebugNames)
     return;
 
+  bool isInput = registerTypeIsInput(registerType, m_converter.getShaderInfo().getType());
+
   std::stringstream nameStream;
 
-  if ((isInput || semantic.usage != SemanticUsage::eNormal)
+  if ((registerType == RegisterType::eInput || semantic.usage != SemanticUsage::eNormal)
     || (isInput && registerType == RegisterType::eRasterizerOut)
     || (!isInput && registerType == RegisterType::eMiscType)) {
-    /* There is no register type for normals, it's only emitted for FF emulation.
+    /* There is no VS output register type for normals, it's only emitted for FF emulation.
      * The other exceptions either only have input only or output only registers. */
     nameStream << m_converter.makeRegisterDebugName(registerType, registerIndex, writeMask);
     nameStream << "_";
-  }
+    }
 
   if (semantic.usage == SemanticUsage::eColor) {
     if (semantic.index == 0) {
@@ -1034,7 +1020,7 @@ void IoMap::emitDebugName(
       || semantic.usage == SemanticUsage::eNormal
       || semantic.usage == SemanticUsage::eTexCoord) {
       nameStream << semantic.index;
-    }
+      }
   }
 
   if (isTemp)

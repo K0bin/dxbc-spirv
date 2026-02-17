@@ -140,8 +140,8 @@ private:
   Converter&      m_converter;
 
   IoVarList       m_variables;
-  uint32_t        m_nextInputLocation = 0u;
-  uint32_t        m_nextOutputLocation = 0u;
+  uint32_t        m_nextInputLocation = 12u;
+  uint32_t        m_nextOutputLocation = 12u;
 
   ir::SsaDef      m_inputSwitchFunction = { };
   ir::SsaDef      m_outputSwitchFunction = { };
@@ -175,8 +175,8 @@ private:
   /** Converts input to the given scalar type. */
   ir::SsaDef convertScalar(ir::Builder& builder, ir::ScalarType dstType, ir::SsaDef value);
 
- /** Determines the appropriate semantic for a given register in shader model 1/2 */
- bool determineSemanticForRegister(RegisterType regType, uint32_t regIndex, Semantic* semantic);
+  /** Determines the appropriate semantic for a given register in shader model 1/2 */
+  std::optional<Semantic> determineSemanticForRegister(RegisterType regType, uint32_t regIndex);
 
   void emitDebugName(
     ir::Builder& builder,
@@ -185,7 +185,6 @@ private:
     uint32_t registerIndex,
     WriteMask writeMask,
     Semantic semantic,
-    bool isInput,
     bool isTemp) const;
 };
 
