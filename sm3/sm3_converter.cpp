@@ -169,9 +169,13 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
       return handleTexDepth(builder, op);
 
     case OpCode::eLrp:
+      return handleLrp(builder, op);
+
     case OpCode::eCmp:
+      return handleCmp(builder, op);
+
     case OpCode::eCnd:
-      return handleSelect(builder, op);
+      return handleCnd(builder, op);
 
     case OpCode::eNrm:
       return handleNrm(builder, op);
@@ -1227,7 +1231,7 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
 }
 
 
-bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
+bool Converter::handleLrp(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.getSrcCount() == 3u);
   dxbc_spv_assert(op.hasDst());
 
@@ -1241,34 +1245,86 @@ bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
 
   auto type = makeVectorType(scalarType, writeMask);
 
+  /* dest = src0 * (src1 - src2) + src2 */
+  auto result = builder.add(ir::Op::FSub(type, src1, src2));
+  result = builder.add(OpFMad(type, src0, result, src2));
+
+  return storeDstModifiedPredicated(builder, op, dst, result);
+}
+
+
+bool Converter::handleCmp(ir::Builder& builder, const Instruction& op) {
+  dxbc_spv_assert(op.getSrcCount() == 3u);
+  dxbc_spv_assert(op.hasDst());
+
+  auto dst = op.getDst();
+  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
+  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
+  auto src2 = loadSrcModified(builder, op, op.getSrc(2u), writeMask, scalarType);
+
+  util::small_vector<ir::SsaDef, 4u> components;
+  for (auto _ : writeMask) {
+    uint32_t componentIndex = components.size();
+    auto conditionComponent = ir::extractFromVector(builder, src0, componentIndex);
+    auto option1Component = ir::extractFromVector(builder, src1, componentIndex);
+    auto option2Component = ir::extractFromVector(builder, src2, componentIndex);
+
+    /* Cmp compares to 0.0 */
+    auto conditionBool = builder.add(ir::Op::FGe(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.0f)));
+    components.push_back(builder.add(ir::Op::Select(scalarType, conditionBool, option1Component, option2Component)));
+  }
+  auto result = ir::buildVector(builder, scalarType, components.size(), components.data());
+
+  return storeDstModifiedPredicated(builder, op, dst, result);
+}
+
+
+  bool Converter::handleCnd(ir::Builder& builder, const Instruction& op) {
+  dxbc_spv_assert(op.getSrcCount() == 3u);
+  dxbc_spv_assert(op.hasDst());
+
+  auto dst = op.getDst();
+  WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+  auto [ versionMajor, versionMinor ] = getShaderInfo().getVersion();
+
+  WriteMask conditionSrcWriteMask = writeMask;
+  if (versionMajor < 2u && versionMinor < 4u)
+    conditionSrcWriteMask = ComponentBit::eX;
+
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), conditionSrcWriteMask, scalarType);
+  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
+  auto src2 = loadSrcModified(builder, op, op.getSrc(2u), writeMask, scalarType);
+
   ir::SsaDef result;
-  if (op.getOpCode() == OpCode::eLrp) {
-    /* dest = src0 * (src1 - src2) + src2 */
-    result = builder.add(ir::Op::FSub(type, src1, src2));
-    result = builder.add(OpFMad(type, src0, result, src2));
-  } else if (op.getOpCode() == OpCode::eCmp || op.getOpCode() == OpCode::eCnd) {
+  if (versionMajor < 2u && versionMinor < 4u && op.isCoissued()) {
+    result = src1;
+  } else {
     util::small_vector<ir::SsaDef, 4u> components;
     for (auto _ : writeMask) {
       uint32_t componentIndex = components.size();
-      auto conditionComponent = ir::extractFromVector(builder, src0, componentIndex);
+      uint32_t compareComponentIndex = componentIndex;
+
+      if (getShaderInfo().getVersion().first < 2u && versionMinor < 4u) {
+        // Shader models before 1_4 will always compare against r0.a.
+        compareComponentIndex = 0u;
+        dxbc_spv_assert(conditionSrcWriteMask & ComponentBit::eX);
+        dxbc_spv_assert(op.getSrc(0u).getRegisterType() == RegisterType::eTemp);
+        dxbc_spv_assert(op.getSrc(0u).getIndex() == 0u);
+      }
+
+      auto conditionComponent = ir::extractFromVector(builder, src0, compareComponentIndex);
       auto option1Component = ir::extractFromVector(builder, src1, componentIndex);
       auto option2Component = ir::extractFromVector(builder, src2, componentIndex);
 
-      ir::SsaDef conditionBool;
-      if (op.getOpCode() == OpCode::eCmp) {
-        /* Cmp compares to 0.0 */
-        conditionBool = builder.add(ir::Op::FGe(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.0f)));
-      } else {
-        /* Cnd compares to 0.5 */
-        conditionBool = builder.add(ir::Op::FGt(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.5f)));
-      }
+      /* Cnd compares to 0.5 */
+      auto conditionBool = builder.add(ir::Op::FGt(ir::ScalarType::eBool, conditionComponent, makeTypedConstant(builder, scalarType, 0.5f)));
       components.push_back(builder.add(ir::Op::Select(scalarType, conditionBool, option1Component, option2Component)));
     }
     result = ir::buildVector(builder, scalarType, components.size(), components.data());
-  } else {
-    Logger::err("OpCode ", op.getOpCode(), " is not supported by handleSelect.");
-    dxbc_spv_unreachable();
-    return false;
   }
 
   return storeDstModifiedPredicated(builder, op, dst, result);
