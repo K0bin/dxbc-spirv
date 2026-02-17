@@ -1866,7 +1866,6 @@ ir::SsaDef Converter::loadSrcModified(ir::Builder& builder, const Instruction& o
 
 bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef predicateVec, ir::SsaDef value) {
   WriteMask writeMask = operand.getWriteMask(getShaderInfo());
-  writeMask = fixupWriteMask(builder, writeMask, value);
 
   switch (operand.getRegisterType()) {
     case RegisterType::eTemp:
@@ -1941,7 +1940,6 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
   if (operand.isPredicated()) {
     /* Make sure we're not trying to load more predicate components than we can write. */
     WriteMask writeMask = operand.getWriteMask(getShaderInfo());
-    writeMask = fixupWriteMask(builder, writeMask, value);
 
     /* Load predicate */
     predicate = m_regFile.emitPredicateLoad(builder, operand.getPredicateSwizzle(), writeMask);
@@ -1961,31 +1959,6 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
   }
 
   return storeDst(builder, op, operand, predicate, value);
-}
-
-
-WriteMask Converter::fixupWriteMask(ir::Builder& builder, WriteMask writeMask, ir::SsaDef value) {
-  /* Fix the write mask if it writes more components than the value has. */
-  auto type = builder.getOp(value).getType().getBaseType(0u);
-
-  if (util::popcnt(uint8_t(writeMask)) == type.getVectorSize()) {
-    return writeMask;
-  }
-
-  /* Scalar values should be turned into vectors with broadcastScalar instead. */
-  dxbc_spv_assert(type.getVectorSize() != 1u);
-
-  WriteMask oldWriteMask = writeMask;
-
-  WriteMask maxWriteMask = WriteMask(uint8_t((1u << type.getVectorSize()) - 1u) << util::tzcnt(uint8_t(writeMask)));
-  writeMask &= maxWriteMask;
-
-  if (writeMask != oldWriteMask) {
-    Logger::warn("Disabling components in write mask because computed value does not have them: Before: ",
-      oldWriteMask, ", after: ", writeMask);
-  }
-
-  return writeMask;
 }
 
 
