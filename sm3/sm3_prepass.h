@@ -34,9 +34,14 @@ struct PrepassConstants {
   uint32_t boolMask = 0u;
 };
 
+struct InputSignatureElement {
+  uint32_t location;
+  Semantic semantic;
+};
+
 using RenderTargetMask = uint8_t;
 using SamplerMask      = uint32_t;
-using Signature        = util::small_vector<Semantic, 4u>;
+using Signature        = util::small_vector<InputSignatureElement, 16u>;
 
 class Prepass {
 
@@ -82,7 +87,7 @@ public:
     return m_inputSignature.size();
   }
 
-  Semantic getInputSignatureElement(uint32_t index) const {
+  InputSignatureElement getInputSignatureElement(uint32_t index) const {
     return m_inputSignature[index];
   }
 
@@ -116,7 +121,7 @@ private:
 
   std::array<TextureType, 16u> m_textureTypes = {};
 
-  Signature m_inputSignature = {};
+  Signature m_inputSignature    = {};
 
 };
 

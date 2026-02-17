@@ -218,10 +218,7 @@ namespace dxbc_spv::sm3 {
     }
 
     if (registerType == RegisterType::eInput && getShaderInfo().getType() == ShaderType::eVertex) {
-      if (m_inputSignature.size() < index + 1u)
-        m_inputSignature.resize(index + 1u);
-
-      m_inputSignature[index] = { dcl.getSemanticUsage(), dcl.getSemanticIndex() };
+      m_inputSignature.push_back({ uint32_t(m_inputSignature.size()) + 12u, { dcl.getSemanticUsage(), dcl.getSemanticIndex() } });
       return true;
     }
 
