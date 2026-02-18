@@ -14,8 +14,8 @@ class Converter;
 
 enum class SpecConstTextureType : uint32_t {
   eTexture2D   = 0u,
-  eTextureCube = 1u,
-  eTexture3D   = 2u,
+  eTexture3D   = 1u,
+  eTextureCube = 2u,
 };
 
 enum class SamplingConfigBit : uint8_t {
@@ -217,11 +217,25 @@ inline ir::ResourceKind resourceKindFromTextureType(TextureType textureType) {
 }
 
 inline SpecConstTextureType specConstTextureTypeFromTextureType(TextureType textureType) {
-  return SpecConstTextureType(uint32_t(textureType) - uint32_t(TextureType::eTexture2D));
+  switch (textureType) {
+    case TextureType::eTextureCube:
+      return SpecConstTextureType::eTextureCube;
+    case TextureType::eTexture3D:
+      return SpecConstTextureType::eTexture3D;
+    default:
+      return SpecConstTextureType::eTexture2D;
+  }
 }
 
-inline TextureType textureTypeFromSpecConstTextureType(SpecConstTextureType specConstTextureType) {
-  return TextureType(uint32_t(specConstTextureType) + uint32_t(TextureType::eTexture2D));
+  inline TextureType textureTypeFromSpecConstTextureType(SpecConstTextureType specConstTextureType) {
+  switch (specConstTextureType) {
+    case SpecConstTextureType::eTextureCube:
+      return TextureType::eTextureCube;
+    case SpecConstTextureType::eTexture3D:
+      return TextureType::eTexture3D;
+    default:
+      return TextureType::eTexture2D;
+  }
 }
 
 inline SpecConstTextureType specConstTextureTypeFromResourceKind(ir::ResourceKind resourceKind) {
