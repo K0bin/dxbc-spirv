@@ -190,20 +190,13 @@ bool RegisterFile::emitStore(
       default: dxbc_spv_assert(false); return false;
     }
 
-    ir::SsaDef predicateIf = ir::SsaDef();
-
+    ir::SsaDef predicateComponent = ir::SsaDef();
     if (predicateVec) {
       /* Check if the matching component of the predicate register vector is true first. */
-      auto condComponent = extractFromVector(builder, predicateVec, componentIndex);
-      predicateIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), condComponent));
+      predicateComponent = extractFromVector(builder, predicateVec, componentIndex);
     }
 
-    builder.add(ir::Op::TmpStore(reg, scalar));
-
-    if (predicateIf) {
-      auto predicateIfEnd = builder.add(ir::Op::ScopedEndIf(predicateIf));
-      builder.rewriteOp(predicateIf, ir::Op(builder.getOp(predicateIf)).setOperand(0u, predicateIfEnd));
-    }
+    m_stores.emplace_back(reg, scalar, predicateComponent);
 
     componentIndex++;
   }
@@ -228,6 +221,28 @@ void RegisterFile::emitLoopCounterStore(
     value = builder.add(ir::Op::ConsumeAs(ir::ScalarType::eI32, value));
 
   builder.add(ir::Op::TmpStore(m_aLReg, value));
+}
+
+
+
+void RegisterFile::emitBufferedStores(ir::Builder& builder) {
+  for (const auto& store : m_stores) {
+    ir::SsaDef predicateIf = ir::SsaDef();
+
+    if (store.predicate) {
+      /* Check if the matching component of the predicate register vector is true first. */
+      predicateIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), store.predicate));
+    }
+
+    builder.add(ir::Op::TmpStore(store.reg, store.value));
+
+    if (predicateIf) {
+      auto predicateIfEnd = builder.add(ir::Op::ScopedEndIf(predicateIf));
+      builder.rewriteOp(predicateIf, ir::Op(builder.getOp(predicateIf)).setOperand(0u, predicateIfEnd));
+    }
+  }
+
+  m_stores.clear();
 }
 
 

@@ -55,11 +55,24 @@ public:
           ir::Builder&            builder,
           ir::SsaDef              value);
 
+  /** Writes buffered stores to the actual temp registers. */
+  void emitBufferedStores(
+          ir::Builder&            builder);
+
 private:
 
   ir::SsaDef getOrDeclareTemp(ir::Builder& builder, uint32_t index, Component component);
 
   Converter& m_converter;
+
+  struct Store {
+    Store(ir::SsaDef reg, ir::SsaDef value, ir::SsaDef predicate)
+      : reg(reg), value(value), predicate(predicate) {}
+
+    ir::SsaDef reg;
+    ir::SsaDef value;
+    ir::SsaDef predicate;
+  };
 
   /** Temporary registers */
   util::small_vector<ir::SsaDef, 32u * 4u> m_rRegs = { };
@@ -72,6 +85,9 @@ private:
 
   /** Predicate register */
   std::array<ir::SsaDef, 4u> m_pReg = { };
+
+  /* Buffered stores to deal with coissue */
+  util::small_vector<Store, 8u> m_stores = { };
 
 };
 
