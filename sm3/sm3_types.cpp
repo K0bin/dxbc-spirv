@@ -79,7 +79,7 @@ std::ostream& operator << (std::ostream& os, OpCode op) {
     case OpCode::eTexM3x3VSpec: return os << "texm3x3vspec";
     case OpCode::eExpP:         return os << "ExpP";
     case OpCode::eLogP:         return os << "LogP";
-    case OpCode::eCnd:          return os << "Cnd";
+    case OpCode::eCnd:          return os << "cnd";
     case OpCode::eDef:          return os << "def";
     case OpCode::eTexReg2Rgb:   return os << "texreg2rgb";
     case OpCode::eTexDp3Tex:    return os << "texdp3tex";
