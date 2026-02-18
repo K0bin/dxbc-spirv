@@ -368,6 +368,13 @@ ir::SsaDef ResourceMap::emitConstantLoad(
   for (auto& scalar : components) {
     if (scalar && scalarType != bufferElementScalarType)
       scalar = builder.add(ir::Op::ConsumeAs(scalarType, scalar));
+
+    // PS 1.x clamps float constants
+    if (m_converter.getShaderInfo().getType() == ShaderType::ePixel
+      && m_converter.getShaderInfo().getVersion().first == 1u
+      && scalarType == ir::ScalarType::eF32)
+      scalar = builder.add(ir::Op::FClamp(scalarType, scalar,
+        builder.makeConstant(-1.0f), builder.makeConstant(1.0f)));
   }
 
   /* Build result vector */
@@ -393,6 +400,16 @@ void ResourceMap::emitDefineConstant(
         imm.getImmediate<float>(0u), imm.getImmediate<float>(1u),
         imm.getImmediate<float>(2u), imm.getImmediate<float>(3u)
       };
+
+      // PS 1.x clamps float constants
+      if (m_converter.getShaderInfo().getType() == ShaderType::ePixel
+        && m_converter.getShaderInfo().getVersion().first == 1u) {
+        values.x = std::max(std::min(values.x, 1.0f), -1.0f);
+        values.y = std::max(std::min(values.y, 1.0f), -1.0f);
+        values.z = std::max(std::min(values.z, 1.0f), -1.0f);
+        values.w = std::max(std::min(values.w, 1.0f), -1.0f);
+      }
+
 
       auto def = builder.makeConstant(values.x, values.y, values.z, values.w);
 
