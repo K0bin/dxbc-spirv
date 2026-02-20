@@ -66,12 +66,11 @@ private:
   Converter& m_converter;
 
   struct Store {
-    Store(ir::SsaDef reg, ir::SsaDef value, ir::SsaDef predicate)
-      : reg(reg), value(value), predicate(predicate) {}
+    Store(ir::SsaDef reg, ir::SsaDef value)
+      : reg(reg), value(value) {}
 
     ir::SsaDef reg;
     ir::SsaDef value;
-    ir::SsaDef predicate;
   };
 
   /** Temporary registers */

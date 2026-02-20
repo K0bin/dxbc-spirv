@@ -264,6 +264,7 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
   if (m_options.name)
     builder.add(ir::Op::DebugName(m_entryPoint.def, m_options.name));
 
+  m_ioMap.setInsertCursor(afterMainFunc);
   m_specConstants.setInsertCursor(afterMainFunc);
   m_resources.setInsertCursor(afterMainFunc);
   m_specConstants.initialize(builder);
@@ -278,6 +279,7 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
   /* Set cursor to main function so that instructions will be emitted
    * in the correct location */
   builder.setCursor(m_entryPoint.mainFunc);
+  m_ioMap.emitIoVarDefaults(builder);
   return true;
 }
 
@@ -2006,16 +2008,11 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
     predicate = m_regFile.emitPredicateLoad(builder, operand.getPredicateSwizzle(), writeMask);
     /* Apply predicate modifier (per component) if necessary */
     if (operand.getPredicateModifier() == OperandModifier::eNot) {
-      util::small_vector<ir::SsaDef, 4u> components = { };
-      for (auto c : writeMask) {
-        auto component = componentFromBit(c);
-        auto predicateComponent = ir::extractFromVector(builder, predicate, uint32_t(component));
-        components.push_back(builder.add(ir::Op::BNot(ir::ScalarType::eBool, predicateComponent)));
-      }
-      predicate = buildVector(builder, ir::ScalarType::eBool, components.size(), components.data());
+      ir::BasicType predicateType = builder.getOp(predicate).getType().getBaseType(0u);
+      predicate = builder.add(ir::Op::BNot(predicateType, predicate));
     } else if (operand.getPredicateModifier() != OperandModifier::eNone) {
       Logger::log(LogLevel::eError, "Unknown predicate modifier: ", uint32_t(operand.getPredicateModifier()));
-      dxbc_spv_assert(false);
+      return false;
     }
   }
 
@@ -2023,8 +2020,21 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
 }
 
 
-ir::SsaDef Converter::loadAddress(ir::Builder& builder, RegisterType registerType, Swizzle swizzle) {
-  return m_regFile.emitAddressLoad(builder, registerType, swizzle);
+ir::SsaDef Converter::calculateAddress(
+            ir::Builder&            builder,
+            RegisterType            registerType,
+            Swizzle                 swizzle,
+            uint32_t                baseAddress,
+            ir::ScalarType          type) {
+  auto relativeOffset = m_regFile.emitAddressLoad(builder, registerType, swizzle);
+
+  ir::SsaDef baseAddressDef = builder.makeConstant(int32_t(baseAddress));
+  ir::SsaDef address = builder.add(ir::Op::IAdd(ir::ScalarType::eI32, baseAddressDef, relativeOffset));
+
+  if (type != ir::ScalarType::eI32)
+    address = builder.add(ir::Op::Cast(type, address));
+
+  return address;
 }
 
 

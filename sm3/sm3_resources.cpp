@@ -292,12 +292,11 @@ ir::SsaDef ResourceMap::emitConstantLoad(
       || registerType == RegisterType::eConst2
       || registerType == RegisterType::eConst3
       || registerType == RegisterType::eConst4);
-    auto relAddr = m_converter.loadAddress(builder,
+    offset = m_converter.calculateAddress(builder,
       operand.getRelativeAddressingRegisterType(),
-      operand.getRelativeAddressingSwizzle());
-    offset = builder.makeConstant(int32_t(arrayIndex));
-    offset = builder.add(ir::Op::IAdd(ir::ScalarType::eI32, offset, relAddr));
-    offset = builder.add(ir::Op::Cast(ir::ScalarType::eU32, offset));
+      operand.getRelativeAddressingSwizzle(),
+      arrayIndex,
+      ir::ScalarType::eU32);
   }
 
   auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, bestRange->namedBufferDef, builder.makeConstant(0u)));

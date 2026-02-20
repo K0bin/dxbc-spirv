@@ -11,9 +11,7 @@ namespace dxbc_spv::sm3 {
 
 class Converter;
 
-/** I/O variable mapping entry. Note that each I/O variable may have
- *  multiple mappings, e.g. if a built-in output is mirrored to a
- *  regular I/O variable, or if an input is part of an index range. */
+/** I/O variable mapping entry. */
 struct IoVarInfo {
   /* Semantic used to link vertex inputs to the vertex declaration
    * or shader I/O across stages in the original SM1-3 DXBC shader. */
@@ -23,7 +21,7 @@ struct IoVarInfo {
    * Has to be v/o on SM 3. */
   RegisterType registerType = RegisterType::eInput;
 
-  /* v/o Register index
+  /* Register index
    * o Registers are only used on VS 3.
    * v Registers are used on VS 1-3 or PS 3. */
   uint32_t registerIndex = 0u;
@@ -34,11 +32,6 @@ struct IoVarInfo {
    * might assign different indices to the same semantics and expect
    * linking to be done based on the semantic. */
   uint32_t location = 0u;
-
-  /* Whether this variable has been written to.
-   * Used to emit defaults if the shader itself doesn't write
-   * to specific output registers. */
-  bool wasWritten = false;
 
   /* Type of the underlying variable. Will generally match the declared
    * type of the base definition, unless that is a function. */
@@ -55,8 +48,7 @@ struct IoVarInfo {
 /** I/O register map.
  *
  * This helper class resolves the complexities around declaring,
- * mapping and accessing input and output registers with the help
- * of I/O signatures. */
+ * mapping and accessing input and output registers. */
 class IoMap {
   constexpr static uint32_t SM3VSInputArraySize = 16u;
   constexpr static uint32_t SM3VSOutputArraySize = 12u;
@@ -78,16 +70,14 @@ public:
   void finalize(ir::Builder& builder);
 
   /** Handles an input or output declaration of any kind. If possible, this uses
-   *  the signature to determine the correct layout for the declaration. */
+   *  the semantic and register type to determine the correct layout for the declaration. */
   bool handleDclIoVar(ir::Builder& builder, const Instruction& op);
 
   /** Loads an input or output value and returns a scalar or vector containing
    *  one element for each component in the component mask. Applies swizzles,
    *  but does not support modifiers in any capacity.
    *
-   *  Uses the converter's functionality to process relative indices as necessary.
-   *  The register index in particular must be immediate only, unless an index
-   *  range is declared for the register in question.
+   *  Uses the converter's functionality to process relative addressing as necessary.
    *
    *  Returns a \c null def on error. */
   ir::SsaDef emitLoad(
@@ -115,8 +105,7 @@ public:
    *  type is ignored, but the component count must match that of the
    *  operand's write mask exactly.
    *
-   *  Uses the converter's functionality to process relative indices as necessary.
-   *  Indexing rules are identical to those for inputs.
+   *  Uses the converter's functionality to process relative addressing as necessary.
    *
    *  Returns \c false on error. */
   bool emitStore(
@@ -135,6 +124,12 @@ public:
     const Instruction&            op,
           ir::SsaDef              value);
 
+  void setInsertCursor(ir::SsaDef cursor) {
+    m_dclInsertPoint = cursor;
+  }
+
+  void emitIoVarDefaults(ir::Builder& builder);
+
 private:
 
   Converter&      m_converter;
@@ -146,8 +141,14 @@ private:
   ir::SsaDef      m_inputSwitchFunction = { };
   ir::SsaDef      m_outputSwitchFunction = { };
 
+  ir::SsaDef      m_dclInsertPoint;
+
   ir::SsaDef emitDynamicLoadFunction(ir::Builder& builder) const;
   ir::SsaDef emitDynamicStoreFunction(ir::Builder& builder) const;
+
+  void emitIoVarDefault(
+          ir::Builder& builder,
+    const IoVarInfo&   ioVar);
 
   void flushOutputs(ir::Builder& builder);
 
@@ -161,10 +162,10 @@ private:
   std::optional<ir::BuiltIn> determineBuiltinForRegister(RegisterType regType, uint32_t regIndex, Semantic semantic);
 
   void dclIoVar(
-   ir::Builder& builder,
-   RegisterType registerType,
-   uint32_t     registerIndex,
-   Semantic     semantic);
+    ir::Builder& builder,
+    RegisterType registerType,
+    uint32_t     registerIndex,
+    Semantic     semantic);
 
   /** Turns a front face boolean into a float. 1.0 for the front face, -1.0 for the back face. */
   ir::SsaDef emitFrontFaceFloat(ir::Builder& builder, ir::SsaDef isFrontFaceDef) const;
@@ -175,8 +176,8 @@ private:
   /** Converts input to the given scalar type. */
   ir::SsaDef convertScalar(ir::Builder& builder, ir::ScalarType dstType, ir::SsaDef value);
 
-  /** Determines the appropriate semantic for a given register in shader model 1/2 */
-  std::optional<Semantic> determineSemanticForRegister(RegisterType regType, uint32_t regIndex);
+   /** Determines the appropriate semantic for a given register in shader model 1/2 */
+   std::optional<Semantic> determineSemanticForRegister(RegisterType regType, uint32_t regIndex);
 
   void emitDebugName(
     ir::Builder& builder,
