@@ -265,8 +265,6 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
     builder.add(ir::Op::DebugName(m_entryPoint.def, m_options.name));
 
   m_ioMap.setInsertCursor(afterMainFunc);
-  m_specConstants.setInsertCursor(afterMainFunc);
-  m_resources.setInsertCursor(afterMainFunc);
   m_specConstants.initialize(builder);
   m_ioMap.initialize(builder);
   m_regFile.initialize(builder);
@@ -444,7 +442,7 @@ bool Converter::handleDef(ir::Builder& builder, const Instruction& op) {
   auto dst = op.getDst();
   auto imm = op.getImm();
 
-  m_resources.emitDefineConstant(builder, dst.getRegisterType(), dst.getIndex(), imm);
+  m_resources.emitImmediateConstant(builder, dst.getRegisterType(), dst.getIndex(), imm);
 
   return true;
 }

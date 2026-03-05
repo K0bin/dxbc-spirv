@@ -56,18 +56,18 @@ ir::SsaDef SpecializationConstantsMap::get(ir::Builder& builder, SpecConstantId 
     ir::SsaDef& function = m_specConstFunctions[uint32_t(id)];
 
     if (!function) {
-      auto cursor = builder.setCursor(m_functionInsertPoint);
-
       auto bitOffsetParam = builder.add(ir::Op::DclParam(ir::ScalarType::eU32));
       auto bitCountParam = builder.add(ir::Op::DclParam(ir::ScalarType::eU32));
       builder.add(ir::Op::DebugName(bitOffsetParam, "bitOffset"));
       builder.add(ir::Op::DebugName(bitCountParam, "bitCount"));
 
-      function = builder.add(
+      function = builder.addBefore(builder.getCode().first->getDef(),
           ir::Op::Function(ir::ScalarType::eU32)
           .addOperand(bitOffsetParam)
           .addOperand(bitCountParam)
       );
+
+      auto cursor = builder.setCursor(function);
 
       auto bitOffsetArg = builder.add(ir::Op::ParamLoad(ir::ScalarType::eU32, function, bitOffsetParam));
       auto bitCountArg = builder.add(ir::Op::ParamLoad(ir::ScalarType::eU32, function, bitCountParam));
@@ -134,9 +134,7 @@ uint32_t SpecializationConstantsMap::getSamplerSpecConstIndex(ShaderType shaderT
 void SpecializationConstantsMap::initialize(ir::Builder& builder) {
   auto arrayType = ir::Type(ir::ScalarType::eU32).addArrayDimension(m_specConstantIds.size());
   m_bufferDef = builder.add(ir::Op::DclCbv(arrayType, m_converter.getEntryPoint(), 0u, FastSpecConstCbvRegIdx, 1u));
-
-  if (m_converter.getOptions().includeDebugNames)
-    builder.add(ir::Op::DebugName(m_bufferDef, "FastSpecConsts"));
+  builder.add(ir::Op::DebugName(m_bufferDef, "FastSpecConsts"));
 }
 
 

@@ -26,10 +26,6 @@ public:
 
   void initialize(ir::Builder& builder);
 
-  void setInsertCursor(ir::SsaDef cursor) {
-    m_functionInsertPoint = cursor;
-  }
-
 private:
 
   ir::SsaDef getSpecConstDword(ir::Builder& builder, uint32_t idx);
@@ -43,8 +39,6 @@ private:
   std::array<ir::SsaDef, 32u> m_specConstantIds = { };
 
   std::array<ir::SsaDef, uint32_t(SpecConstantId::eSpecDrefScaling) + 1u> m_specConstFunctions = { };
-
-  ir::SsaDef m_functionInsertPoint = { };
 
   ir::SsaDef m_bufferDef = { };
 

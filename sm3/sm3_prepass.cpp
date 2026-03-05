@@ -140,7 +140,7 @@ namespace dxbc_spv::sm3 {
       dxbc_spv_assert(op.hasImm());
       auto imm = op.getImm();
 
-      Vec4<float> value = {
+      std::array<float, 4u> value = {
         imm.getImmediate<float>(0u), imm.getImmediate<float>(1u),
         imm.getImmediate<float>(2u), imm.getImmediate<float>(3u)
       };

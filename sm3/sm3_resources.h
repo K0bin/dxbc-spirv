@@ -10,46 +10,46 @@
 
 namespace dxbc_spv::sm3 {
 
-class Converter;
+  class Converter;
 
-enum class SpecConstTextureType : uint32_t {
-  eTexture2D   = 0u,
-  eTexture3D   = 1u,
-  eTextureCube = 2u,
-};
+  enum class SpecConstTextureType : uint32_t {
+    eTexture2D   = 0u,
+    eTexture3D   = 1u,
+    eTextureCube = 2u,
+  };
 
-enum class SamplingConfigBit : uint8_t {
-  eExplicitLod         = 1u << 0u,
-  eLodBias             = 1u << 1u,
-  eExplicitDerivatives = 1u << 2u,
+  enum class SamplingConfigBit : uint8_t {
+    eExplicitLod         = 1u << 0u,
+    eLodBias             = 1u << 1u,
+    eExplicitDerivatives = 1u << 2u,
 
-  eFlagEnum            = 0u,
-};
+    eFlagEnum            = 0u,
+  };
 
-using SamplingConfig = util::Flags<SamplingConfigBit>;
+  using SamplingConfig = util::Flags<SamplingConfigBit>;
 
-struct SamplerRegister {
-  /** Register index */
-  uint32_t regIndex = 0u;
+  struct SamplerRegister {
+    /** Register index */
+    uint32_t regIndex = 0u;
 
-  /** Declaration of the texture
-   * One for each texture type on SM1 and only one on SM2+ */
-  std::array<ir::SsaDef, 3u> textureDefs = { };
+    /** Declaration of the texture
+     * One for each texture type on SM1 and only one on SM2+ */
+    std::array<ir::SsaDef, 3u> textureDefs = { };
 
-  /** The type of the texture. This is only set on SM2+ as there are no dcl_samplerType instructions
-   * on SM1. This texture type represents the index of the one valid `textureDef` on SM2. */
-  std::optional<SpecConstTextureType> textureType = std::nullopt;
+    /** The type of the texture. This is only set on SM2+ as there are no dcl_samplerType instructions
+     * on SM1. This texture type represents the index of the one valid `textureDef` on SM2. */
+    std::optional<SpecConstTextureType> textureType = std::nullopt;
 
-  /** Declaration of the sampler */
-  ir::SsaDef samplerDef = { };
+    /** Declaration of the sampler */
+    ir::SsaDef samplerDef = { };
 
-  /** Sampling functions. Will be populated lazily.
-   * A SamplingFunctionConfigBit bitmask makes up the index into this array.
-   * Each function takes in an F32 vec4 for the texCoords and some
-   * will take additional arguments for LODs and/or derivatives depending
-   * on the flags. */
-  std::array<ir::SsaDef, 8u> samplingFunctions = { };
-};
+    /** Sampling functions. Will be populated lazily.
+     * A SamplingFunctionConfigBit bitmask makes up the index into this array.
+     * Each function takes in an F32 vec4 for the texCoords and some
+     * will take additional arguments for LODs and/or derivatives depending
+     * on the flags. */
+    std::array<ir::SsaDef, 8u> samplingFunctions = { };
+  };
 
 struct ConstantRange {
   /** Declaration of a buffer that has the debug CTAB name. (Only used for debugging.). */
@@ -62,29 +62,25 @@ struct ConstantRange {
   uint32_t count = 256u;
 };
 
-template<typename T>
-struct Vec4 {
-  T x;
-  T y;
-  T z;
-  T w;
-};
-
 struct ImmediateConstDef {
   uint32_t index;
   ir::SsaDef def;
 };
 
-template<typename T>
 struct Constants {
   /** All constant array ranges for this constant type. This will only contain more than
    * one element if debug names are enabled. */
   util::small_vector<ConstantRange, 8u> constantRanges;
 
+  /** The highest index of any constant of this type that gets read. */
+  uint32_t maxAccessedConstant = 0u;
+
   /** All statically defined constants of this constant type. */
-  util::small_vector<ImmediateConstDef, 2u> definedConstants;
+  util::small_vector<ImmediateConstDef, 2u> immediateConstants;
 
   ir::SsaDef bufferDef = { };
+
+  ConstantType type;
 };
 
 
@@ -131,27 +127,13 @@ public:
           WriteMask               componentMask,
           ir::ScalarType          scalarType);
 
-  void emitDefineConstant(
+  void emitImmediateConstant(
           ir::Builder& builder,
           RegisterType registerType,
           uint32_t index,
     const Operand& imm);
 
-  void setInsertCursor(ir::SsaDef cursor) {
-    m_functionInsertPoint = cursor;
-  }
-
 private:
-
-  Converter& m_converter;
-
-  std::array<SamplerRegister, 32> m_samplers;
-
-  Constants<Vec4<float>> m_floatConstants;
-  Constants<Vec4<int32_t>> m_intConstants;
-  Constants<bool> m_boolConstants;
-
-  ir::SsaDef m_functionInsertPoint = { };
 
   ir::SsaDef dclSampler(ir::Builder& builder, uint32_t samplerIndex);
 
@@ -201,6 +183,12 @@ private:
     ir::SsaDef dy
   );
 
+  Converter& m_converter;
+
+  std::array<SamplerRegister, 32> m_samplers;
+
+  std::array<Constants, uint32_t(ConstantType::eSampler)> m_constants;
+
 };
 
 
@@ -227,7 +215,7 @@ inline SpecConstTextureType specConstTextureTypeFromTextureType(TextureType text
   }
 }
 
-  inline TextureType textureTypeFromSpecConstTextureType(SpecConstTextureType specConstTextureType) {
+inline TextureType textureTypeFromSpecConstTextureType(SpecConstTextureType specConstTextureType) {
   switch (specConstTextureType) {
     case SpecConstTextureType::eTextureCube:
       return TextureType::eTextureCube;

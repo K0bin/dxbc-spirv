@@ -11,7 +11,7 @@ namespace dxbc_spv::sm3 {
 struct ImmediateFloatConstant {
   uint32_t index;
 
-  Vec4<float> value;
+  std::array<float, 4u> value;
 };
 
 using ImmediateFloatConstants = std::vector<ImmediateFloatConstant>;
