@@ -262,21 +262,29 @@ ir::SsaDef ResourceMap::emitConstantLoad(
     }
   }
 
-  ir::ScalarType bufferElementScalarType = constantType == ConstantType::eFloat4
+  ir::ScalarType constantScalarType = constantType == ConstantType::eFloat4
     ? ir::ScalarType::eF32
     : ir::ScalarType::eI32;
+
+  ir::ScalarType bufferElementScalarType = !isSwvp
+    ? ir::ScalarType::eUnknown
+    : constantScalarType;
 
   auto readMask = operand.getSwizzle(info).getReadMask(componentMask);
 
   std::array<ir::SsaDef, 4u> components = { };
 
   if (readMask == ComponentBit::eAll) {
-    /* Read entire vector in one go, no need to addres into scalars */
+    /* Read entire vector in one go, no need to address into scalars */
     auto result = builder.add(ir::Op::BufferLoad(
       ir::BasicType(bufferElementScalarType, 4u), descriptor, offset, 16u));
 
-    for (uint32_t i = 0u; i < components.size(); i++)
+    for (uint32_t i = 0u; i < components.size(); i++) {
       components[i] = extractFromVector(builder, result, i);
+      if (bufferElementScalarType != scalarType) {
+        components[i] = builder.add(ir::Op::ConsumeAs(scalarType, components[i]));
+      }
+    }
   } else {
     /* Absolute component alignment, in dwords */
     constexpr uint32_t ComponentAlignments = 0x1214;
@@ -298,8 +306,12 @@ ir::SsaDef ResourceMap::emitConstantLoad(
       /* Emit actual buffer load for the block and write back scalars */
       auto result = builder.add(ir::Op::BufferLoad(blockType, descriptor, address, blockAlignment));
 
-      for (uint32_t i = 0u; i < blockType.getVectorSize(); i++)
+      for (uint32_t i = 0u; i < blockType.getVectorSize(); i++) {
         components[componentIndex + i] = extractFromVector(builder, result, i);
+        if (bufferElementScalarType != scalarType) {
+          components[i] = builder.add(ir::Op::ConsumeAs(scalarType, components[i]));
+        }
+      }
 
       readMask -= block;
     }
@@ -307,7 +319,7 @@ ir::SsaDef ResourceMap::emitConstantLoad(
 
   /* Convert scalars to the requested type */
   for (auto& scalar : components) {
-    if (scalar && scalarType != bufferElementScalarType)
+    if (scalar && scalarType != constantScalarType)
       scalar = builder.add(ir::Op::ConsumeAs(scalarType, scalar));
 
     // PS 1.x clamps float constants
