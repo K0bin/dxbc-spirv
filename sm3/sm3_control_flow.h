@@ -2,6 +2,7 @@
 
 #include "../ir/ir.h"
 #include "../ir/ir_builder.h"
+#include "../ir/ir_utils.h"
 
 #include "../util/util_small_vector.h"
 
@@ -58,6 +59,30 @@ public:
   void pop() {
     dxbc_spv_assert(!m_constructs.empty());
     m_constructs.pop_back();
+  }
+
+  ir::SsaDef emitLoopCounterLoad(
+    ir::Builder& builder,
+    WriteMask componentMask,
+    ir::ScalarType type) const {
+    auto construct = find(builder, [] (const ir::Builder& b, ir::SsaDef def) {
+      return b.getOp(def).getOpCode() == ir::OpCode::eScopedLoop;
+    });
+
+    if (construct == nullptr) {
+      dxbc_spv_unreachable();
+      return ir::SsaDef();
+    }
+
+    auto counterType = builder.getOp(construct->loopCounter).getType().getBaseType(0u).getBaseType();
+    auto counter = builder.add(ir::Op::TmpLoad(counterType, construct->loopCounter));
+    if (counterType != type)
+      counter = builder.add(ir::Op::Cast(type, counter));
+
+    std::array<ir::SsaDef, 4u> components = { counter, counter, counter, counter };
+
+    auto returnType = ir::makeVectorType(type, componentMask);
+    return composite(builder, returnType, components.data(), Swizzle::identity(), componentMask);
   }
 
 private:

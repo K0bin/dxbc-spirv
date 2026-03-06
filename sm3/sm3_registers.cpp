@@ -26,13 +26,6 @@ void RegisterFile::initialize(ir::Builder& builder) {
     }
   }
 
-  m_aLReg = builder.add(ir::Op::DclTmp(ir::ScalarType::eI32, m_converter.getEntryPoint()));
-
-  if (m_converter.getOptions().includeDebugNames) {
-    std::string name = m_converter.makeRegisterDebugName(RegisterType::eLoop, 0u, ComponentBit::eAll);
-    builder.add(ir::Op::DebugName(m_aLReg, name.c_str()));
-  }
-
   for (uint32_t i = 0u; i < 4u; i++) {
     m_pReg[i] = builder.add(ir::Op::DclTmp(ir::ScalarType::eBool, m_converter.getEntryPoint()));
 
@@ -66,8 +59,7 @@ ir::SsaDef RegisterFile::emitTempLoad(
   uint32_t regIndex,
   Swizzle swizzle,
   WriteMask componentMask,
-  ir::ScalarType type
-) {
+  ir::ScalarType type) {
   auto returnType = makeVectorType(type, componentMask);
 
   std::array<ir::SsaDef, 4u> components = { };
@@ -118,10 +110,6 @@ ir::SsaDef RegisterFile::emitAddressLoad(
     dxbc_spv_assert(m_a0Reg[uint8_t(component)]);
 
     return builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, m_a0Reg[uint8_t(component)]));
-  } else if (registerType == RegisterType::eLoop) {
-    dxbc_spv_assert(component == Component::eX);
-
-    return builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, m_aLReg));
   } else {
     ShaderInfo info = m_converter.getShaderInfo();
 
@@ -208,26 +196,6 @@ bool RegisterFile::emitStore(
 
   return true;
 }
-
-
-ir::SsaDef RegisterFile::emitLoopCounterLoad(
-            ir::Builder&            builder) {
-  return builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, m_aLReg));
-}
-
-
-void RegisterFile::emitLoopCounterStore(
-            ir::Builder&            builder,
-            ir::SsaDef              value) {
-  auto op = builder.getOp(value);
-  auto type = op.getType();
-
-  if (type != ir::ScalarType::eI32)
-    value = builder.add(ir::Op::ConsumeAs(ir::ScalarType::eI32, value));
-
-  builder.add(ir::Op::TmpStore(m_aLReg, value));
-}
-
 
 
 void RegisterFile::emitBufferedStores(ir::Builder& builder) {

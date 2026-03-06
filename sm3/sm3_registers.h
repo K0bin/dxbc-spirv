@@ -79,9 +79,6 @@ private:
   /** Address register */
   std::array<ir::SsaDef, 4u> m_a0Reg = { };
 
-  /** Loop counter register */
-  ir::SsaDef m_aLReg = { };
-
   /** Predicate register */
   std::array<ir::SsaDef, 4u> m_pReg = { };
 

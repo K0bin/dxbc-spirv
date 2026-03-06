@@ -1199,8 +1199,11 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
         loadDef = m_ioMap.emitLoad(builder, op, operand, mask, swizzle, type); /* RegisterType::eTexture */
       break;
 
-    case RegisterType::eTemp:
     case RegisterType::eLoop:
+      loadDef = m_controlFlow.emitLoopCounterLoad(builder, mask, type);
+      break;
+
+    case RegisterType::eTemp:
       loadDef = m_regFile.emitTempLoad(builder,
         operand.getIndex(),
         swizzle,
@@ -1706,8 +1709,6 @@ bool Converter::handleLoop(ir::Builder& builder, const Instruction& op) {
   auto loopCounter =  builder.add(ir::Op::DclTmp(ir::ScalarType::eI32, m_entryPoint.def));
   builder.add(ir::Op::TmpStore(loopCounter, initialValue));
 
-  auto loopCounterBackup = m_regFile.emitLoopCounterLoad(builder);
-
   auto loopDef = builder.add(ir::Op::ScopedLoop(ir::SsaDef()));
   auto& loop = m_controlFlow.push(loopDef);
 
@@ -1717,11 +1718,8 @@ bool Converter::handleLoop(ir::Builder& builder, const Instruction& op) {
   auto breakCondition = builder.add(ir::Op::IEq(ir::ScalarType::eBool, loopCounterVal, finalCounterValue));
   auto breakIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), breakCondition));
   builder.add(ir::Op::ScopedLoopBreak(loopDef));
-  m_regFile.emitLoopCounterStore(builder, loopCounterBackup);
   auto breakEndIf = builder.add(ir::Op::ScopedEndIf(breakIf));
   builder.rewriteOp(breakIf, ir::Op(builder.getOp(breakIf)).setOperand(0u, breakEndIf));
-
-  m_regFile.emitLoopCounterStore(builder, loopCounterVal);
 
   loop.loopStep = stepSize;
   loop.loopCounter = loopCounter;
@@ -1772,8 +1770,6 @@ bool Converter::handleRep(ir::Builder& builder, const Instruction& op) {
   builder.add(ir::Op::ScopedLoopBreak(loopDef));
   auto breakEndIf = builder.add(ir::Op::ScopedEndIf(breakIf));
   builder.rewriteOp(breakIf, ir::Op(builder.getOp(breakIf)).setOperand(0u, breakEndIf));
-
-  m_regFile.emitLoopCounterStore(builder, loopCounterVal);
 
   loop.loopStep = ir::SsaDef();
   loop.loopCounter = loopCounter;
@@ -2023,7 +2019,12 @@ ir::SsaDef Converter::calculateAddress(
             Swizzle                 swizzle,
             uint32_t                baseAddress,
             ir::ScalarType          type) {
-  auto relativeOffset = m_regFile.emitAddressLoad(builder, registerType, swizzle);
+  ir::SsaDef relativeOffset;
+
+  if (registerType == RegisterType::eLoop)
+    relativeOffset = m_controlFlow.emitLoopCounterLoad(builder, WriteMask(ComponentBit::eX), ir::ScalarType::eI32);
+  else
+    relativeOffset = m_regFile.emitAddressLoad(builder, registerType, swizzle);
 
   ir::SsaDef baseAddressDef = builder.makeConstant(int32_t(baseAddress));
   ir::SsaDef address = builder.add(ir::Op::IAdd(ir::ScalarType::eI32, baseAddressDef, relativeOffset));
