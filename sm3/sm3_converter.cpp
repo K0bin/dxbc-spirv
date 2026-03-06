@@ -2054,7 +2054,18 @@ std::string Converter::makeRegisterDebugName(RegisterType type, uint32_t index, 
   std::stringstream name;
   name << UnambiguousRegisterType { type, shaderInfo.getType(), shaderInfo.getVersion().first };
 
-  const ConstantInfo* constantInfo = m_ctab.findConstantInfo(type, index);
+  const ConstantInfo* constantInfo = nullptr;
+  if (type == RegisterType::eConst
+    || type == RegisterType::eConst2
+    || type == RegisterType::eConst3
+    || type == RegisterType::eConst4
+    || type == RegisterType::eConstInt
+    || type == RegisterType::eConstBool
+    || type == RegisterType::eSampler
+    || (type == RegisterType::eTexture
+      && shaderInfo.getVersion().first == 1u
+      && shaderInfo.getVersion().second < 4u))
+    constantInfo = m_ctab.findConstantInfo(type, index);
 
   if (constantInfo != nullptr && m_options.includeDebugNames) {
     name << "_" << constantInfo->name;

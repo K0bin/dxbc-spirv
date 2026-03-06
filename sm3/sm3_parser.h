@@ -165,6 +165,7 @@ inline ConstantType constantTypeFromRegisterType(RegisterType registerType) {
     case RegisterType::eConstBool:
       return ConstantType::eBool;
 
+    case RegisterType::eTexture:
     case RegisterType::eSampler:
       return ConstantType::eSampler;
 

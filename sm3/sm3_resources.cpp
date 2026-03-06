@@ -87,6 +87,10 @@ void ResourceMap::emitNamedConstantRanges(ir::Builder& builder, const ConstantTa
   /* If debug names are enabled, generate one buffer per named constant. They will all have the same regIdx. */
 
   for (const auto& entry : ctab.entries()) {
+    if (entry.registerSet == ConstantType::eSampler)
+      continue;
+
+
     auto& range = m_constants[uint32_t(entry.registerSet)].constantRanges.emplace_back();
     range.startIndex = entry.index;
     range.count = entry.count;
