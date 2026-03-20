@@ -281,13 +281,13 @@ ir::SsaDef ResourceMap::emitConstantLoad(
       result, builder.makeConstant(i)));
 
     /* Convert scalars to the requested type */
-    if (scalarType != constantScalarType)
+    if (scalarType != bufferElementScalarType)
       scalar = builder.add(ir::Op::ConsumeAs(scalarType, scalar));
 
     // PS 1.x clamps float constants
     if (m_converter.getShaderInfo().getType() == ShaderType::ePixel
       && m_converter.getShaderInfo().getVersion().first == 1u
-      && scalarType == ir::ScalarType::eF32)
+      && constantType == ConstantType::eFloat4)
       scalar = builder.add(ir::Op::FClamp(scalarType, scalar,
         builder.makeConstant(-1.0f), builder.makeConstant(1.0f)));
 
