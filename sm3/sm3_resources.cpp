@@ -270,56 +270,18 @@ ir::SsaDef ResourceMap::emitConstantLoad(
     ? ir::ScalarType::eUnknown
     : constantScalarType;
 
-  auto readMask = operand.getSwizzle(info).getReadMask(componentMask);
+  /* Read entire vector in one go, no need to address into scalars */
+  auto result = builder.add(ir::Op::BufferLoad(
+    ir::BasicType(bufferElementScalarType, 4u), descriptor, offset, 16u));
 
   std::array<ir::SsaDef, 4u> components = { };
 
-  if (readMask == ComponentBit::eAll) {
-    /* Read entire vector in one go, no need to address into scalars */
-    auto result = builder.add(ir::Op::BufferLoad(
-      ir::BasicType(bufferElementScalarType, 4u), descriptor, offset, 16u));
+  for (uint32_t i = 0u; i < components.size(); i++) {
+    auto scalar = builder.add(ir::Op::CompositeExtract(bufferElementScalarType,
+      result, builder.makeConstant(i)));
 
-    for (uint32_t i = 0u; i < components.size(); i++) {
-      components[i] = extractFromVector(builder, result, i);
-      if (bufferElementScalarType != scalarType) {
-        components[i] = builder.add(ir::Op::ConsumeAs(scalarType, components[i]));
-      }
-    }
-  } else {
-    /* Absolute component alignment, in dwords */
-    constexpr uint32_t ComponentAlignments = 0x1214;
-
-    while (readMask) {
-      /* Consecutive blocks of components to read */
-      auto block = util::extractConsecutiveComponents(readMask);
-      auto blockType = ir::BasicType(bufferElementScalarType, util::popcnt(uint8_t(block)));
-
-      /* First component in the block */
-      auto componentIndex = uint8_t(componentFromBit(block.first()));
-      auto blockAlignment = 4u * util::bextract(ComponentAlignments, 4u * componentIndex, 4u);
-
-      /* Build address vector with the component index */
-      auto address = builder.add(ir::Op::CompositeConstruct(
-        ir::BasicType(ir::ScalarType::eU32, 2u), offset,
-        builder.makeConstant(uint32_t(componentIndex))));
-
-      /* Emit actual buffer load for the block and write back scalars */
-      auto result = builder.add(ir::Op::BufferLoad(blockType, descriptor, address, blockAlignment));
-
-      for (uint32_t i = 0u; i < blockType.getVectorSize(); i++) {
-        components[componentIndex + i] = extractFromVector(builder, result, i);
-        if (bufferElementScalarType != scalarType) {
-          components[i] = builder.add(ir::Op::ConsumeAs(scalarType, components[i]));
-        }
-      }
-
-      readMask -= block;
-    }
-  }
-
-  /* Convert scalars to the requested type */
-  for (auto& scalar : components) {
-    if (scalar && scalarType != constantScalarType)
+    /* Convert scalars to the requested type */
+    if (scalarType != constantScalarType)
       scalar = builder.add(ir::Op::ConsumeAs(scalarType, scalar));
 
     // PS 1.x clamps float constants
@@ -328,6 +290,8 @@ ir::SsaDef ResourceMap::emitConstantLoad(
       && scalarType == ir::ScalarType::eF32)
       scalar = builder.add(ir::Op::FClamp(scalarType, scalar,
         builder.makeConstant(-1.0f), builder.makeConstant(1.0f)));
+
+    components[i] = scalar;
   }
 
   /* Build result vector */
