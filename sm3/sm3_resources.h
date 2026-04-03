@@ -135,6 +135,12 @@ public:
 
 private:
 
+  Converter& m_converter;
+
+  std::array<SamplerRegister, 32> m_samplers;
+
+  std::array<Constants, uint32_t(ConstantType::eSampler)> m_constants;
+
   ir::SsaDef dclSampler(ir::Builder& builder, uint32_t samplerIndex);
 
   ir::SsaDef dclTexture(ir::Builder& builder, SpecConstTextureType textureType, uint32_t samplerIndex);
@@ -182,12 +188,6 @@ private:
     ir::SsaDef dx,
     ir::SsaDef dy
   );
-
-  Converter& m_converter;
-
-  std::array<SamplerRegister, 32> m_samplers;
-
-  std::array<Constants, uint32_t(ConstantType::eSampler)> m_constants;
 
 };
 
