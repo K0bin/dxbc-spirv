@@ -372,7 +372,7 @@ ir::SsaDef Converter::applyBumpMapping(ir::Builder& builder, uint32_t stageIdx, 
   auto scalarType = type.getBaseType();
   dxbc_spv_assert(scalarType == builder.getOp(src1).getType().getBaseType(0u).getBaseType());
 
-  auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
+  auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, builder.makeConstant(0u)));
 
   /* Load bump matrix */
   auto bumpEnvMat0 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 1u), 16u));
