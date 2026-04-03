@@ -652,7 +652,7 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
 
   const auto& samplerInfo = m_samplers.at(samplerIndex);
   dxbc_spv_assert(samplerInfo.regIndex == samplerIndex);
-  auto sampler = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eSampler, samplerInfo.samplerDef, ir::SsaDef()));
+  auto sampler = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eSampler, samplerInfo.samplerDef, builder.makeConstant(0u)));
 
   if (m_converter.getShaderInfo().getVersion().first >= 2) {
     /* Shader model 2+ requires declaring samplers/textures with a DCL instruction first. */
@@ -662,7 +662,7 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
 
     auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eSrv,
       samplerInfo.textureDefs[uint32_t(specConstTextureType)],
-      ir::SsaDef()));
+      builder.makeConstant(0u)));
 
     builder.add(ir::Op::Return(ir::BasicType(ir::ScalarType::eF32, 4u), emitSampleColorOrDref(builder, texCoord, specConstTextureType, samplerIndex, descriptor, sampler, lod, lodBias, dx, dy)));
   } else {
@@ -687,7 +687,7 @@ ir::SsaDef ResourceMap::emitSampleImageFunction(
 
       auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eSrv,
         samplerInfo.textureDefs[i],
-        ir::SsaDef()));
+        builder.makeConstant(0u)));
 
       auto typeResult = emitSampleColorOrDref(builder, texCoord, SpecConstTextureType(i), samplerIndex, descriptor, sampler, lod, lodBias, dx, dy);
 
