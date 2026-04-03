@@ -26,6 +26,13 @@ void RegisterFile::initialize(ir::Builder& builder) {
     }
   }
 
+  m_aLReg = builder.add(ir::Op::DclTmp(ir::ScalarType::eI32, m_converter.getEntryPoint()));
+
+  if (m_converter.getOptions().includeDebugNames) {
+    std::string name = m_converter.makeRegisterDebugName(RegisterType::eLoop, 0u, ComponentBit::eAll);
+    builder.add(ir::Op::DebugName(m_aLReg, name.c_str()));
+  }
+
   for (uint32_t i = 0u; i < 4u; i++) {
     m_pReg[i] = builder.add(ir::Op::DclTmp(ir::ScalarType::eBool, m_converter.getEntryPoint()));
 
@@ -59,7 +66,8 @@ ir::SsaDef RegisterFile::emitTempLoad(
   uint32_t regIndex,
   Swizzle swizzle,
   WriteMask componentMask,
-  ir::ScalarType type) {
+  ir::ScalarType type
+) {
   auto returnType = makeVectorType(type, componentMask);
 
   std::array<ir::SsaDef, 4u> components = { };
@@ -110,6 +118,10 @@ ir::SsaDef RegisterFile::emitAddressLoad(
     dxbc_spv_assert(m_a0Reg[uint8_t(component)]);
 
     return builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, m_a0Reg[uint8_t(component)]));
+  } else if (registerType == RegisterType::eLoop) {
+    dxbc_spv_assert(component == Component::eX);
+
+    return builder.add(ir::Op::TmpLoad(ir::ScalarType::eI32, m_aLReg));
   } else {
     ShaderInfo info = m_converter.getShaderInfo();
 
@@ -160,9 +172,7 @@ bool RegisterFile::emitStore(
           /* a0 can be written to using the mova instruction on SM2+
            * or the mov instruction on SM1.1. */
 
-          if (valueType.isUnknownType())
-            scalar = builder.add(ir::Op::ConsumeAs(ir::ScalarType::eF32, scalar));
-
+          scalar = builder.add(ir::Op::ConsumeAs(ir::ScalarType::eF32, scalar));
           scalar = builder.add(ir::Op::FRound(ir::ScalarType::eF32, scalar, ir::RoundMode::eNearestEven));
           scalar = builder.add(ir::Op::ConvertFtoI(ir::ScalarType::eI32, scalar));
         }
@@ -175,7 +185,9 @@ bool RegisterFile::emitStore(
         reg = m_pReg[uint8_t(component)];
       } break;
 
-      default: dxbc_spv_assert(false); return false;
+      default:
+        dxbc_spv_unreachable();
+        return false;
     }
 
     if (predicateVec) {

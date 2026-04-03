@@ -182,7 +182,7 @@ void DerivativePass::relocateInstructions() {
     for (uint32_t j = 0u; j < op.getFirstLiteralOperandIndex(); j++) {
       const auto& arg = m_builder.getOpForOperand(op, j);
 
-      if (!arg || arg.isDeclarative())
+      if (!arg || arg.isDeclarative() || arg.getOpCode() == OpCode::eFunction)
         continue;
 
       /* May be null for newly inserted instructions */
@@ -375,7 +375,7 @@ bool DerivativePass::canHoistDerivativeOp(const Op& derivOp, SsaDef dstBlock) co
       case OpCode::eInterpolateAtCentroid:
       case OpCode::eInterpolateAtSample:
       case OpCode::eInterpolateAtOffset: {
-        if (!!allowComplexInput)
+        if (!allowComplexInput)
           return false;
       } [[fallthrough]];
 

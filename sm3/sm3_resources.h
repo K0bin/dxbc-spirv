@@ -10,46 +10,46 @@
 
 namespace dxbc_spv::sm3 {
 
-  class Converter;
+class Converter;
 
-  enum class SpecConstTextureType : uint32_t {
-    eTexture2D   = 0u,
-    eTexture3D   = 1u,
-    eTextureCube = 2u,
-  };
+enum class SpecConstTextureType : uint32_t {
+  eTexture2D   = 0u,
+  eTextureCube = 1u,
+  eTexture3D   = 2u,
+};
 
-  enum class SamplingConfigBit : uint8_t {
-    eExplicitLod         = 1u << 0u,
-    eLodBias             = 1u << 1u,
-    eExplicitDerivatives = 1u << 2u,
+enum class SamplingConfigBit : uint8_t {
+  eExplicitLod         = 1u << 0u,
+  eLodBias             = 1u << 1u,
+  eExplicitDerivatives = 1u << 2u,
 
-    eFlagEnum            = 0u,
-  };
+  eFlagEnum            = 0u,
+};
 
-  using SamplingConfig = util::Flags<SamplingConfigBit>;
+using SamplingConfig = util::Flags<SamplingConfigBit>;
 
-  struct SamplerRegister {
-    /** Register index */
-    uint32_t regIndex = 0u;
+struct SamplerRegister {
+  /** Register index */
+  uint32_t regIndex = 0u;
 
-    /** Declaration of the texture
-     * One for each texture type on SM1 and only one on SM2+ */
-    std::array<ir::SsaDef, 3u> textureDefs = { };
+  /** Declaration of the texture
+   * One for each texture type on SM1 and only one on SM2+ */
+  std::array<ir::SsaDef, 3u> textureDefs = { };
 
-    /** The type of the texture. This is only set on SM2+ as there are no dcl_samplerType instructions
-     * on SM1. This texture type represents the index of the one valid `textureDef` on SM2. */
-    std::optional<SpecConstTextureType> textureType = std::nullopt;
+  /** The type of the texture. This is only set on SM2+ as there are no dcl_samplerType instructions
+   * on SM1. This texture type represents the index of the one valid `textureDef` on SM2. */
+  std::optional<SpecConstTextureType> textureType = std::nullopt;
 
-    /** Declaration of the sampler */
-    ir::SsaDef samplerDef = { };
+  /** Declaration of the sampler */
+  ir::SsaDef samplerDef = { };
 
-    /** Sampling functions. Will be populated lazily.
-     * A SamplingFunctionConfigBit bitmask makes up the index into this array.
-     * Each function takes in an F32 vec4 for the texCoords and some
-     * will take additional arguments for LODs and/or derivatives depending
-     * on the flags. */
-    std::array<ir::SsaDef, 8u> samplingFunctions = { };
-  };
+  /** Sampling functions. Will be populated lazily.
+   * A SamplingFunctionConfigBit bitmask makes up the index into this array.
+   * Each function takes in an F32 vec4 for the texCoords and some
+   * will take additional arguments for LODs and/or derivatives depending
+   * on the flags. */
+  std::array<ir::SsaDef, 8u> samplingFunctions = { };
+};
 
 struct ConstantRange {
   /** Declaration of a buffer that has the debug CTAB name. (Only used for debugging.). */
@@ -205,25 +205,11 @@ inline ir::ResourceKind resourceKindFromTextureType(TextureType textureType) {
 }
 
 inline SpecConstTextureType specConstTextureTypeFromTextureType(TextureType textureType) {
-  switch (textureType) {
-    case TextureType::eTextureCube:
-      return SpecConstTextureType::eTextureCube;
-    case TextureType::eTexture3D:
-      return SpecConstTextureType::eTexture3D;
-    default:
-      return SpecConstTextureType::eTexture2D;
-  }
+  return SpecConstTextureType(uint32_t(textureType) - uint32_t(TextureType::eTexture2D));
 }
 
 inline TextureType textureTypeFromSpecConstTextureType(SpecConstTextureType specConstTextureType) {
-  switch (specConstTextureType) {
-    case SpecConstTextureType::eTextureCube:
-      return TextureType::eTextureCube;
-    case SpecConstTextureType::eTexture3D:
-      return TextureType::eTexture3D;
-    default:
-      return TextureType::eTexture2D;
-  }
+  return TextureType(uint32_t(specConstTextureType) + uint32_t(TextureType::eTexture2D));
 }
 
 inline SpecConstTextureType specConstTextureTypeFromResourceKind(ir::ResourceKind resourceKind) {

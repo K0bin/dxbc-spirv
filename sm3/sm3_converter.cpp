@@ -42,8 +42,7 @@ Converter::Converter(util::ByteReader code,
 , m_ioMap(*this)
 , m_regFile(*this)
 , m_resources(*this)
-, m_specConstants(*this, specConstantsLayout){
-
+, m_specConstants(*this, specConstantsLayout) {
 }
 
 Converter::~Converter() {
@@ -55,6 +54,9 @@ bool Converter::convertShader(ir::Builder& builder) {
     return false;
 
   auto shaderType = getShaderInfo().getType();
+
+  /* The SWVP option is only for vertex shaders. */
+  dxbc_spv_assert(shaderType == ShaderType::eVertex || !m_options.isSWVP);
 
   initialize(builder, shaderType);
 
@@ -108,6 +110,10 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eMova:
       return handleMov(builder, op);
 
+    case OpCode::eSlt:
+    case OpCode::eSge:
+      return handleCompare(builder, op);
+
     case OpCode::eAdd:
     case OpCode::eSub:
     case OpCode::eExp:
@@ -129,12 +135,11 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
     case OpCode::eDp4:
       return handleDot(builder, op);
 
-    case OpCode::eSlt:
-    case OpCode::eSge:
-      return handleCompare(builder, op);
-
     case OpCode::eLit:
       return handleLit(builder, op);
+
+    case OpCode::eExpP:
+      return handleExpP(builder, op);
 
     case OpCode::eM4x4:
     case OpCode::eM4x3:
@@ -203,9 +208,6 @@ bool Converter::convertInstruction(ir::Builder& builder, const Instruction& op) 
 
     case OpCode::eSetP:
       return handleSetP(builder, op);
-
-    case OpCode::eExpP:
-      return handleExpP(builder, op);
 
     case OpCode::eIf:
     case OpCode::eIfC:
@@ -304,6 +306,16 @@ bool Converter::initParser(Parser& parser, util::ByteReader reader) {
 
 
 ir::SsaDef Converter::emitSharedConstants(ir::Builder& builder) {
+  /*
+   * struct PSSharedData {
+   *    vec4 Constant0;
+   *    vec2 BumpEnvMat0_0;
+   *    vec2 BumpEnvMat1_0;
+   *    float BumpEnvLScale0;
+   *    float BumpEnvLScale1;
+   *    // ... repeat for 1 - 7
+   * }
+   */
   ir::Type bufferStruct = ir::Type();
 
   for (uint32_t i = 0u; i  < TextureStageCount; i++) {
@@ -318,20 +330,25 @@ ir::SsaDef Converter::emitSharedConstants(ir::Builder& builder) {
 
   if (getOptions().includeDebugNames) {
     builder.add(ir::Op::DebugName(buffer, "PSSharedData"));
+
     for (uint32_t i = 0u; i < TextureStageCount; i++) {
       std::stringstream namestream;
       namestream << "Constant" << i;
       builder.add(ir::Op::DebugMemberName(buffer, i, namestream.str().c_str()));
       namestream.clear();
+
       namestream << "BumpEnvMat0_" << i;
       builder.add(ir::Op::DebugMemberName(buffer, i + 1u, namestream.str().c_str()));
       namestream.clear();
+
       namestream << "BumpEnvMat1_" << i;
       builder.add(ir::Op::DebugMemberName(buffer, i + 2u, namestream.str().c_str()));
       namestream.clear();
+
       namestream << "BumpEnvLScale" << i;
       builder.add(ir::Op::DebugMemberName(buffer, i + 3u, namestream.str().c_str()));
       namestream.clear();
+
       namestream << "BumpEnvLOffset" << i;
       builder.add(ir::Op::DebugMemberName(buffer, i + 4u, namestream.str().c_str()));
       namestream.clear();
@@ -345,8 +362,8 @@ ir::SsaDef Converter::emitSharedConstants(ir::Builder& builder) {
 ir::SsaDef Converter::applyBumpMapping(ir::Builder& builder, uint32_t stageIdx, ir::SsaDef src0, ir::SsaDef src1) {
   /*
    * dst.x = src0.x + D3DTSS_BUMPENVMAT00(stage n) * src1.x
-  *                 + D3DTSS_BUMPENVMAT10(stage n) * src1.y
-  *
+   *                + D3DTSS_BUMPENVMAT10(stage n) * src1.y
+   *
    * dst.y = src0.y + D3DTSS_BUMPENVMAT01(stage n) * src1.x
    *                + D3DTSS_BUMPENVMAT11(stage n) * src1.y
    */
@@ -355,24 +372,32 @@ ir::SsaDef Converter::applyBumpMapping(ir::Builder& builder, uint32_t stageIdx, 
   auto scalarType = type.getBaseType();
   dxbc_spv_assert(scalarType == builder.getOp(src1).getType().getBaseType(0u).getBaseType());
 
-  auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, builder.makeConstant(0u)));
+  auto descriptor = builder.add(ir::Op::DescriptorLoad(ir::ScalarType::eCbv, m_psSharedData, ir::SsaDef()));
+
+  /* Load bump matrix */
+  auto bumpEnvMat0 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 1u), 16u));
+  auto bumpEnvMat1 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 2u), 8u));
+
+  if (scalarType != ir::ScalarType::eF32) {
+    bumpEnvMat0 = builder.add(ir::Op::ConsumeAs(ir::BasicType(scalarType, 2u), bumpEnvMat0));
+    bumpEnvMat1 = builder.add(ir::Op::ConsumeAs(ir::BasicType(scalarType, 2u), bumpEnvMat1));
+  }
+
   std::array<ir::SsaDef, 2> components = {};
+
   for (uint32_t i = 0u; i < components.size(); i++) {
-    /* Load bump matrix */
-    auto bumpEnvMat0 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 1u), 16u));
-    auto bumpEnvMat1 = builder.add(ir::Op::BufferLoad(ir::BasicType(ir::ScalarType::eF32, 2u), descriptor, builder.makeConstant(stageIdx * 5u + 2u), 8u));
-    if (scalarType != ir::ScalarType::eF32) {
-      bumpEnvMat0 = builder.add(ir::Op::ConsumeAs(ir::BasicType(scalarType, 2u), bumpEnvMat0));
-      bumpEnvMat1 = builder.add(ir::Op::ConsumeAs(ir::BasicType(scalarType, 2u), bumpEnvMat1));
-    }
     auto src1r = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(0u)));
-    auto bumped0 = builder.add(OpFMul(scalarType, bumpEnvMat0, src1r));
+    auto bumped0 = builder.add(emitFMul(scalarType, bumpEnvMat0, src1r));
+
     auto src1g = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(1u)));
-    auto bumped1 = builder.add(OpFMul(scalarType, bumpEnvMat1, src1g));
+    auto bumped1 = builder.add(emitFMul(scalarType, bumpEnvMat1, src1g));
+
     auto bumpedSum = builder.add(ir::Op::FAdd(scalarType, bumped0, bumped1));
     auto src0Component = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(i)));
+
     components[i] = builder.add(ir::Op::FAdd(scalarType, src0Component, bumpedSum));
   }
+
   return buildVector(builder, scalarType, components.size(), components.data());
 }
 
@@ -381,9 +406,9 @@ ir::SsaDef Converter::normalizeVector(ir::Builder& builder, ir::SsaDef def) {
   auto type = builder.getOp(def).getType().getBaseType(0u);
   auto scalarType = type.getBaseType();
   uint32_t vecSize = type.getVectorSize();
-  auto lengthSquared = builder.add(OpFDot(scalarType, def, def));
+  auto lengthSquared = builder.add(emitFDot(scalarType, def, def));
   auto lengthInv = builder.add(ir::Op::FRsq(scalarType, lengthSquared));
-  return builder.add(ir::Op::FMul(type, def, broadcastScalar(builder, lengthInv, WriteMask((1u << vecSize) - 1u))));
+  return builder.add(emitFMul(type, def, broadcastScalar(builder, lengthInv, WriteMask((1u << vecSize) - 1u))));
 }
 
 
@@ -515,11 +540,55 @@ bool Converter::handleMov(ir::Builder& builder, const Instruction& op) {
 }
 
 
+bool Converter::handleCompare(ir::Builder& builder, const Instruction& op) {
+  /* All instructions handled here will operate on float vectors of any kind. */
+  auto opCode = op.getOpCode();
+
+  dxbc_spv_assert(op.getSrcCount() == 2u);
+  dxbc_spv_assert(op.hasDst());
+
+  /* Instruction type */
+  const auto& dst = op.getDst();
+
+  WriteMask writeMask = dst.getWriteMask(getShaderInfo());
+
+  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+
+  /* Load source operands */
+  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
+  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
+  if (!src0 || !src1)
+    return false;
+
+  util::small_vector<ir::SsaDef, 4u> components;
+  for (auto _ : writeMask) {
+    /* It is done per-component. */
+    auto index = components.size();
+    auto src0c = ir::extractFromVector(builder, src0, index);
+    auto src1c = ir::extractFromVector(builder, src1, index);
+
+    ir::SsaDef cond;
+    if (opCode == OpCode::eSlt)
+      cond = builder.add(ir::Op::FLt(ir::ScalarType::eBool, src0c, src1c));
+    else
+      cond = builder.add(ir::Op::FGe(ir::ScalarType::eBool, src0c, src1c));
+
+    components.push_back(builder.add(ir::Op::Select(scalarType, cond,
+      makeTypedConstant(builder, scalarType, 1.0f),
+      makeTypedConstant(builder, scalarType, 0.0f))));
+  }
+  auto result = buildVector(builder, scalarType, components.size(), components.data());
+
+  return storeDstModifiedPredicated(builder, op, dst, result);
+}
+
+
 bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
   /* All instructions handled here will operate on float vectors of any kind. */
   auto opCode = op.getOpCode();
 
   dxbc_spv_assert(op.getSrcCount());
+
   dxbc_spv_assert(op.hasDst());
 
   /* Instruction type */
@@ -562,12 +631,12 @@ bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
       case OpCode::eLogP:       return ir::Op::FLog2(vectorType, src.at(0u));
       case OpCode::eMax:        return ir::Op::FMax(vectorType, src.at(0u), src.at(1u));
       case OpCode::eMin:        return ir::Op::FMin(vectorType, src.at(0u), src.at(1u));
-      case OpCode::eMul:        return OpFMul(vectorType, src.at(0u), src.at(1u));
+      case OpCode::eMul:        return emitFMul(vectorType, src.at(0u), src.at(1u));
       case OpCode::eRcp:        return ir::Op::FRcp(vectorType, src.at(0u));
       case OpCode::eRsq:        return ir::Op::FRsq(vectorType, src.at(0u));
       case OpCode::eAbs:        return ir::Op::FAbs(vectorType, src.at(0u));
       case OpCode::eSgn:        return ir::Op::FAbs(vectorType, src.at(0u));
-      case OpCode::eMad:        return OpFMad(vectorType, src.at(0u), src.at(1u), src.at(2u));
+      case OpCode::eMad:        return emitFMad(vectorType, src.at(0u), src.at(1u), src.at(2u));
       default: break;
     }
 
@@ -578,12 +647,23 @@ bool Converter::handleArithmetic(ir::Builder& builder, const Instruction& op) {
   auto resultDef = builder.add(std::move(result));
 
   if (m_options.fastFloatEmulation) {
-    if (opCode == OpCode::eRcp || opCode == OpCode::eRsq || opCode == OpCode::eExp) {
-      resultDef = builder.add(ir::Op::FMin(vectorType, resultDef,
-        ir::makeTypedConstant(builder, vectorType, std::numeric_limits<float>::max())));
-    } else if (opCode == OpCode::eLog || opCode == OpCode::eLogP) {
-      resultDef = builder.add(ir::Op::FMax(vectorType, resultDef,
-        ir::makeTypedConstant(builder, vectorType, -std::numeric_limits<float>::max())));
+    /* makeTypedConstant correctly handles the conversion to F16 if necessary. */
+
+    switch (opCode) {
+      case OpCode::eRcp:
+      case OpCode::eRsq:
+      case OpCode::eExp:
+        resultDef = builder.add(ir::Op::FMin(vectorType, resultDef,
+          ir::makeTypedConstant(builder, vectorType, std::numeric_limits<float>::max())));
+        break;
+
+      case OpCode::eLog:
+      case OpCode::eLogP:
+        resultDef = builder.add(ir::Op::FMax(vectorType, resultDef,
+          ir::makeTypedConstant(builder, vectorType, -std::numeric_limits<float>::max())));
+        break;
+
+      default: break;
     }
   }
 
@@ -625,7 +705,7 @@ bool Converter::handleDot(ir::Builder& builder, const Instruction& op) {
   auto vectorA = loadSrcModified(builder, op, op.getSrc(0u), readMask, scalarType);
   auto vectorB = loadSrcModified(builder, op, op.getSrc(1u), readMask, scalarType);
 
-  auto result = builder.add(OpFDot(scalarType, vectorA, vectorB));
+  auto result = builder.add(emitFDot(scalarType, vectorA, vectorB));
 
   if (opCode == OpCode::eDp2Add) {
     /* src2 needs to have a replicate swizzle, so just get the first component. */
@@ -639,48 +719,6 @@ bool Converter::handleDot(ir::Builder& builder, const Instruction& op) {
 }
 
 
-bool Converter::handleCompare(ir::Builder& builder, const Instruction& op) {
-  /* All instructions handled here will operate on float vectors of any kind. */
-  auto opCode = op.getOpCode();
-
-  dxbc_spv_assert(op.getSrcCount() == 2u);
-  dxbc_spv_assert(op.hasDst());
-
-  /* Instruction type */
-  const auto& dst = op.getDst();
-
-  WriteMask writeMask = dst.getWriteMask(getShaderInfo());
-
-  auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
-
-  /* Load source operands */
-  auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
-  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
-  if (!src0 || !src1)
-    return false;
-
-  util::small_vector<ir::SsaDef, 4u> components;
-  for (auto _ : writeMask) {
-    auto index = components.size();
-    /* It is done per-component. */
-    auto src0c = ir::extractFromVector(builder, src0, index);
-    auto src1c = ir::extractFromVector(builder, src1, index);
-    ir::SsaDef cond;
-    if (opCode == OpCode::eSlt)
-      cond = builder.add(ir::Op::FLt(ir::ScalarType::eBool, src0c, src1c));
-    else
-      cond = builder.add(ir::Op::FGe(ir::ScalarType::eBool, src0c, src1c));
-
-    components.push_back(builder.add(ir::Op::Select(scalarType, cond,
-      makeTypedConstant(builder, scalarType, 1.0f),
-      makeTypedConstant(builder, scalarType, 0.0f))));
-  }
-  auto result = buildVector(builder, scalarType, components.size(), components.data());
-
-  return storeDstModifiedPredicated(builder, op, dst, result);
-}
-
-
 bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
   /* Calculates lighting coefficients from two dot products and an exponent. */
   const auto& dst = op.getDst();
@@ -688,13 +726,9 @@ bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
   auto src = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
 
-  auto xConst = builder.makeConstant(0u);
-  auto yConst = builder.makeConstant(1u);
-  auto wConst = builder.makeConstant(3u);
-
-  auto srcX = builder.add(ir::Op::CompositeExtract(scalarType, src, xConst));
-  auto srcY = builder.add(ir::Op::CompositeExtract(scalarType, src, yConst));
-  auto srcW = builder.add(ir::Op::CompositeExtract(scalarType, src, wConst));
+  auto srcX = ir::extractFromVector(builder, src, 0u);
+  auto srcY = ir::extractFromVector(builder, src, 1u);
+  auto srcW = ir::extractFromVector(builder, src, 3u);
 
   /* power = clamp(src.w, -127.9961, 127.9961) */
   auto power = builder.add(ir::Op::FClamp(scalarType, srcW,
@@ -704,26 +738,32 @@ bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
   auto oneFConst = ir::makeTypedConstant(builder, scalarType, 1.0f);
 
   util::small_vector<ir::SsaDef, 4u> components;
-  if (writeMask & ComponentBit::eX)
+
+  if (writeMask & ComponentBit::eX) {
     /* dst.x = 1.0 */
     components.push_back(oneFConst);
-  if (writeMask & ComponentBit::eY)
+  }
+
+  if (writeMask & ComponentBit::eY) {
     /* dst.y = max(0.0, src.x) */
     components.push_back(builder.add(ir::Op::FMax(scalarType, srcX, zeroFConst)));
-  if (writeMask & ComponentBit::eZ)
-    /* dst.z = pow(src.y, power) : 0.0 */
-    components.push_back(builder.add(ir::Op::FPow(scalarType, srcX, power)));
-  if (writeMask & ComponentBit::eW)
-    components.push_back(oneFConst);
+  }
 
-  if (components.size() > 2u) {
+  if (writeMask & ComponentBit::eZ) {
     /* dst.z = src.x > 0.0 && src.y > 0.0 ? pow(src.y, src.w) : 0.0 */
 
     auto zTestX = builder.add(ir::Op::FGe(ir::ScalarType::eBool, srcX,zeroFConst));
     auto zTestY = builder.add(ir::Op::FGe(ir::ScalarType::eBool, srcY, zeroFConst));
     auto zTest = builder.add(ir::Op::BAnd(ir::ScalarType::eBool, zTestX, zTestY));
 
-    components[2u] = builder.add(ir::Op::Select(scalarType, zTest, components[2u], zeroFConst));
+    auto dstZ = builder.add(ir::Op::FPow(scalarType, srcX, power));
+
+    components.push_back(builder.add(ir::Op::Select(scalarType, zTest, dstZ, zeroFConst)));
+  }
+
+  if (writeMask & ComponentBit::eW) {
+    /* dst.w = 1.0 */
+    components.push_back(oneFConst);
   }
 
   auto result = buildVector(builder, scalarType, components.size(), components.data());
@@ -733,41 +773,13 @@ bool Converter::handleLit(ir::Builder& builder, const Instruction& op) {
 
 bool Converter::handleMatrixArithmetic(ir::Builder& builder, const Instruction& op) {
   /* All instructions handled here will operate on float vectors of any kind. */
-  auto opCode = op.getOpCode();
-
   dxbc_spv_assert(op.getSrcCount() == 2);
   dxbc_spv_assert(op.hasDst());
 
-  uint32_t rowCount;
-  uint32_t columnCount;
-
-  switch (opCode) {
-    case OpCode::eM3x2:
-      columnCount = 3u;
-      rowCount = 2u;
-      break;
-    case OpCode::eM3x3:
-      columnCount = 3u;
-      rowCount = 3u;
-      break;
-    case OpCode::eM3x4:
-      columnCount = 3u;
-      rowCount = 4u;
-      break;
-    case OpCode::eM4x3:
-      columnCount = 4u;
-      rowCount = 3u;
-      break;
-    case OpCode::eM4x4:
-      columnCount = 4u;
-      rowCount = 4u;
-      break;
-    default:
-      columnCount = 0u;
-      rowCount = 0u;
-      dxbc_spv_unreachable();
-      break;
-  }
+  auto matrixSize = getMatrixSize(op.getOpCode());
+  dxbc_spv_assert(matrixSize.has_value());
+  uint32_t columnCount = matrixSize.value().first;
+  uint32_t rowCount = matrixSize.value().second;
 
   /* Instruction type */
   const auto& dst = op.getDst();
@@ -784,12 +796,11 @@ bool Converter::handleMatrixArithmetic(ir::Builder& builder, const Instruction& 
   std::array<ir::SsaDef, 4u> components = { };
   for (uint32_t i = 0u; i < rowCount; i++) {
     /* Load matrix column */
-    auto src1iOperand = src1Operand;
-    src1iOperand.setIndex(src1iOperand.getIndex() + i);
+    auto src1iOperand = src1Operand.withIndex(src1Operand.getIndex() + i);
     auto src1 = loadSrcModified(builder, op, src1iOperand, srcMask, scalarType);
 
     /* Calculate vector component */
-    components[i] = builder.add(OpFDot(scalarType, src0, src1));
+    components[i] = builder.add(emitFDot(scalarType, src0, src1));
   }
 
   auto result = buildVector(builder, scalarType, rowCount, components.data());
@@ -802,13 +813,17 @@ bool Converter::handleBem(ir::Builder& builder, const Instruction& op) {
   dxbc_spv_assert(op.getSrcCount() == 2u);
   dxbc_spv_assert(op.hasDst());
   dxbc_spv_assert(!!m_psSharedData);
+
   auto dst = op.getDst();
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+
   /* Dst register index determines the bumpmapping stage index. */
   auto stageIdx = dst.getIndex();
+
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
   /* Write mask must be .xy */
   dxbc_spv_assert(writeMask == WriteMask(ComponentBit::eX | ComponentBit::eY));
+
   auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
   auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
 
@@ -967,7 +982,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       for (uint32_t i = 0u; i < components.size(); i++) {
         if (i < rows) {
           auto mi = m_ioMap.emitTexCoordLoad(builder, op, lastIndex + i - rows - 1u, util::makeWriteMaskForComponents(3u), Swizzle::identity(), scalarType);
-          components[i] = builder.add(OpFDot(scalarType, mi, n));
+          components[i] = builder.add(emitFDot(scalarType, mi, n));
         } else {
           // w is defined to be 1.0 in eTexM3x3.
           components[i] = makeTypedConstant(builder, scalarType, 1.0f);
@@ -1021,11 +1036,11 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
         // 2*[(N*E)/(N*N)]*N - E
         auto vectorType = ir::BasicType(scalarType, 3u);
 
-        auto nDotE = builder.add(OpFDot(scalarType, normal, eyeRay));
-        auto nDotN = builder.add(OpFDot(scalarType, normal, normal));
+        auto nDotE = builder.add(emitFDot(scalarType, normal, eyeRay));
+        auto nDotN = builder.add(emitFDot(scalarType, normal, normal));
         auto dotDiv = builder.add(ir::Op::FDiv(scalarType, nDotE, nDotN));
-        auto twoDotDiv = builder.add(OpFMul(scalarType, makeTypedConstant(builder, scalarType, 2.0f), dotDiv));
-        auto texCoord = builder.add(OpFMul(vectorType, normal, broadcastScalar(builder, twoDotDiv, util::makeWriteMaskForComponents(3u))));
+        auto twoDotDiv = builder.add(emitFMul(scalarType, makeTypedConstant(builder, scalarType, 2.0f), dotDiv));
+        auto texCoord = builder.add(emitFMul(vectorType, normal, broadcastScalar(builder, twoDotDiv, util::makeWriteMaskForComponents(3u))));
         texCoord = builder.add(ir::Op::FSub(vectorType, texCoord, eyeRay));
 
         /* The sampling function requires a vec4. */
@@ -1047,7 +1062,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       auto src0 = op.getSrc(0u);
       auto m = m_ioMap.emitTexCoordLoad(builder, op, dst.getIndex(), util::makeWriteMaskForComponents(3u), Swizzle::identity(), scalarType);
       auto n = loadSrcModified(builder, op, src0, util::makeWriteMaskForComponents(3u), scalarType);
-      auto dot = builder.add(OpFDot(scalarType, m, n));
+      auto dot = builder.add(emitFDot(scalarType, m, n));
       if (opCode == OpCode::eTexDp3Tex) {
         /* Sample texture at register index of dst using (dot, 0, 0, 0) as coordinates */
         std::array<ir::SsaDef, 4u> texCoordComponents = {
@@ -1094,13 +1109,13 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
           bumpEnvLOffset = builder.add(ir::Op::ConsumeAs(ir::BasicType(scalarType, 2u), bumpEnvLOffset));
         }
         auto scale = builder.add(ir::Op::CompositeExtract(scalarType, result, builder.makeConstant(2u)));
-        scale = builder.add(OpFMul(scalarType, scale, bumpEnvLScale));
+        scale = builder.add(emitFMul(scalarType, scale, bumpEnvLScale));
         scale = builder.add(ir::Op::FAdd(scalarType, scale, bumpEnvLOffset));
         std::array<ir::SsaDef, 4u> scaledComponents = {};
         scale = builder.add(ir::Op::FClamp(scalarType, scale, ir::makeTypedConstant(builder, scalarType, 0.0f), ir::makeTypedConstant(builder, scalarType, 1.0f)));
         for (uint32_t i = 0u; i < 4u; i++) {
           auto resultComponent = builder.add(ir::Op::CompositeExtract(scalarType, result, builder.makeConstant(i)));
-          scaledComponents[i] = builder.add(OpFMul(scalarType, resultComponent, scale));
+          scaledComponents[i] = builder.add(emitFMul(scalarType, resultComponent, scale));
         }
         result = buildVector(builder, scalarType, scaledComponents.size(), scaledComponents.data());
       }
@@ -1254,7 +1269,7 @@ bool Converter::handleLrp(ir::Builder& builder, const Instruction& op) {
 
   /* dest = src0 * (src1 - src2) + src2 */
   auto result = builder.add(ir::Op::FSub(type, src1, src2));
-  result = builder.add(OpFMad(type, src0, result, src2));
+  result = builder.add(emitFMad(type, src0, result, src2));
 
   return storeDstModifiedPredicated(builder, op, dst, result);
 }
@@ -1405,7 +1420,7 @@ bool Converter::handlePow(ir::Builder& builder, const Instruction& op) {
   auto src1 = loadSrcModified(builder, op, op.getSrc(1u), ComponentBit::eX, scalarType);
 
   auto absSrc0 = builder.add(ir::Op::FAbs(scalarType, src0));
-  auto val = builder.add(OpFPow(scalarType, absSrc0, src1));
+  auto val = builder.add(emitFPow(scalarType, absSrc0, src1));
   auto vec = broadcastScalar(builder, val, writeMask);
   return storeDstModifiedPredicated(builder, op, dst, vec);
 }
@@ -1431,7 +1446,7 @@ bool Converter::handleDst(ir::Builder& builder, const Instruction& op) {
     /* dst.y = src0.y * src1.y */
     auto src0y = builder.add(ir::Op::CompositeExtract(scalarType, src0, builder.makeConstant(1u)));
     auto src1y = builder.add(ir::Op::CompositeExtract(scalarType, src1, builder.makeConstant(1u)));
-    components.push_back(builder.add(OpFMul(scalarType, src0y, src1y)));
+    components.push_back(builder.add(emitFMul(scalarType, src0y, src1y)));
   }
   if (writeMask & ComponentBit::eZ) {
     /* dst.z = src0.z */
@@ -1500,18 +1515,18 @@ bool Converter::handleCrs(ir::Builder& builder, const Instruction& op) {
 
   util::small_vector<ir::SsaDef, 4u> components;
   if (writeMask & ComponentBit::eX) {
-    auto a = builder.add(OpFMul(scalarType, src0y, src1z));
-    auto b = builder.add(OpFMul(scalarType, src0z, src1y));
+    auto a = builder.add(emitFMul(scalarType, src0y, src1z));
+    auto b = builder.add(emitFMul(scalarType, src0z, src1y));
     components.push_back(builder.add(ir::Op::FSub(scalarType, a, b)));
   }
   if (writeMask & ComponentBit::eY) {
-    auto a = builder.add(OpFMul(scalarType, src0z, src1x));
-    auto b = builder.add(OpFMul(scalarType, src0x, src1z));
+    auto a = builder.add(emitFMul(scalarType, src0z, src1x));
+    auto b = builder.add(emitFMul(scalarType, src0x, src1z));
     components.push_back(builder.add(ir::Op::FSub(scalarType, a, b)));
   }
   if (writeMask & ComponentBit::eZ) {
-    auto a = builder.add(OpFMul(scalarType, src0x, src1y));
-    auto b = builder.add(OpFMul(scalarType, src0y, src1x));
+    auto a = builder.add(emitFMul(scalarType, src0x, src1y));
+    auto b = builder.add(emitFMul(scalarType, src0y, src1x));
     components.push_back(builder.add(ir::Op::FSub(scalarType, a, b)));
   }
   auto res = composite(builder, makeVectorType(scalarType, writeMask), components.data(), Swizzle::identity(), writeMask);
@@ -1558,6 +1573,7 @@ bool Converter::handleExpP(ir::Builder& builder, const Instruction& op) {
   auto src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, scalarType);
 
   util::small_vector<ir::SsaDef, 4u> components;
+
   if (info.getVersion().first >= 2u) {
     for (auto _ : writeMask) {
       components.push_back(builder.add(ir::Op::FExp2(scalarType, src0)));
@@ -1567,14 +1583,17 @@ bool Converter::handleExpP(ir::Builder& builder, const Instruction& op) {
       /* dst.x = pow(2.0, floor(src0)) */
       components.push_back(builder.add(ir::Op::FExp2(scalarType, src0)));
     }
+
     if (writeMask & ComponentBit::eY) {
       /* dst.y = src0 - floor(src0) */
       components.push_back(builder.add(ir::Op::FSub(scalarType, src0, builder.add(ir::Op::FRound(scalarType, src0, ir::RoundMode::eNegativeInf)))));
     }
+
     if (writeMask & ComponentBit::eZ) {
       /* dst.z = pow(2.0, floor(src0)) */
       components.push_back(builder.add(ir::Op::FExp2(scalarType, src0)));
     }
+
     if (writeMask & ComponentBit::eW) {
       /* dst.w 1.0 */
       components.push_back(makeTypedConstant(builder, scalarType, 1.0f));
@@ -1584,6 +1603,8 @@ bool Converter::handleExpP(ir::Builder& builder, const Instruction& op) {
   auto result = ir::buildVector(builder, scalarType, components.size(), components.data());
 
   if (m_options.fastFloatEmulation) {
+    /* makeTypedConstant handles the conversion to F16. */
+
     auto vectorType = ir::makeVectorType(scalarType, writeMask);
     result = builder.add(ir::Op::FMin(vectorType, result,
       ir::makeTypedConstant(builder, vectorType, std::numeric_limits<float>::max())));
@@ -1820,23 +1841,26 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
         modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
       break;
 
-    case OperandModifier::eBias: /* r - 0.5 */
-    case OperandModifier::eBiasNeg: { /* -(r - 0.5) */
+    case OperandModifier::eBias: { /* r - 0.5 */
       auto halfConst = ir::makeTypedConstant(builder, type, 0.5f);
       modifiedDef = builder.add(ir::Op::FSub(type, modifiedDef, halfConst));
-
-      if (mod == OperandModifier::eBiasNeg)
-        modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
     } break;
 
-    case OperandModifier::eSign: /* fma(r, 2.0, -1.0) */
-    case OperandModifier::eSignNeg: { /* -fma(r, 2.0, -1.0) */
+    case OperandModifier::eBiasNeg: { /* 0.5 - r */
+      auto halfConst = ir::makeTypedConstant(builder, type, 0.5f);
+      modifiedDef = builder.add(ir::Op::FSub(type, halfConst, modifiedDef));
+    } break;
+
+    case OperandModifier::eSign: { /* fma(r, 2.0, -1.0) */
       auto twoConst = ir::makeTypedConstant(builder, type, 2.0f);
       auto minusOneConst = ir::makeTypedConstant(builder, type, -1.0f);
       modifiedDef = builder.add(ir::Op::FMad(type, modifiedDef, twoConst, minusOneConst));
+    } break;
 
-      if (mod == OperandModifier::eSignNeg)
-        modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
+    case OperandModifier::eSignNeg: { /* fma(r, -2.0, 1.0) */
+      auto minusTwoConst = ir::makeTypedConstant(builder, type, -2.0f);
+      auto oneConst = ir::makeTypedConstant(builder, type, 1.0f);
+      modifiedDef = builder.add(ir::Op::FMad(type, modifiedDef, minusTwoConst, oneConst));
     } break;
 
     case OperandModifier::eComp: { /* 1.0 - r */
@@ -1844,18 +1868,22 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
       modifiedDef = builder.add(ir::Op::FSub(type, oneConst, modifiedDef));
     } break;
 
-    case OperandModifier::eX2: /* r * 2.0 */
-    case OperandModifier::eX2Neg: { /* -(r * 2.0) */
+    case OperandModifier::eX2: { /* r * 2.0 */
       ir::SsaDef twoConst = ir::makeTypedConstant(builder, type, 2.0f);
       modifiedDef = builder.add(ir::Op::FMul(type, modifiedDef, twoConst));
+    } break;
 
-      if (mod == OperandModifier::eX2Neg)
-        modifiedDef = builder.add(ir::Op::FAbs(type, modifiedDef));
+    case OperandModifier::eX2Neg: { /* r * -2.0 */
+      ir::SsaDef minusTwoConst = ir::makeTypedConstant(builder, type, -2.0f);
+      modifiedDef = builder.add(ir::Op::FMul(type, modifiedDef, minusTwoConst));
     } break;
 
     case OperandModifier::eDz:
     case OperandModifier::eDw: {
-      /* The Dz and Dw modifiers can only be applied to SM1.4 TexLd & TexCrd instructions.
+      /* r.xy / r.z OR r.xy / r.w
+       * Z & W are undefined afterward according to the docs so we implement it as r.xyzw / r.z (or r.w).
+       * The Dz and Dw modifiers divide by either the Z or the W component.
+       * They can only be applied to SM1.4 TexLd & TexCrd instructions.
        * Both of those only accept a texture coord register as argument and that is always
        * a float vec4. */
       uint32_t fullVec4ComponentIndex = mod == OperandModifier::eDz ? 2u : 3u;
@@ -1874,7 +1902,7 @@ ir::SsaDef Converter::applySrcModifiers(ir::Builder& builder, ir::SsaDef def, co
       modifiedDef = builder.add(ir::Op::FDiv(type, modifiedDef, zCompVec));
     } break;
 
-    case OperandModifier::eNeg:
+    case OperandModifier::eNeg: /* -r */
       modifiedDef = builder.add(ir::Op::FNeg(type, modifiedDef));
     break;
 
@@ -1945,8 +1973,6 @@ bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Oper
       logOpError(op, "Unhandled destination operand: ", name);
     } return false;
   }
-
-  return false;
 }
 
 
@@ -1963,9 +1989,7 @@ ir::SsaDef Converter::applyDstModifiers(ir::Builder& builder, ir::SsaDef def, co
 
   /* Apply shift */
   if (shift != 0) {
-    if (!type.isFloatType()) {
-      logOpMessage(LogLevel::eWarn, instruction, "Shift applied to a non-float result.");
-    }
+    dxbc_spv_assert(type.isFloatType());
 
     float shiftAmount = shift < 0
             ? 1.0f / (1 << -shift)
@@ -1976,9 +2000,7 @@ ir::SsaDef Converter::applyDstModifiers(ir::Builder& builder, ir::SsaDef def, co
 
   /* Saturate dst */
   if (operand.isSaturated()) {
-    if (!type.isFloatType()) {
-      logOpMessage(LogLevel::eWarn, instruction, "Saturation applied to a non-float result.");
-    }
+    dxbc_spv_assert(type.isFloatType());
 
     def = builder.add(ir::Op::FClamp(type, def,
       makeTypedConstant(builder, type, 0.0f),
@@ -1999,7 +2021,8 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
 
     /* Load predicate */
     predicate = m_regFile.emitPredicateLoad(builder, operand.getPredicateSwizzle(), writeMask);
-    /* Apply predicate modifier (per component) if necessary */
+
+    /* Apply predicate modifier */
     if (operand.getPredicateModifier() == OperandModifier::eNot) {
       ir::BasicType predicateType = builder.getOp(predicate).getType().getBaseType(0u);
       predicate = builder.add(ir::Op::BNot(predicateType, predicate));

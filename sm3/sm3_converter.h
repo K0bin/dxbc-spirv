@@ -101,22 +101,22 @@ private:
     return m_options;
   }
 
-  ir::Op OpFMul(ir::Type type, ir::SsaDef a, ir::SsaDef b) const {
+  ir::Op emitFMul(ir::Type type, ir::SsaDef a, ir::SsaDef b) const {
     return !m_options.fastFloatEmulation
       ? ir::Op::FMulLegacy(type, a, b)
       : ir::Op::FMul(type, a, b);
   }
-  ir::Op OpFMad(ir::Type type, ir::SsaDef a, ir::SsaDef b, ir::SsaDef c) const {
+  ir::Op emitFMad(ir::Type type, ir::SsaDef a, ir::SsaDef b, ir::SsaDef c) const {
     return !m_options.fastFloatEmulation
       ? ir::Op::FMadLegacy(type, a, b, c)
       : ir::Op::FMad(type, a, b, c);
   }
-  ir::Op OpFDot(ir::Type type, ir::SsaDef a, ir::SsaDef b) const {
+  ir::Op emitFDot(ir::Type type, ir::SsaDef a, ir::SsaDef b) const {
     return !m_options.fastFloatEmulation
       ? ir::Op::FDotLegacy(type, a, b)
       : ir::Op::FDot(type, a, b);
   }
-  ir::Op OpFPow(ir::Type type, ir::SsaDef base, ir::SsaDef exp) const {
+  ir::Op emitFPow(ir::Type type, ir::SsaDef base, ir::SsaDef exp) const {
     return !m_options.fastFloatEmulation
       ? ir::Op::FPowLegacy(type, base, exp)
       : ir::Op::FPow(type, base, exp);
@@ -138,13 +138,15 @@ private:
 
   bool handleMov(ir::Builder& builder, const Instruction& op);
 
+  bool handleCompare(ir::Builder& builder, const Instruction& op);
+
   bool handleArithmetic(ir::Builder& builder, const Instruction& op);
 
   bool handleDot(ir::Builder& builder, const Instruction& op);
 
-  bool handleCompare(ir::Builder& builder, const Instruction& op);
-
   bool handleLit(ir::Builder& builder, const Instruction& op);
+
+  bool handleExpP(ir::Builder& builder, const Instruction& op);
 
   bool handleMatrixArithmetic(ir::Builder& builder, const Instruction& op);
 
@@ -178,8 +180,6 @@ private:
 
   bool handleSetP(ir::Builder& builder, const Instruction& op);
 
-  bool handleExpP(ir::Builder& builder, const Instruction& op);
-
   bool handleIf(ir::Builder& builder, const Instruction& op);
 
   bool handleElse(ir::Builder& builder, const Instruction& op);
@@ -209,11 +209,11 @@ private:
   bool storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef value);
 
   ir::SsaDef calculateAddress(
-          ir::Builder&            builder,
-          RegisterType            registerType,
-          Swizzle                 swizzle,
-          uint32_t                baseAddress,
-          ir::ScalarType          type);
+            ir::Builder&            builder,
+            RegisterType            registerType,
+            Swizzle                 swizzle,
+            uint32_t                baseAddress,
+            ir::ScalarType          type);
 
   void logOp(LogLevel severity, const Instruction& op) const;
 

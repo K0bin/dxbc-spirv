@@ -1348,6 +1348,7 @@ void SpirvBuilder::emitConstantLoad(const ir::Op& op) {
 
     pushOp(m_declarations, spv::OpVariable, ptrTypeId, varId,
       spv::StorageClassPrivate, getIdForDef(constantOp.getDef()));
+    pushOp(m_decorations, spv::OpDecorate, varId, spv::DecorationNonWritable);
 
     addEntryPointId(varId);
     emitDebugName(constantOp.getDef(), varId);
@@ -1651,8 +1652,7 @@ void SpirvBuilder::emitBufferAtomic(const ir::Op& op) {
     if (descriptorOp.getFlags() & ir::OpFlag::eNonUniform)
       pushOp(m_decorations, spv::OpDecorate, accessChainId, spv::DecorationNonUniform);
 
-    emitAtomic(op, type, id, operandDef, accessChainId, spv::ScopeQueueFamily,
-      spv::MemorySemanticsUniformMemoryMask);
+    emitAtomic(op, type, id, operandDef, accessChainId, m_atomics.scope, m_atomics.memory);
   } else {
     /* OpImageTexelPointer is annoying and takes a pointer to an image descriptor,
      * rather than an actually loaded image descriptor, so we have to re-evaluate
@@ -1670,8 +1670,7 @@ void SpirvBuilder::emitBufferAtomic(const ir::Op& op) {
     if (descriptorOp.getFlags() & ir::OpFlag::eNonUniform)
       pushOp(m_decorations, spv::OpDecorate, ptrId, spv::DecorationNonUniform);
 
-    emitAtomic(op, type, id, operandDef, ptrId, spv::ScopeQueueFamily,
-      spv::MemorySemanticsImageMemoryMask);
+    emitAtomic(op, type, id, operandDef, ptrId, m_atomics.scope, m_atomics.memory);
   }
 }
 
@@ -1754,8 +1753,7 @@ void SpirvBuilder::emitMemoryAtomic(const ir::Op& op) {
     ptrOp.getType(), getIdForDef(ptrOp.getDef()), addressDef, 0u, hasWrapperStruct);
 
   /* Emit atomic */
-  emitAtomic(op, type, getIdForDef(op.getDef()), operandDef, accessChainId,
-    spv::ScopeQueueFamily, spv::MemorySemanticsUniformMemoryMask);
+  emitAtomic(op, type, getIdForDef(op.getDef()), operandDef, accessChainId, m_atomics.scope, m_atomics.memory);
 }
 
 
@@ -1774,8 +1772,7 @@ void SpirvBuilder::emitCounterAtomic(const ir::Op& op) {
   auto atomicOp = ir::AtomicOp(op.getOperand(op.getFirstLiteralOperandIndex()));
   auto atomicId = atomicOp == ir::AtomicOp::eDec ? allocId() : id;
 
-  emitAtomic(op, dclOp.getType(), atomicId, ir::SsaDef(), accessChainId,
-    spv::ScopeQueueFamily, spv::MemorySemanticsUniformMemoryMask);
+  emitAtomic(op, dclOp.getType(), atomicId, ir::SsaDef(), accessChainId, m_atomics.scope, m_atomics.memory);
 
   /* For counter decrement, we need to return the new value */
   if (atomicOp == ir::AtomicOp::eDec)
@@ -1960,8 +1957,7 @@ void SpirvBuilder::emitImageAtomic(const ir::Op& op) {
   if (descriptorOp.getFlags() & ir::OpFlag::eNonUniform)
     pushOp(m_decorations, spv::OpDecorate, ptrId, spv::DecorationNonUniform);
 
-  emitAtomic(op, type, getIdForDef(op.getDef()), operandDef, ptrId,
-    spv::ScopeQueueFamily, spv::MemorySemanticsImageMemoryMask);
+  emitAtomic(op, type, getIdForDef(op.getDef()), operandDef, ptrId, m_atomics.scope, m_atomics.memory);
 }
 
 
@@ -2423,14 +2419,22 @@ void SpirvBuilder::emitAtomic(const ir::Op& op, const ir::Type& type, uint32_t i
     : ir::BasicType()));
 
   /* Set up memory semantics */
-  auto semantics = spv::MemorySemanticsAcquireReleaseMask;
+  auto semantics = spv::MemorySemanticsMaskNone;
 
-  if (atomicOp == ir::AtomicOp::eLoad) {
-    semantics = spv::MemorySemanticsAcquireMask |
-                spv::MemorySemanticsMakeVisibleMask;
-  } else if (atomicOp == ir::AtomicOp::eStore) {
-    semantics = spv::MemorySemanticsReleaseMask |
+  if (scope != spv::ScopeInvocation) {
+    semantics = spv::MemorySemanticsAcquireReleaseMask |
+                spv::MemorySemanticsMakeVisibleMask |
                 spv::MemorySemanticsMakeAvailableMask;
+
+    if (atomicOp == ir::AtomicOp::eLoad) {
+      semantics = spv::MemorySemanticsAcquireMask |
+                  spv::MemorySemanticsMakeVisibleMask;
+    } else if (atomicOp == ir::AtomicOp::eStore) {
+      semantics = spv::MemorySemanticsReleaseMask |
+                  spv::MemorySemanticsMakeAvailableMask;
+    }
+
+    semantics = spv::MemorySemanticsMask(memoryTypes | semantics);
   }
 
   /* Decompose composite arg */
@@ -2457,10 +2461,18 @@ void SpirvBuilder::emitAtomic(const ir::Op& op, const ir::Type& type, uint32_t i
 
   m_code.push_back(ptrId);
   m_code.push_back(makeConstU32(scope));
-  m_code.push_back(makeConstU32(memoryTypes | semantics));
+  m_code.push_back(makeConstU32(semantics));
 
   if (atomicOp == ir::AtomicOp::eCompareExchange) {
-    m_code.push_back(makeConstU32(memoryTypes | spv::MemorySemanticsAcquireMask));
+    auto semantics = spv::MemorySemanticsMaskNone;
+
+    if (scope != spv::ScopeInvocation) {
+      semantics = memoryTypes |
+        spv::MemorySemanticsAcquireMask |
+        spv::MemorySemanticsMakeVisibleMask;
+    }
+
+    m_code.push_back(makeConstU32(semantics));
 
     /* Operands are in reverse order here */
     m_code.push_back(argIds.at(1u));
@@ -4094,7 +4106,7 @@ void SpirvBuilder::emitSetTessDomain(const ir::Op& op) {
 void SpirvBuilder::emitSetTessControlPoints(const ir::Op& op) {
   dxbc_spv_assert(m_stage == ir::ShaderStage::eHull);
 
-  auto vertexCount = uint32_t(op.getOperand(1u));
+  auto vertexCount = uint32_t(op.getOperand(2u));
 
   pushOp(m_executionModes, spv::OpExecutionMode, m_entryPointId,
     spv::ExecutionModeOutputVertices, vertexCount);
@@ -4377,6 +4389,9 @@ uint32_t SpirvBuilder::defDescriptor(const ir::Op& op, uint32_t typeId, spv::Sto
       pushOp(m_decorations, spv::OpDecorate, varId, spv::DecorationNonWritable);
     if (uavFlags & ir::UavFlag::eWriteOnly)
       pushOp(m_decorations, spv::OpDecorate, varId, spv::DecorationNonReadable);
+
+    adjustAtomicScope(uavFlags, storageClass == spv::StorageClassUniformConstant
+      ? spv::MemorySemanticsImageMemoryMask : spv::MemorySemanticsUniformMemoryMask);
   }
 
   if (op.getOpCode() == ir::OpCode::eDclCbv && cbvAsSsbo(op))
@@ -4661,6 +4676,20 @@ uint32_t SpirvBuilder::translateMemoryTypes(ir::MemoryTypeFlags memoryFlags, spv
 }
 
 
+void SpirvBuilder::adjustAtomicScope(ir::UavFlags flags, spv::MemorySemanticsMask memory) {
+  if (flags & (ir::UavFlag::eReadOnly | ir::UavFlag::eWriteOnly))
+    return;
+
+  /* For some reason, things break when only using workgroup scope here.
+   * My understanding is that this should effectively add as a memory
+   * barrier for the given memory types at the given scope, so always
+   * emitting queue family scope on atomics can pessimize. However,
+   * no piece of software actually seems to emit anything else. */
+  m_atomics.scope = pickStrongestScope(m_atomics.scope, spv::ScopeQueueFamily);
+  m_atomics.memory = spv::MemorySemanticsMask(m_atomics.memory | memory);
+}
+
+
 uint32_t SpirvBuilder::makeScalarConst(ir::ScalarType type, const ir::Op& op, uint32_t& operandIndex) {
   switch (type) {
     case ir::ScalarType::eBool:
@@ -4931,8 +4960,8 @@ void SpirvBuilder::setUavImageReadOperands(SpirvImageOperands& operands, const i
   if (getUavCoherentScope(uavFlags) != spv::ScopeInvocation)
     operands.flags |= spv::ImageOperandsNonPrivateTexelMask;
 
-  // If the UAV is not read-only and the load is marked as precise,
-  // we need to mark the load as volatile.
+  /* If the UAV is not read-only and the load is marked as precise,
+   * we need to mark the load as volatile. */
   if (!(uavFlags & ir::UavFlag::eReadOnly) && (loadOp.getFlags() & ir::OpFlag::ePrecise))
     operands.flags |= spv::ImageOperandsVolatileTexelMask;
 }
@@ -5133,6 +5162,26 @@ uint32_t SpirvBuilder::makeOpcodeToken(spv::Op op, uint32_t len) {
 
 uint32_t SpirvBuilder::getStringDwordCount(const char* str) {
   return std::strlen(str) / sizeof(uint32_t) + 1u;
+}
+
+
+spv::Scope SpirvBuilder::pickStrongestScope(spv::Scope a, spv::Scope b) {
+  /* Ordered scopes that we know of */
+  std::array<spv::Scope, 5> s_scopes = {
+    spv::ScopeDevice,
+    spv::ScopeQueueFamily,
+    spv::ScopeWorkgroup,
+    spv::ScopeSubgroup,
+    spv::ScopeInvocation,
+  };
+
+  for (auto s : s_scopes) {
+    if (s == a || s == b)
+      return s;
+  }
+
+  dxbc_spv_unreachable();
+  return spv::ScopeInvocation;
 }
 
 

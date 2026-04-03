@@ -899,9 +899,8 @@ ConstantTable::ConstantTable(util::ByteReader reader) {
 const ConstantInfo* ConstantTable::findConstantInfo(RegisterType registerType, uint32_t index) const {
   ConstantType constantType = constantTypeFromRegisterType(registerType);
 
-  if (m_constants.empty()) {
+  if (m_constants.empty())
     return nullptr;
-  }
 
   uint32_t ctabIndex = 0u;
   for (uint32_t i = 0u; i < m_constants.size(); i++) {

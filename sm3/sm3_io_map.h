@@ -116,6 +116,8 @@ public:
           ir::SsaDef              predicateVec,
           ir::SsaDef              value);
 
+  void emitIoVarDefaults(ir::Builder& builder);
+
   /** Stores a scalar vector to the depth output register.
    *
    *  Returns \c false on error. */
@@ -123,8 +125,6 @@ public:
           ir::Builder&            builder,
     const Instruction&            op,
           ir::SsaDef              value);
-
-  void emitIoVarDefaults(ir::Builder& builder);
 
 private:
 

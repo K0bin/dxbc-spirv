@@ -612,7 +612,7 @@ ir::SsaDef IoMap::emitTexCoordLoad(
     std::optional<Semantic> semantic = determineSemanticForRegister(RegisterType::ePixelTexCoord, regIdx);
 
     if (!semantic.has_value()) {
-      m_converter.logOpError(op, "Failed to process I/O store.");
+      m_converter.logOpError(op, "Failed to process I/O load.");
     } else {
       dclIoVar(builder, RegisterType::ePixelTexCoord, regIdx, semantic.value());
       ioVar = &m_variables.back();
@@ -787,7 +787,7 @@ bool IoMap::emitDepthStore(ir::Builder &builder, const Instruction &op, ir::SsaD
     ioVar = &m_variables.back();
   }
 
-  ir::Type scalarType = ioVar->baseType.isVectorType() ? ioVar->baseType.getBaseType(0u) : ioVar->baseType;
+  dxbc_spv_assert(builder.getOp(ioVar->tempDefs[0u]).getType() == builder.getOp(value).getType());
   builder.add(ir::Op::TmpStore(ioVar->tempDefs[0u], value));
 
   return true;
@@ -992,18 +992,10 @@ void IoMap::emitDebugName(
   if (!m_converter.getOptions().includeDebugNames)
     return;
 
-  bool isInput = registerTypeIsInput(registerType, m_converter.getShaderInfo().getType());
-
   std::stringstream nameStream;
 
-  if ((registerType == RegisterType::eInput || semantic.usage != SemanticUsage::eNormal)
-    || (isInput && registerType == RegisterType::eRasterizerOut)
-    || (!isInput && registerType == RegisterType::eMiscType)) {
-    /* There is no VS output register type for normals, it's only emitted for FF emulation.
-     * The other exceptions either only have input only or output only registers. */
-    nameStream << m_converter.makeRegisterDebugName(registerType, registerIndex, writeMask);
-    nameStream << "_";
-  }
+  nameStream << m_converter.makeRegisterDebugName(registerType, registerIndex, writeMask);
+  nameStream << "_";
 
   if (semantic.usage == SemanticUsage::eColor) {
     if (semantic.index == 0) {
