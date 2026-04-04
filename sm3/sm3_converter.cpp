@@ -1474,17 +1474,18 @@ bool Converter::handleDerivatives(ir::Builder& builder, const Instruction& op) {
   auto src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eAll, scalarType);
 
   auto type = makeVectorType(scalarType, writeMask);
+  ir::SsaDef result = { };
   if (op.getOpCode() == OpCode::eDsX) {
-    builder.add(ir::Op::DerivX(type, src0, ir::DerivativeMode::eDefault));
-    return true;
+    result = builder.add(ir::Op::DerivX(type, src0, ir::DerivativeMode::eDefault));
   } else if (op.getOpCode() == OpCode::eDsY) {
-    builder.add(ir::Op::DerivY(type, src0, ir::DerivativeMode::eDefault));
-    return true;
+    result = builder.add(ir::Op::DerivY(type, src0, ir::DerivativeMode::eDefault));
   } else {
     Logger::err("OpCode ", op.getOpCode(), " is not supported by handleDerivatives.");
     dxbc_spv_unreachable();
     return false;
   }
+
+  return storeDstModifiedPredicated(builder, op, dst, result);
 }
 
 
