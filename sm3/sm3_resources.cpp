@@ -840,15 +840,11 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
     ir::SsaDef(), lod, lodBias, ir::SsaDef(),
     sizedDx, sizedDy, ir::SsaDef() ));
 
-  /* Fetch4 */
+  /* Fetch4
+   * D3D9 does support gather on 3D but we cannot :< */
   if (m_converter.getShaderInfo().getType() == ShaderType::ePixel && textureType != SpecConstTextureType::eTexture3D) {
-    /* Doesn't really work for cubes...
-     * D3D9 does support gather on 3D but we cannot :<
-     * Nothing probably relies on that though.
-     * If we come back to this ever, make sure to handle cube/3d differences. */
 
     /* Load the spec constant that tells us if fetch4 (gather) is enabled for the sampler. */
-
     auto fetch4EnabledSpecConst = m_converter.m_specConstants.get(
       builder,
       SpecConstantId::eSpecSamplerFetch4,
@@ -857,9 +853,12 @@ ir::SsaDef ResourceMap::emitSampleColorImageType(
     );
     auto fetch4Enabled = builder.add(ir::Op::INe(ir::ScalarType::eBool, fetch4EnabledSpecConst, builder.makeConstant(0u)));
 
+    /* Account for half texel offset */
     if (textureType == SpecConstTextureType::eTexture2D) {
-      /* Account for half texel offset...
-       * texcoord += (1.0f - 1.0f / 256.0f) / float(2 * textureSize(sampler, 0))
+      /* Doesn't really work for cubes...
+       * Nothing probably relies on that though.
+       * If we come back to this ever, make sure to handle cube/3d differences.
+       *   texcoord += (1.0f - 1.0f / 256.0f) / float(2 * textureSize(sampler, 0))
        * = texcoord += (256.0f / 512.0f) / textureSize(sampler, 0) */
 
       auto coordDims = ir::resourceDimensions(resourceKindFromTextureType(textureTypeFromSpecConstTextureType(textureType)));
