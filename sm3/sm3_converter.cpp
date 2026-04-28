@@ -284,6 +284,15 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
 
 
 bool Converter::finalize(ir::Builder& builder, ShaderType shaderType) {
+  if (getShaderInfo().getVersion().first == 1u) {
+    auto value = m_regFile.emitTempLoad(builder, 0u,
+      Swizzle::identity(), WriteMask(ComponentBit::eAll), ir::ScalarType::eF32);
+
+    if (!m_ioMap.emitColorStore(builder, value)) {
+      return false;
+    }
+  }
+
   m_ioMap.finalize(builder);
 
   return true;
