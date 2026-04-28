@@ -895,6 +895,9 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
           /* tex - ps_1_1 - ps_1_3 */
           /* The destination register index decides the sampler and texture coord index. */
           texCoord = m_ioMap.emitTexCoordLoad(builder, op, samplerIdx, ComponentBit::eAll, Swizzle::identity(), scalarType);
+
+          /* D3DTTFF_PROJECTED only impacts the ps_1_1 - ps_1_3 tex instruction. */
+          texCoord = m_resources.projectTexCoord(builder, samplerIdx, texCoord, true);
         }
       } else {
         /* texld - sm_2_0 and up */
@@ -913,9 +916,6 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
           default: break;
         }
       }
-
-      if (m_parser.getShaderInfo().getVersion().first <= 1u && m_parser.getShaderInfo().getVersion().second < 4u)
-        texCoord = m_resources.projectTexCoord(builder, samplerIdx, texCoord, true);
 
       result = m_resources.emitSample(builder, samplerIdx, texCoord, lod, lodBias, ir::SsaDef(), ir::SsaDef(), scalarType);
     } break;
@@ -959,9 +959,6 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
       texCoord = swizzleVector(builder, texCoord, swizzle, ComponentBit::eAll);
       uint32_t samplerIdx = dst.getIndex();
-
-      if (m_parser.getShaderInfo().getVersion().first <= 1u && m_parser.getShaderInfo().getVersion().second < 4u)
-        texCoord = m_resources.projectTexCoord(builder, samplerIdx, texCoord, true);
 
       result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), scalarType);
     } break;
@@ -1208,11 +1205,19 @@ ir::SsaDef Converter::loadSrc(ir::Builder& builder, const Instruction& op, const
 
     case RegisterType::eAddr:
     /* case RegisterType::eTexture: Same Value */
-      if (getShaderInfo().getType() == ShaderType::eVertex)
+      if (getShaderInfo().getType() == ShaderType::eVertex) {
         /* RegisterType::eAddr */
         logOpError(op, "Address register cannot be loaded as a regular source register.");
-      else
+      } else if (getShaderInfo().getVersion().first == 1u && getShaderInfo().getVersion().second <= 3u) {
+        /* Texture registers act as special purpose temp registers in PS 1.1 - PS 1.3. */
+        loadDef = m_regFile.emitTextureRegLoad(builder,
+          operand.getIndex(),
+          swizzle,
+          mask,
+          type);
+      } else {
         loadDef = m_ioMap.emitLoad(builder, op, operand, mask, swizzle, type); /* RegisterType::eTexture */
+      }
       break;
 
     case RegisterType::eLoop:
@@ -1961,7 +1966,7 @@ bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Oper
       if (getShaderInfo().getType() == ShaderType::eVertex)
         return m_regFile.emitStore(builder, operand, writeMask, predicateVec, value);
       else
-        return m_ioMap.emitStore(builder, op, operand, writeMask, predicateVec, value);
+        return m_regFile.emitStore(builder, operand, writeMask, predicateVec, value);
 
     case RegisterType::eOutput:
     case RegisterType::eRasterizerOut:
