@@ -155,6 +155,20 @@ std::ostream& operator << (std::ostream& os, MiscTypeIndex miscTypeIndex) {
   return os << "MiscTypeIndex(" << uint32_t(miscTypeIndex) << ")";
 }
 
+std::ostream& operator << (std::ostream& os, ComparisonMode mode) {
+  switch (mode) {
+    case ComparisonMode::eNever:        return os << "false";
+    case ComparisonMode::eGreaterThan:  return os << "gt";
+    case ComparisonMode::eEqual:        return os << "eq";
+    case ComparisonMode::eGreaterEqual: return os << "ge";
+    case ComparisonMode::eLessThan:     return os << "lt";
+    case ComparisonMode::eNotEqual:     return os << "ne";
+    case ComparisonMode::eLessEqual:    return os << "le";
+    case ComparisonMode::eAlways:       return os << "true";
+    default:                            return os << "ComparisonMode(" << uint32_t(mode) << ")";
+  }
+}
+
 
 std::ostream& operator << (std::ostream& os, UnambiguousRegisterType registerType) {
   switch (registerType.registerType) {

@@ -242,6 +242,7 @@ std::ostream& operator << (std::ostream& os, SemanticUsage usage);
 std::ostream& operator << (std::ostream& os, TextureType textureType);
 std::ostream& operator << (std::ostream& os, RasterizerOutIndex outIndex);
 std::ostream& operator << (std::ostream& os, MiscTypeIndex miscTypeIndex);
+std::ostream& operator << (std::ostream& os, ComparisonMode mode);
 
 inline std::optional<std::pair<uint32_t, uint32_t>> getMatrixSize(OpCode opCode) {
   switch (opCode) {

@@ -132,17 +132,7 @@ void Disassembler::disassembleOpcodeToken(std::ostream& stream, const Instructio
   if (op.getOpCode() == OpCode::eIfC
     || op.getOpCode() == OpCode::eBreakC
     || op.getOpCode() == OpCode::eSetP) {
-    switch (op.getComparisonMode()) {
-      case ComparisonMode::eNever:        stream << "_false";   break;
-      case ComparisonMode::eGreaterThan:  stream << "_gt";      break;
-      case ComparisonMode::eEqual:        stream << "_eq";      break;
-      case ComparisonMode::eGreaterEqual: stream << "_ge";      break;
-      case ComparisonMode::eLessThan:     stream << "_lt";      break;
-      case ComparisonMode::eNotEqual:     stream << "_ne";      break;
-      case ComparisonMode::eLessEqual:    stream << "_le";      break;
-      case ComparisonMode::eAlways:       stream << "_true";    break;
-      default:                            stream << "_unknown"; break;
-    }
+    stream << "_" << op.getComparisonMode();
   }
 }
 

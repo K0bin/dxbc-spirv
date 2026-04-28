@@ -219,4 +219,16 @@ inline bool compareCaseInsensitive(const char* a, const char* b) {
   return true;
 }
 
+inline bool compareCaseInsensitiveViews(std::string_view a, std::string_view b) {
+  if (a.size() != b.size())
+    return false;
+
+  for (size_t i = 0u; i < a.size(); i++) {
+    if (!compareCharsCaseInsensitive(a[i], b[i]))
+      return false;
+  }
+
+  return true;
+}
+
 }
