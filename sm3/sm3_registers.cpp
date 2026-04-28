@@ -122,8 +122,8 @@ ir::SsaDef RegisterFile::emitTextureRegLoad(
   for (auto c : swizzle.getReadMask(componentMask)) {
     auto component = componentFromBit(c);
 
-    auto tmpReg = getOrDeclareTemp(builder, regIndex, component);
-    auto scalar = builder.add(ir::Op::TmpLoad(ir::ScalarType::eUnknown, tmpReg));
+    auto texReg = getOrDeclareTextureReg(builder, regIndex, component);
+    auto scalar = builder.add(ir::Op::TmpLoad(ir::ScalarType::eUnknown, texReg));
 
     /* Convert to requested type */
     scalar = builder.add(ir::Op::ConsumeAs(type, scalar));
