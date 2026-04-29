@@ -72,7 +72,9 @@ ir::SsaDef RegisterFile::getOrDeclareTextureReg(ir::Builder& builder, uint32_t i
     m_textureRegs[textureIndex] = builder.add(ir::Op::DclTmp(ir::ScalarType::eUnknown, m_converter.getEntryPoint()));
 
     if (m_converter.getOptions().includeDebugNames) {
-      std::string name = m_converter.makeRegisterDebugName(RegisterType::eTexture, index, util::componentBit(component));
+
+
+      auto name = m_converter.makeRegisterDebugName(RegisterType::eTexture, index, util::componentBit(component));
       builder.add(ir::Op::DebugName(m_textureRegs[textureIndex], name.c_str()));
     }
   }
