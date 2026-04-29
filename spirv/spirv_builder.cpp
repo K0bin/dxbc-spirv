@@ -317,6 +317,9 @@ void SpirvBuilder::emitInstruction(const ir::Op& op) {
     case ir::OpCode::eDclUavCounter:
       return emitDclUavCounter(op);
 
+    case ir::OpCode::eDclInputTarget:
+      return emitDclInputTarget(op);
+
     case ir::OpCode::eDclXfb:
       return emitDclXfb(op);
 
@@ -400,7 +403,6 @@ void SpirvBuilder::emitInstruction(const ir::Op& op) {
     case ir::OpCode::eOutputStore:
       return emitStoreVariable(op);
 
-    case ir::OpCode::eCompositeInsert:
     case ir::OpCode::eCompositeExtract:
       return emitCompositeOp(op);
 
@@ -433,6 +435,9 @@ void SpirvBuilder::emitInstruction(const ir::Op& op) {
 
     case ir::OpCode::eImageQuerySamples:
       return emitImageQuerySamples(op);
+
+    case ir::OpCode::eInputTargetLoad:
+      return emitInputTargetLoad(op);
 
     case ir::OpCode::eCheckSparseAccess:
       return emitCheckSparseAccess(op);
@@ -1249,6 +1254,28 @@ void SpirvBuilder::emitDclUavCounter(const ir::Op& op) {
 
   defDescriptor(op, structTypeId, spv::StorageClassStorageBuffer);
   m_descriptorTypes.insert({ op.getDef(), structTypeId });
+}
+
+
+void SpirvBuilder::emitDclInputTarget(const ir::Op& op) {
+    dxbc_spv_assert(op.getType().isScalarType());
+
+    auto kind = getResourceKind(op);
+
+    enableCapability(spv::CapabilityInputAttachment);
+
+    /* The image type is different from regular resources */
+    SpirvImageTypeKey key = { };
+    key.sampledTypeId = getIdForType(op.getType());
+    key.dim = spv::DimSubpassData;
+    key.ms = ir::resourceIsMultisampled(kind) ? 1u : 0u;
+    key.sampled = 2u;
+
+    /* Declare actual image type and descriptor */
+    auto imageTypeId = getIdForImageType(key);
+
+    defDescriptor(op, imageTypeId, spv::StorageClassUniformConstant);
+    m_descriptorTypes.insert({ op.getDef(), imageTypeId });
 }
 
 
@@ -2266,6 +2293,41 @@ void SpirvBuilder::emitImageQuerySamples(const ir::Op& op) {
   pushOp(m_code, spv::OpImageQuerySamples,
     getIdForType(op.getType()), id,
     getIdForDef(descriptorOp.getDef()));
+
+  emitDebugName(op.getDef(), id);
+}
+
+
+void SpirvBuilder::emitInputTargetLoad(const ir::Op& op) {
+  const auto& descriptorOp = m_builder.getOpForOperand(op, 0u);
+
+  auto id = getIdForDef(op.getDef());
+
+  /* Set up sample operand as necessary */
+  SpirvImageOperands imageOperands = { };
+
+  auto sampleDef = ir::SsaDef(op.getOperand(1u));
+
+  if (sampleDef) {
+    imageOperands.flags |= spv::ImageOperandsSampleMask;
+    imageOperands.sampleId = getIdForDef(sampleDef);
+  }
+
+  /* The coordinate merely acts as an offset and must be 0. */
+  SpirvConstant coordConstant = { };
+  coordConstant.op = spv::OpConstantComposite;
+  coordConstant.typeId = getIdForType(ir::BasicType(ir::ScalarType::eI32, 2u));
+
+  for (uint32_t i = 0u; i < 2u; i++)
+    coordConstant.constituents[i] = makeConstI32(0);
+
+  /* Emit actual image read */
+  m_code.push_back(makeOpcodeToken(spv::OpImageRead, 5u + imageOperands.computeDwordCount()));
+  m_code.push_back(getIdForType(op.getType()));
+  m_code.push_back(id);
+  m_code.push_back(getIdForDef(descriptorOp.getDef()));
+  m_code.push_back(getIdForConstant(coordConstant, 2u));
+  imageOperands.pushTo(m_code);
 
   emitDebugName(op.getDef(), id);
 }
@@ -3498,8 +3560,6 @@ void SpirvBuilder::emitStoreVariable(const ir::Op& op) {
 
 
 void SpirvBuilder::emitCompositeOp(const ir::Op& op) {
-  bool isInsert = op.getOpCode() == ir::OpCode::eCompositeInsert;
-
   const auto& addressOp = m_builder.getOpForOperand(op, 1u);
   dxbc_spv_assert(addressOp.isConstant() && addressOp.getType().isBasicType());
 
@@ -3507,15 +3567,9 @@ void SpirvBuilder::emitCompositeOp(const ir::Op& op) {
   auto spvId = getIdForDef(op.getDef());
 
   /* Emit actual composite instruction */
-  m_code.push_back(makeOpcodeToken(
-    (isInsert ? spv::OpCompositeInsert : spv::OpCompositeExtract),
-    (isInsert ? 5u : 4u) + addressOp.getOperandCount()));
+  m_code.push_back(makeOpcodeToken(spv::OpCompositeExtract, 4u + addressOp.getOperandCount()));
   m_code.push_back(typeId);
   m_code.push_back(spvId);
-
-  /* Value ID to insert */
-  if (isInsert)
-    m_code.push_back(getIdForDef(ir::SsaDef(op.getOperand(2u))));
 
   /* Composite ID */
   m_code.push_back(getIdForDef(ir::SsaDef(op.getOperand(0u))));
@@ -4397,6 +4451,13 @@ uint32_t SpirvBuilder::defDescriptor(const ir::Op& op, uint32_t typeId, spv::Sto
   if (op.getOpCode() == ir::OpCode::eDclCbv && cbvAsSsbo(op))
     pushOp(m_decorations, spv::OpDecorate, varId, spv::DecorationNonWritable);
 
+  if (op.getOpCode() == ir::OpCode::eDclInputTarget) {
+    int32_t rtIndex = int32_t(op.getOperand(op.getFirstLiteralOperandIndex() + 4u));
+
+    if (rtIndex >= 0)
+      pushOp(m_decorations, spv::OpDecorate, varId, spv::DecorationInputAttachmentIndex, rtIndex);
+  }
+
   emitDebugName(op.getDef(), varId);
 
   addEntryPointId(varId);
@@ -4946,7 +5007,8 @@ uint32_t SpirvBuilder::getDescriptorArraySize(const ir::Op& op) {
   dxbc_spv_assert(op.getOpCode() == ir::OpCode::eDclCbv ||
                   op.getOpCode() == ir::OpCode::eDclSrv ||
                   op.getOpCode() == ir::OpCode::eDclUav ||
-                  op.getOpCode() == ir::OpCode::eDclSampler);
+                  op.getOpCode() == ir::OpCode::eDclSampler ||
+                  op.getOpCode() == ir::OpCode::eDclInputTarget);
 
   return uint32_t(op.getOperand(3u));
 }
@@ -5065,6 +5127,7 @@ DescriptorBinding SpirvBuilder::mapDescriptor(const ir::Op& op, const ir::Op& bi
       case ir::OpCode::eDclSrv:         return ir::ScalarType::eSrv;
       case ir::OpCode::eDclUav:         return ir::ScalarType::eUav;
       case ir::OpCode::eDclUavCounter:  return ir::ScalarType::eUavCounter;
+      case ir::OpCode::eDclInputTarget: return ir::ScalarType::eInputTarget;
       default: break;
     }
 
@@ -5118,7 +5181,10 @@ ir::UavFlags SpirvBuilder::getUavFlags(const ir::Op& op) {
 
 
 ir::ResourceKind SpirvBuilder::getResourceKind(const ir::Op& op) {
-  dxbc_spv_assert(op.getOpCode() == ir::OpCode::eDclSrv || op.getOpCode() == ir::OpCode::eDclUav);
+  dxbc_spv_assert(op.getOpCode() == ir::OpCode::eDclSrv
+    || op.getOpCode() == ir::OpCode::eDclUav
+    || op.getOpCode() == ir::OpCode::eDclInputTarget);
+
   return ir::ResourceKind(op.getOperand(4u));
 }
 

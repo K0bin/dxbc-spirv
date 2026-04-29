@@ -189,6 +189,7 @@ with a scalar type of `ir::Type::Unknown`. In the final shader binary, no `Consu
 | `DclSrv`             | any              | `%EntryPoint`    | space            | register  | count          | `ir::ResourceKind`  |                 |
 | `DclUav`             | any              | `%EntryPoint`    | space            | register  | count          | `ir::ResourceKind`  | `ir::UavFlags`  |
 | `DclUavCounter`      | `u32`            | `%EntryPoint`    | `%DclUav` uav    |           |                |                     |                 |
+| `DclInputTarget`     | `u32`            | `%EntryPoint`    | space|           | register  | count          | `ir::ResourceKind`  | rt index        |
 | `DclLds`             | any              | `%EntryPoint`    |                  |           |                |                     |                 |
 | `DclScratch`         | any              | `%EntryPoint`    |                  |           |                |                     |                 |
 | `DclTmp`             | any              | `%EntryPoint`    |                  |           |                |                     |                 |
@@ -215,6 +216,8 @@ there is only one push data block consisting of a struct, or that the same struc
 
 `Dcl*` instructions themselves cannot be used as SSA values directly. Only specialized load, store and atomic instructions
 can use them, as well as specialized resource query and input interpolation instructions.
+
+For `DclInputTarget`, the render target index is a signed integer that maps to an color attachment index, or -1 for the depth-stencil attachment.
 
 `DclParam` instructions are not necessarily unique to any given function. Their purpose is merely to provide type information
 as well as optionally having a debug name attached to them, since there is no other way to encode type information.
@@ -267,7 +270,6 @@ Shader I/O and certain resource access operations may use arrays, structs or vec
 
 | `ir::OpCode`         | Return type      | Arguments...           |                           |          |
 |----------------------|------------------|------------------------|---------------------------|----------|
-| `CompositeInsert `   | any              | `%composite`           | `%address` into composite | `%value` |
 | `CompositeExtract`   | any              | `%composite`           | `%address` into composite |          |
 | `CompositeConstruct` | any composite    | List of `%members`     |                           |          |
 
@@ -399,6 +401,14 @@ For `ImageSample`, the `offset` parameter, if not `null`, is always a constant v
 For `ImageSample`, the `%dx` and `%dy` parameters, if not `null`, contain derivatives of the same type as the texture coordinate.
 
 For `ImageSample`, if the `%depth_compare` parameter is not `null`, the instruction must return a scalar float.
+
+# Input target instructions
+| `ir::OpCode`         | Return type      | Arguments...  |                   |
+|----------------------|------------------|---------------|-------------------|
+| `InputTargetLoad`    | any              | `%descriptor` | `%sample`         |
+
+The `InputTargetLoad` instruction loads pixel data for the rendered pixel. The `sample` parameter must not be `null` if the input
+target is multisampled, and must be less than the sample count.
 
 ### Pointer instructions
 Raw pointers can be used to access memory via the `MemoryLoad`, `MemoryStore` and `MemoryAtomic` instructions.

@@ -5,6 +5,8 @@
 #include <sstream>
 #include <vector>
 
+#include "../config.h"
+
 #include "../ir/ir.h"
 #include "../ir/ir_builder.h"
 #include "../ir/ir_disasm.h"
@@ -13,17 +15,24 @@
 
 #include "../ir/passes/ir_pass_lower_io.h"
 
+#include "../util/util_byte_stream.h"
+#include "../util/util_log.h"
+
+#ifdef ENABLE_SM5
 #include "../dxbc/dxbc_api.h"
 #include "../dxbc/dxbc_container.h"
 #include "../dxbc/dxbc_converter.h"
 #include "../dxbc/dxbc_disasm.h"
 #include "../dxbc/dxbc_parser.h"
 #include "../dxbc/dxbc_signature.h"
+#endif
 
 #include "../sm3/sm3_converter.h"
 
+#ifdef ENABLE_SPIRV
 #include "../spirv/spirv_builder.h"
 #include "../spirv/spirv_mapping.h"
+#endif
 
 using namespace dxbc_spv;
 
@@ -201,8 +210,8 @@ bool writeIrBinary(const ir::Builder& builder, const Options& options, Timers& t
   return bool(file);
 }
 
-
 bool writeSpirvBinary(ir::Builder builder, const Options& options, Timers& timers) {
+#ifdef ENABLE_SPIRV
   timers.tLowerSpirvBegin = std::chrono::high_resolution_clock::now();
 
   { ir::LowerIoPass pass(builder);
@@ -246,6 +255,10 @@ bool writeSpirvBinary(ir::Builder builder, const Options& options, Timers& timer
 
   file.write(reinterpret_cast<const char*>(data.data()), data.size());
   return bool(file);
+#else
+  std::cerr << "Error: dxbc-spirv built without SPIR-V support." << std::endl;
+  return false;
+#endif /* ENABLE_SPIRV */
 }
 
 
@@ -258,42 +271,34 @@ bool compileShader(util::ByteReader reader, const Options& options) {
   if (!options.irInput) {
     bool status = false;
 
-    if (!dxbc::Container::checkFourCC(reader)) {
-      sm3::Converter::Options sm3Options = { };
-      sm3Options.includeDebugNames = !options.noDebug;
+    /* Parse file header */
+#ifdef ENABLE_SM5
+    dxbc::Container container(reader);
 
-      auto specConstLayout = SM3SpecConstantsLayout();
-      sm3::Converter converter(reader, specConstLayout, sm3Options);
-
-      status = converter.convertShader(builder);
-    } else {
-      /* Parse file header */
-      dxbc::Container container(reader);
-
-      if (!container) {
-        std::cerr << "Error: " << options.input << " is not a valid dxbc file." << std::endl;
-        return false;
-      }
-
-      /* Work out shader name based on the file hash */
-      auto name = [&] {
-        std::stringstream stream;
-        stream << container.getHash();
-        return stream.str();
-      } ();
-
-      /* Set up conversion options */
-      dxbc::Converter::Options dxbcOptions = { };
-      dxbcOptions.includeDebugNames = !options.noDebug;
-      dxbcOptions.name = name.c_str();
-
-      dxbc::Converter converter(std::move(container), dxbcOptions);
-
-      if (options.gsPassthrough)
-        status = converter.createPassthroughGs(builder);
-      else
-        status = converter.convertShader(builder);
+    if (!container) {
+      std::cerr << "Error: " << options.input << " is not a valid dxbc file." << std::endl;
+      return false;
     }
+
+    /* Work out shader name based on the file hash */
+    auto name = [&] {
+      std::stringstream stream;
+      stream << container.getHash();
+      return stream.str();
+    } ();
+
+    /* Set up conversion options */
+    dxbc::Converter::Options dxbcOptions = { };
+    dxbcOptions.includeDebugNames = !options.noDebug;
+    dxbcOptions.name = name.c_str();
+
+    dxbc::Converter converter(std::move(container), dxbcOptions);
+
+    if (options.gsPassthrough)
+      status = converter.createPassthroughGs(builder);
+    else
+      status = converter.convertShader(builder);
+#endif /* ENABLE_SM5 */
 
     if (!status) {
       std::cerr << "Error: Failed to convert shader." << std::endl;

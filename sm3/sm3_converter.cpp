@@ -284,13 +284,14 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
 
 
 bool Converter::finalize(ir::Builder& builder, ShaderType shaderType) {
-  if (getShaderInfo().getVersion().first == 1u) {
+  if (shaderType == ShaderType::ePixel && getShaderInfo().getVersion().first == 1u) {
+    /* Shader model 1 doesn't have special color output registers.
+     * Instead, it simply outputs what was in Temp register 0 (r0) at the end. */
     auto value = m_regFile.emitTempLoad(builder, 0u,
       Swizzle::identity(), WriteMask(ComponentBit::eAll), ir::ScalarType::eF32);
 
-    if (!m_ioMap.emitColorStore(builder, value)) {
+    if (!m_ioMap.emitColorStore(builder, value))
       return false;
-    }
   }
 
   m_ioMap.finalize(builder);
@@ -859,16 +860,13 @@ bool Converter::handleTexCoord(ir::Builder& builder, const Instruction& op) {
     auto src = m_ioMap.emitTexCoordLoad(builder, op, op.getDst().getIndex(), writeMask, Swizzle::identity(), scalarType);
 
     /* Saturate */
-    src = builder.add(ir::Op::FClamp(
-      vectorType,
-      src,
+    src = builder.add(ir::Op::FClamp(vectorType, src,
       makeTypedConstant(builder, vectorType, 0.0f),
-      makeTypedConstant(builder, vectorType, 1.0f)
-    ));
+      makeTypedConstant(builder, vectorType, 1.0f)));
 
     /* w = 1.0 */
     if (writeMask & ComponentBit::eW)
-      src = builder.add(ir::Op::CompositeInsert(vectorType, src, builder.makeConstant(3u), ir::makeTypedConstant(builder, scalarType, 1.0f)));
+      src = insertIntoVector(builder, src, 3u, ir::makeTypedConstant(builder, scalarType, 1.0f));
 
     return storeDstModifiedPredicated(builder, op, dst, src);
   }
@@ -1099,10 +1097,12 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       auto bumpMappedTexCoord = applyBumpMapping(builder, samplerIdx, texCoord, src0);
 
       /* Insert it back into the original tex coord, so we have a z and w component in case we need them. */
-      auto u = builder.add(ir::Op::CompositeExtract(scalarType, bumpMappedTexCoord, builder.makeConstant(0u)));
-      auto v = builder.add(ir::Op::CompositeExtract(scalarType, bumpMappedTexCoord, builder.makeConstant(1u)));
-      texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(scalarType, 4u), texCoord, builder.makeConstant(0u), u));
-      texCoord = builder.add(ir::Op::CompositeInsert(ir::BasicType(scalarType, 4u), texCoord, builder.makeConstant(1u), v));
+      std::array<ir::SsaDef, 4u> texCoordComponents = {};
+      texCoordComponents[0] = ir::extractFromVector(builder, bumpMappedTexCoord, 0u);
+      texCoordComponents[1] = ir::extractFromVector(builder, bumpMappedTexCoord, 1u);
+      texCoordComponents[2] = ir::extractFromVector(builder, texCoord, 2u);
+      texCoordComponents[3] = ir::extractFromVector(builder, texCoord, 3u);
+      texCoord = buildVector(builder, scalarType, texCoordComponents.size(), texCoordComponents.data());
 
       result = m_resources.emitSample(builder, samplerIdx, texCoord, ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), ir::SsaDef(), scalarType);
 
@@ -1969,13 +1969,8 @@ bool Converter::storeDst(ir::Builder& builder, const Instruction& op, const Oper
 
   switch (operand.getRegisterType()) {
     case RegisterType::eTemp:
-      return m_regFile.emitStore(builder, operand, writeMask, predicateVec, value);
-
     case RegisterType::eAddr:
-      if (getShaderInfo().getType() == ShaderType::eVertex)
-        return m_regFile.emitStore(builder, operand, writeMask, predicateVec, value);
-      else
-        return m_regFile.emitStore(builder, operand, writeMask, predicateVec, value);
+      return m_regFile.emitStore(builder, operand, writeMask, predicateVec, value);
 
     case RegisterType::eOutput:
     case RegisterType::eRasterizerOut:

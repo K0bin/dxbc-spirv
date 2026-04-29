@@ -243,6 +243,7 @@ bool RemoveUnusedPass::hasSideEffect(OpCode opCode) {
     case OpCode::eDclSrv:
     case OpCode::eDclUav:
     case OpCode::eDclUavCounter:
+    case OpCode::eDclInputTarget:
     case OpCode::eDclLds:
     case OpCode::eDclScratch:
     case OpCode::eDclTmp:
@@ -254,6 +255,7 @@ bool RemoveUnusedPass::hasSideEffect(OpCode opCode) {
     case OpCode::eScratchLoad:
     case OpCode::eLdsLoad:
     case OpCode::ePushDataLoad:
+    case OpCode::eInputTargetLoad:
     case OpCode::eInputLoad:
     case OpCode::eOutputLoad:
     case OpCode::eDescriptorLoad:
@@ -283,7 +285,6 @@ bool RemoveUnusedPass::hasSideEffect(OpCode opCode) {
     case OpCode::eCast:
     case OpCode::eConsumeAs:
 
-    case OpCode::eCompositeInsert:
     case OpCode::eCompositeExtract:
     case OpCode::eCompositeConstruct:
 

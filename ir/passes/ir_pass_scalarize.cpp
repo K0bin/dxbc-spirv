@@ -210,6 +210,7 @@ void ScalarizePass::scalarizeVectorOps() {
       case OpCode::eDclTmp:
       case OpCode::eDclParam:
       case OpCode::eDclXfb:
+      case OpCode::eDclInputTarget:
       case OpCode::eFunction:
       case OpCode::eFunctionEnd:
       case OpCode::eFunctionCall:
@@ -234,7 +235,6 @@ void ScalarizePass::scalarizeVectorOps() {
       case OpCode::eBarrier:
       case OpCode::eConvertF32toPackedF16:
       case OpCode::eConvertPackedF16toF32:
-      case OpCode::eCompositeInsert:
       case OpCode::eCompositeExtract:
       case OpCode::eCompositeConstruct:
       case OpCode::eCheckSparseAccess:
@@ -246,6 +246,7 @@ void ScalarizePass::scalarizeVectorOps() {
       case OpCode::eLdsLoad:
       case OpCode::eLdsStore:
       case OpCode::ePushDataLoad:
+      case OpCode::eInputTargetLoad:
       case OpCode::eInputLoad:
       case OpCode::eOutputLoad:
       case OpCode::eOutputStore:

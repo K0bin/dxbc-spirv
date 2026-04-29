@@ -662,8 +662,7 @@ bool IoMap::emitStore(
       emitIoVarDefault(builder, *ioVar);
     }
 
-    bool isOutput = !registerTypeIsInput(ioVar->registerType, m_converter.getShaderInfo().getType());
-    dxbc_spv_assert(isOutput);
+    dxbc_spv_assert(!registerTypeIsInput(ioVar->registerType, m_converter.getShaderInfo().getType()));
 
     auto ioVarBaseType = ioVar->baseType.getBaseType(0u);
     ir::ScalarType ioVarScalarType = ioVarBaseType.getBaseType();

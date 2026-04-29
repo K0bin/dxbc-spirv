@@ -175,12 +175,12 @@ CseOpFlags CsePass::classifyOp(const Op& op) const {
     case OpCode::eConvertPackedF16toF32:
     case OpCode::eCast:
     case OpCode::eConsumeAs:
-    case OpCode::eCompositeInsert:
     case OpCode::eCompositeExtract:
     case OpCode::eCompositeConstruct:
     case OpCode::eCheckSparseAccess:
     case OpCode::eParamLoad:
     case OpCode::ePushDataLoad:
+    case OpCode::eInputTargetLoad:
     case OpCode::eInputLoad:
     case OpCode::eDescriptorLoad:
     case OpCode::eBufferQuerySize:
@@ -375,6 +375,7 @@ CseOpFlags CsePass::classifyOp(const Op& op) const {
     case OpCode::eDclTmp:
     case OpCode::eDclParam:
     case OpCode::eDclXfb:
+    case OpCode::eDclInputTarget:
       break;
 
     /* Instructions that must be lowered by now */
@@ -413,7 +414,6 @@ bool CsePass::isTrivialOp(const Op& op) const {
   return op.getOpCode() == OpCode::eCast ||
          op.getOpCode() == OpCode::eCompositeConstruct ||
          op.getOpCode() == OpCode::eCompositeExtract ||
-         op.getOpCode() == OpCode::eCompositeInsert ||
          op.getOpCode() == OpCode::eInputLoad ||
          op.getOpCode() == OpCode::ePushDataLoad;
 }

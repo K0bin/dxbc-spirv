@@ -151,6 +151,10 @@ Scope DivergenceAnalysis::determineScope(const Op& op) {
       return std::min(Scope::eSubgroup, determineScopeForArgs(op));
     }
 
+    /* Input target loads return per-pixel data */
+    case OpCode::eInputTargetLoad:
+      return Scope::eThread;
+
     /* Derivatives are special: Coarse derivatives will always be quad-uniform,
      * and derivatives of quad-uniform inputs will be constant zero. */
     case OpCode::eDerivX:
@@ -207,7 +211,6 @@ Scope DivergenceAnalysis::determineScope(const Op& op) {
     case OpCode::eConvertPackedF16toF32:
     case OpCode::eCast:
     case OpCode::eConsumeAs:
-    case OpCode::eCompositeInsert:
     case OpCode::eCompositeExtract:
     case OpCode::eCompositeConstruct:
     case OpCode::eCheckSparseAccess:
@@ -381,6 +384,7 @@ Scope DivergenceAnalysis::determineScope(const Op& op) {
     case OpCode::eDclTmp:
     case OpCode::eDclParam:
     case OpCode::eDclXfb:
+    case OpCode::eDclInputTarget:
       return Scope::eGlobal;
 
     case OpCode::eDclOutput:

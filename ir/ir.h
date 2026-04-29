@@ -64,6 +64,7 @@ enum class ScalarType : uint8_t {
   eSrv          = 24,
   eUav          = 25,
   eUavCounter   = 26,
+  eInputTarget  = 27,
 
   eCount
 };
@@ -226,7 +227,8 @@ public:
         || type == ScalarType::eCbv
         || type == ScalarType::eSrv
         || type == ScalarType::eUav
-        || type == ScalarType::eUavCounter;
+        || type == ScalarType::eUavCounter
+        || type == ScalarType::eInputTarget;
   }
 
   /** Computes byte size of vector type */
@@ -921,6 +923,7 @@ enum class OpCode : uint16_t {
   eDclTmp                       = 45u,
   eDclParam                     = 46u,
   eDclXfb                       = 47u,
+  eDclInputTarget               = 48u,
 
   /** Last valid opcode for declarative instructions */
   eLastDeclarative              = 63u,
@@ -961,7 +964,7 @@ enum class OpCode : uint16_t {
   eCast                         = 198u,
   eConsumeAs                    = 199u,
 
-  eCompositeInsert              = 224u,
+  /* unused opcode 224 */
   eCompositeExtract             = 225u,
   eCompositeConstruct           = 226u,
 
@@ -975,7 +978,7 @@ enum class OpCode : uint16_t {
   eLdsLoad                      = 293u,
   eLdsStore                     = 294u,
   ePushDataLoad                 = 295u,
-  /* unused opcode 296 */
+  eInputTargetLoad              = 296u,
   eInputLoad                    = 297u,
   eOutputLoad                   = 298u,
   eOutputStore                  = 299u,
@@ -1651,6 +1654,16 @@ public:
       .addOperand(offset);
   }
 
+  static Op DclInputTarget(Type type, SsaDef entryPoint, uint32_t regSpace, uint32_t regIdx, uint32_t count, ResourceKind kind, int32_t rtIndex) {
+    return Op(OpCode::eDclInputTarget, type)
+      .addOperand(entryPoint)
+      .addOperand(regSpace)
+      .addOperand(regIdx)
+      .addOperand(count)
+      .addOperand(kind)
+      .addOperand(rtIndex);
+  }
+
   /** Helpers to construct mode setting ops */
   static Op SetCsWorkgroupSize(SsaDef def, uint32_t x, uint32_t y, uint32_t z) {
     return Op(OpCode::eSetCsWorkgroupSize, Type())
@@ -1918,13 +1931,6 @@ public:
       .addOperand(value);
   }
 
-  static Op CompositeInsert(Type type, SsaDef composite, SsaDef address, SsaDef value) {
-    return Op(OpCode::eCompositeInsert, type)
-      .addOperand(composite)
-      .addOperand(address)
-      .addOperand(value);
-  }
-
   static Op CompositeExtract(Type type, SsaDef composite, SsaDef address) {
     return Op(OpCode::eCompositeExtract, type)
       .addOperand(composite)
@@ -1989,6 +1995,12 @@ public:
     return Op(OpCode::ePushDataLoad, type)
       .addOperand(decl)
       .addOperand(address);
+  }
+
+  static Op InputTargetLoad(Type type, SsaDef descriptor, SsaDef sample) {
+    return Op(OpCode::eInputTargetLoad, type)
+      .addOperand(descriptor)
+      .addOperand(sample);
   }
 
   static Op InputLoad(Type type, SsaDef decl, SsaDef address) {
