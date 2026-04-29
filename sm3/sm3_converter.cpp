@@ -878,6 +878,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
   auto dst = op.getDst();
   auto opCode = op.getOpCode();
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
+  Operand src1;
 
   switch (opCode) {
     case OpCode::eTexLd: {
@@ -909,7 +910,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       } else {
         /* texld - sm_2_0 and up */
         auto src0 = op.getSrc(0u);
-        auto src1 = op.getSrc(1u);
+        src1 = op.getSrc(1u);
         texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
         samplerIdx = src1.getIndex();
 
@@ -930,7 +931,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     case OpCode::eTexLdl: {
       /* Sample with explicit LOD */
       auto src0 = op.getSrc(0u);
-      auto src1 = op.getSrc(1u);
+      src1 = op.getSrc(1u);
       auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
       uint32_t samplerIdx = src1.getIndex();
       auto lod = builder.add(ir::Op::CompositeExtract(scalarType, texCoord, builder.makeConstant(3u)));
@@ -940,7 +941,7 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
     case OpCode::eTexLdd: {
       /* Sample with explicit derivatives */
       auto src0 = op.getSrc(0u);
-      auto src1 = op.getSrc(1u);
+      src1 = op.getSrc(1u);
       auto src2 = op.getSrc(2u);
       auto src3 = op.getSrc(3u);
       auto texCoord = loadSrcModified(builder, op, src0, ComponentBit::eAll, scalarType);
@@ -1133,6 +1134,15 @@ bool Converter::handleTextureSample(ir::Builder& builder, const Instruction& op)
       dxbc_spv_unreachable();
       return false;
     } break;
+  }
+
+  auto shaderInfo = getShaderInfo();
+  if (shaderInfo.getVersion().first >= 3u) {
+    /* The sampler register may have a swizzle on shader model 3.
+     * This swizzle is applied to the sampling results BEFORE applying the write mask. */
+    result = ir::swizzleVector(builder, result, src1.getSwizzle(shaderInfo), dst.getWriteMask(shaderInfo));
+  } else {
+    result = ir::swizzleVector(builder, result, Swizzle::identity(), dst.getWriteMask(shaderInfo));
   }
 
   return storeDstModifiedPredicated(builder, op, dst, result);
