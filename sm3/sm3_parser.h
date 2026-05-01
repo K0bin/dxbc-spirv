@@ -412,7 +412,9 @@ public:
   /** Returns a new operand with a specific register index */
   Operand withIndex(uint32_t index) {
     uint32_t token = util::binsert(m_token, index, 0u, 11u);
-    return Operand(token, m_info, m_imm, m_addressToken, m_predicateToken);
+    Operand result = *this;
+    result.m_token = token;
+    return result;
   }
 
   /** Writes code header to binary blob. */
@@ -424,18 +426,6 @@ public:
   }
 
 private:
-
-  Operand(
-    uint32_t token,
-    OperandInfo info,
-    std::array<uint32_t, 4u> imm,
-    std::optional<uint32_t> addressToken,
-    std::optional<uint32_t> predicateToken)
-    : m_token(token)
-    , m_info(info)
-    , m_imm(imm)
-    , m_addressToken(addressToken)
-    , m_predicateToken(predicateToken) { }
 
   uint32_t                  m_token   = { };
 

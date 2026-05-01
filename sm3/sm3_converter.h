@@ -122,6 +122,8 @@ private:
       : ir::Op::FPow(type, base, exp);
   }
 
+  ir::SsaDef emitTexMatMul(ir::Builder& builder, const Instruction& op);
+
   ir::SsaDef emitSharedConstants(ir::Builder& builder);
 
   ir::SsaDef applyBumpMapping(ir::Builder& builder, uint32_t stageIdx, ir::SsaDef src0, ir::SsaDef src1);
@@ -160,11 +162,9 @@ private:
 
   bool handleTexDepth(ir::Builder& builder, const Instruction& op);
 
-  bool handleCmp(ir::Builder& builder, const Instruction& op);
-
   bool handleLrp(ir::Builder& builder, const Instruction& op);
 
-  bool handleCnd(ir::Builder& builder, const Instruction& op);
+  bool handleSelect(ir::Builder& builder, const Instruction& op);
 
   bool handleNrm(ir::Builder& builder, const Instruction& op);
 
