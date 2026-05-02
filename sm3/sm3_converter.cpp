@@ -1668,24 +1668,19 @@ bool Converter::handleSelect(ir::Builder& builder, const Instruction& op) {
   WriteMask writeMask = dst.getWriteMask(m_parser.getShaderInfo());
   auto scalarType = dst.isPartialPrecision() ? ir::ScalarType::eMinF16 : ir::ScalarType::eF32;
 
-  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
-  auto src2 = loadSrcModified(builder, op, op.getSrc(2u), writeMask, scalarType);
-
   if (op.getOpCode() == OpCode::eCnd && getShaderInfo().getVersion().first <= 1u && getShaderInfo().getVersion().second < 4u) {
     /* Cnd on SM<1.4 always compares r0.a and picks one of the two entire source operands based on that
      * On 1.4+ it compares per component. */
-    dxbc_spv_assert(op.getSrc(0u).getIndex() == 0u);
-    dxbc_spv_assert(op.getSrc(0u).getSwizzle() == 0u);
-    auto condition = m_regFile.emitTempLoad(builder, 0u, Swizzle::identity(), WriteMask(ComponentBit::eW), scalarType);
-
-    /* Cnd compares to 0.5 */
-    auto conditionBool = builder.add(ir::Op::FGt(ir::ScalarType::eBool, condition, makeTypedConstant(builder, scalarType, 0.5f)));
-    auto result = builder.add(ir::Op::Select(builder.getOp(src1).getType(), conditionBool, src1, src2));
-
-    return storeDstModifiedPredicated(builder, op, dst, result);
+    auto src0Register = op.getSrc(0u);
+    if (src0Register.getIndex() != 0u
+      || src0Register.getRegisterType() != RegisterType::eTemp
+      || src0Register.getSwizzle(getShaderInfo()) != Swizzle(Component::eW))
+      return false;
   }
 
   auto src0 = loadSrcModified(builder, op, op.getSrc(0u), writeMask, scalarType);
+  auto src1 = loadSrcModified(builder, op, op.getSrc(1u), writeMask, scalarType);
+  auto src2 = loadSrcModified(builder, op, op.getSrc(2u), writeMask, scalarType);
 
   util::small_vector<ir::SsaDef, 4u> components;
   for (auto _ : writeMask) {
