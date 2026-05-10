@@ -211,6 +211,8 @@ private:
 
   bool storeDstModifiedPredicated(ir::Builder& builder, const Instruction& op, const Operand& operand, ir::SsaDef value);
 
+  void emitAlphaTest(ir::Builder& builder);
+
   ir::SsaDef calculateAddress(
             ir::Builder&            builder,
             RegisterType            registerType,
