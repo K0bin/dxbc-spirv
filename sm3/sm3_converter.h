@@ -73,6 +73,8 @@ private:
   ir::SsaDef       m_psSharedData;
   ir::SsaDef       m_renderState;
 
+  ir::SsaDef       m_alphaTestFunction;
+
   uint32_t m_instructionCount = 0u;
 
   /* Entry point definition and function definitions. */

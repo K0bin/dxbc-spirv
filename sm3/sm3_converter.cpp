@@ -279,6 +279,11 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
    * in the correct location */
   builder.setCursor(m_entryPoint.mainFunc);
   m_ioMap.emitIoVarDefaults(builder);
+
+  if (shaderType == ShaderType::ePixel) {
+    emitAlphaTest(builder);
+  }
+
   return true;
 }
 
@@ -295,6 +300,13 @@ bool Converter::finalize(ir::Builder& builder, ShaderType shaderType) {
   }
 
   m_ioMap.finalize(builder);
+
+  if (shaderType == ShaderType::ePixel) {
+    auto color = m_ioMap.getColorValue(builder);
+    auto alpha = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, color,
+      builder.makeConstant(3u)));
+    builder.add(ir::Op::FunctionCall(ir::ScalarType::eVoid, m_alphaTestFunction).addParam(alpha));
+  }
 
   return true;
 }
@@ -2125,51 +2137,38 @@ bool Converter::storeDstModifiedPredicated(ir::Builder& builder, const Instructi
   return storeDst(builder, op, operand, predicate, value);
 }
 
-enum class AlphaTestComparisonMode : uint32_t {
-  Never = 0u,
-  Less = 1u,
-  Equal = 2u,
-  LessOrEqual = 3u,
-  Greater = 4u,
-  NotEqual = 5u,
-  GreaterOrEqual = 6u,
-  Always = 7u,
-};
-
 void Converter::emitAlphaTest(ir::Builder& builder) {
-  /*
-   * PREPARATION
-   */
-
-  auto color = m_ioMap.getColorValue(builder);
-  auto alpha = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, color,
-    builder.makeConstant(3u)));
-
-  auto alphaRef = builder.add(ir::Op::PushDataLoad(ir::ScalarType::eU32, m_renderState,
-    builder.makeConstant(4u)));
-  auto alphaFunc = m_specConstants.get(builder, SpecConstantId::eSpecAlphaCompareOp);
-  auto alphaPrecision = m_specConstants.get(builder, SpecConstantId::eSpecAlphaPrecisionBits);
-
-  auto preparedAlphaRefTmp = builder.add(ir::Op::DclTmp(ir::ScalarType::eF32, m_entryPoint.def));
-  auto alphaTmp = builder.add(ir::Op::DclTmp(ir::ScalarType::eF32, m_entryPoint.def));
-
-  auto isNotAlways = builder.add(ir::Op::IEq(ir::ScalarType::eU32, alphaFunc,
-    builder.makeConstant(uint32_t(AlphaTestComparisonMode::Always))));
-  isNotAlways = builder.add(ir::Op::BNot(ir::ScalarType::eBool, isNotAlways));
-  auto isNotAlwaysIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), isNotAlways));
+  auto alphaParam = builder.add(ir::Op::DclParam(ir::ScalarType::eF32));
+  m_alphaTestFunction = builder.add(
+    ir::Op::Function(ir::ScalarType::eVoid)
+      .addOperand(alphaParam)
+  );
+  if (m_options.includeDebugNames) {
+    builder.add(ir::Op::DebugName(alphaParam, "alpha"));
+    builder.add(ir::Op::DebugName(m_alphaTestFunction, "alphaTest"));
+  }
 
   /* The lower 8 bits of the alpha ref contain the actual reference value
    * from the API, the upper bits store the accuracy bit count minus 8.
    * So if we want 12 bits of accuracy (i.e. 0-4095), that value will be 4. */
-  auto useIntPrecision = builder.add(ir::Op::ULe(ir::ScalarType::eBool, alphaPrecision, builder.makeConstant(8u)));
-  auto useIntPrecisionIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), useIntPrecision));
+  auto alpha = builder.add(ir::Op::ParamLoad(ir::ScalarType::eF32, m_alphaTestFunction, alphaParam));
+  auto alphaRef = builder.add(ir::Op::PushDataLoad(ir::ScalarType::eU32, m_renderState,
+  builder.makeConstant(4u)));
+  auto alphaComparisonMode = m_specConstants.get(builder, SpecConstantId::eSpecAlphaCompareOp);
+  auto alphaPrecision = m_specConstants.get(builder, SpecConstantId::eSpecAlphaPrecisionBits);
 
-  /*
-   * INT PRECISION
-   */
+  auto isAlways = builder.add(ir::Op::IEq(ir::ScalarType::eU32, alphaComparisonMode,
+    builder.makeConstant(uint32_t(AlphaTestComparisonMode::Always))));
+
+  /* if (alphaComparisonMode == ALWAYS) return; */
+  auto isAlwaysIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), isAlways));
+  builder.add(ir::Op::Return());
+  auto isAlwaysIfEnd = builder.add(ir::Op::ScopedEndIf(isAlwaysIf));
+  builder.rewriteOp(isAlwaysIf, ir::Op(builder.getOp(isAlwaysIf)).setOperand(0u, isAlwaysIfEnd));
+
+  /* Int Precision */
 
   /* Adjust alpha ref to the given range */
-  /* TODO: types and shift ops? */
   auto alphaRefInt = builder.add(ir::Op::BOr(
     ir::ScalarType::eU32,
     builder.add(ir::Op::IShl(ir::ScalarType::eU32, alphaRef, alphaPrecision)),
@@ -2185,40 +2184,25 @@ void Converter::emitAlphaTest(ir::Builder& builder) {
     builder.makeConstant(1u)
   ));
   alphaFactor = builder.add(ir::Op::Cast(ir::ScalarType::eF32, alphaFactor));
-  builder.add(ir::Op::TmpStore(preparedAlphaRefTmp, alphaRefInt));
 
   auto alphaInt = builder.add(ir::Op::FRound(ir::ScalarType::eF32,
     builder.add(ir::Op::FMul(ir::ScalarType::eF32, alpha, alphaFactor)), ir::RoundMode::eNearestEven));
-  builder.add(ir::Op::TmpStore(alphaTmp, alphaInt));
 
-  builder.add(ir::Op::ScopedElse(useIntPrecisionIf));
+  /* Float Precision */
 
-  /*
-   * FLOAT PRECISION
-   */
-
-  /* If we're not using integer precision, normalize the alpha ref */
   auto alphaRefFloat = builder.add(ir::Op::FDiv(ir::ScalarType::eF32,
-    builder.add(ir::Op::Cast(ir::ScalarType::eF32, alphaRef)),
-    builder.makeConstant(255.0f)));
-  builder.add(ir::Op::TmpStore(preparedAlphaRefTmp, alphaRefFloat));
-  builder.add(ir::Op::TmpStore(alphaTmp, alpha));
+  builder.add(ir::Op::Cast(ir::ScalarType::eF32, alphaRef)),
+  builder.makeConstant(255.0f)));
 
-  auto precisionEndIf = builder.add(ir::Op::ScopedEndIf(useIntPrecisionIf));
-  builder.rewriteOp(useIntPrecisionIf, ir::Op(builder.getOp(useIntPrecisionIf)).setOperand(0u, precisionEndIf));
+  /* Pick the precision */
+  auto useIntPrecision = builder.add(ir::Op::ULe(ir::ScalarType::eBool, alphaPrecision, builder.makeConstant(8u)));
+  alpha = builder.add(ir::Op::Select(ir::ScalarType::eF32, useIntPrecision, alphaInt, alpha));
+  alphaRef = builder.add(ir::Op::Select(ir::ScalarType::eF32, useIntPrecision, alphaRefInt, alphaRefFloat));
 
-  /*
-   * ACTUAL TEST
-   */
-
-  auto preparedAlphaRef = builder.add(ir::Op::TmpLoad(ir::ScalarType::eF32, preparedAlphaRefTmp));
-  alpha = builder.add(ir::Op::TmpLoad(ir::ScalarType::eF32, alphaTmp));
-
+  /* do_discard = switch (alphaComparisonMode) ... */
   auto alphaTestBoolTmp = builder.add(ir::Op::DclTmp(ir::ScalarType::eBool, m_entryPoint.def));
 
-  /* do_discard = switch (alphaTestFunc) ... */
-  auto switchDef = builder.add(ir::Op::ScopedSwitch(ir::SsaDef(), alphaFunc));
-
+  auto switchDef = builder.add(ir::Op::ScopedSwitch(ir::SsaDef(), alphaComparisonMode));
   for (uint32_t i = 0u; i <= uint(AlphaTestComparisonMode::Always); i++) {
     builder.add(ir::Op::ScopedSwitchCase(switchDef, i));
 
@@ -2259,9 +2243,7 @@ void Converter::emitAlphaTest(ir::Builder& builder) {
   auto discardEndIf = builder.add(ir::Op::ScopedEndIf(discardIf));
   builder.rewriteOp(discardIf, ir::Op(builder.getOp(discardIf)).setOperand(0u, discardEndIf));
 
-  auto alphaTestEndIf = builder.add(ir::Op::ScopedEndIf(isNotAlwaysIf));
-  builder.rewriteOp(isNotAlwaysIf, ir::Op(builder.getOp(isNotAlwaysIf)).setOperand(0u, alphaTestEndIf));
-
+  builder.add(ir::Op::FunctionEnd());
 }
 
 
