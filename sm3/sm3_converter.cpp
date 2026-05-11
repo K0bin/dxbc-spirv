@@ -2137,10 +2137,13 @@ enum class AlphaTestComparisonMode : uint32_t {
 };
 
 void Converter::emitAlphaTest(ir::Builder& builder) {
-  ir::SsaDef alpha;
   /*
    * PREPARATION
    */
+
+  auto color = m_ioMap.getColorValue(builder);
+  auto alpha = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, color,
+    builder.makeConstant(3u)));
 
   auto alphaRef = builder.add(ir::Op::PushDataLoad(ir::ScalarType::eU32, m_renderState,
     builder.makeConstant(4u)));
