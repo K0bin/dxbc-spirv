@@ -47,6 +47,9 @@ void IoMap::initialize(ir::Builder& builder) {
   }
 
   if (info.getVersion().first >= 3u) {
+    /* Assume that shader model 3 vertex shaders hardly ever get mixed with fixed function pixel processing
+     * If they do, the backend handles it. Color 0 is the exception because that needs a different value. */
+
     /* Emit functions that pick a register using
      * a switch statement to allow relative addressing */
 
@@ -102,12 +105,12 @@ void IoMap::initialize(ir::Builder& builder) {
 
     /* Fog
      * There is no fog input register in the pixel shader that is accessible
-     * to the shader. We do however need to pass the vertex shader calculated
-     * fog value across to the fragment shader. Use an imaginary 11th input register. */
+     * to the shader. We do however need to pass the fog value calculated by the vertex shader
+     * the fragment shader. Use an imaginary 11th input register. */
     dclIoVar(
       builder,
       isPS ? RegisterType::eInput : RegisterType::eRasterizerOut,
-      isPS ? SM3PSInputArraySize : uint32_t(RasterizerOutIndex::eRasterOutFog),
+      isPS ? FogRegisterIndex : uint32_t(RasterizerOutIndex::eRasterOutFog),
       { SemanticUsage::eFog, 0u }
     );
 
@@ -289,6 +292,7 @@ void IoMap::dclIoVar(
   bool isScalar = registerType == RegisterType::eRasterizerOut
     && (registerIndex == uint32_t(RasterizerOutIndex::eRasterOutFog)
     || registerIndex == uint32_t(RasterizerOutIndex::eRasterOutPointSize));
+  isScalar |= registerType == RegisterType::eInput && registerIndex == FogRegisterIndex;
   isScalar |= builtIn == ir::BuiltIn::eIsFrontFace;
   isScalar |= builtIn == ir::BuiltIn::eDepth;
   isScalar |= builtIn == ir::BuiltIn::ePointSize;
@@ -496,7 +500,10 @@ std::optional<Semantic> IoMap::determineSemanticForRegister(RegisterType regType
       return std::make_optional(Semantic { SemanticUsage::eColor, regIndex });
 
     case RegisterType::eInput:
-      return std::make_optional(Semantic { SemanticUsage::eColor, regIndex });
+      if (regIndex == FogRegisterIndex)
+        return std::make_optional(Semantic { SemanticUsage::eFog, 0u });
+      else
+        return std::make_optional(Semantic { SemanticUsage::eColor, regIndex });
 
     case RegisterType::eTexCoordOut:
       return std::make_optional(Semantic { SemanticUsage::eTexCoord, regIndex });
