@@ -304,6 +304,26 @@ bool Converter::finalize(ir::Builder& builder, ShaderType shaderType) {
       return false;
   }
 
+  if (shaderType == ShaderType::ePixel && m_fogFunction) {
+    auto color = m_ioMap.getColorValue(builder);
+    auto position = m_ioMap.getPositionValue(builder);
+    auto colorWithFog = builder.add(
+      ir::Op::FunctionCall(ir::BasicType(ir::ScalarType::eF32, 4u), m_fogFunction)
+      .addParam(position)
+      .addParam(color)
+    );
+
+    if (!m_ioMap.emitColorStore(builder, colorWithFog))
+      return false;
+  } else if (shaderType == ShaderType::eVertex && m_fogFunction) {
+    auto position = m_ioMap.getPositionValue(builder);
+    auto fogFactor = builder.add(
+      ir::Op::FunctionCall(ir::ScalarType::eF32, m_fogFunction)
+      .addParam(position)
+    );
+    m_ioMap.emitFogStore(builder, fogFactor);
+  }
+
   m_ioMap.finalize(builder);
 
   if (shaderType == ShaderType::ePixel) {
