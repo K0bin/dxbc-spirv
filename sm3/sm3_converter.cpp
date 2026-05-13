@@ -280,6 +280,10 @@ bool Converter::initialize(ir::Builder& builder, ShaderType shaderType) {
     emitAlphaTest(builder);
   }
 
+  if (getShaderInfo().getVersion().first < 3u) {
+    emitFog(builder);
+  }
+
   /* Set cursor to main function so that instructions will be emitted
    * in the correct location */
   builder.setCursor(m_entryPoint.mainFunc);
@@ -2242,6 +2246,174 @@ void Converter::emitAlphaTest(ir::Builder& builder) {
   builder.add(ir::Op::Demote());
   auto discardEndIf = builder.add(ir::Op::ScopedEndIf(discardIf));
   builder.rewriteOp(discardIf, ir::Op(builder.getOp(discardIf)).setOperand(0u, discardEndIf));
+
+  builder.add(ir::Op::FunctionEnd());
+}
+
+
+void Converter::emitFog(ir::Builder& builder) {
+  bool isPS = getShaderInfo().getType() == ShaderType::ePixel;
+
+  auto posParam = builder.add(ir::Op::DclParam(ir::BasicType(ir::ScalarType::eF32, 4u)));
+  ir::SsaDef colorParam = { };
+  ir::Type returnType = ir::ScalarType::eF32;
+  if (isPS) {
+    /* The vertex shader fog function merely calculates the fog factor whereas the pixel shader fog function
+     * calculates the fog factor and then uses that to calculate the final color of the pixel.
+     * So the color parameter is only used in pixel shaders. */
+    colorParam = builder.add(ir::Op::DclParam(ir::BasicType(ir::ScalarType::eF32, 4u)));
+    returnType = ir::BasicType(ir::ScalarType::eF32, 4u);
+  }
+
+  auto functionOp = ir::Op::Function(returnType)
+      .addOperand(posParam);
+
+  if (colorParam)
+      functionOp.addOperand(colorParam);
+
+  m_fogFunction = builder.add(functionOp);
+
+  if (m_options.includeDebugNames) {
+    builder.add(ir::Op::DebugName(m_fogFunction, "calculateFog"));
+    builder.add(ir::Op::DebugName(posParam, "vPos"));
+
+    if (colorParam)
+      builder.add(ir::Op::DebugName(colorParam, "oColor"));
+  }
+
+  /* Read the required values. */
+  auto position = builder.add(ir::Op::ParamLoad(ir::BasicType(ir::ScalarType::eF32, 4u), m_fogFunction, posParam));
+
+  ir::SsaDef color = { };
+  if (colorParam)
+    color = builder.add(ir::Op::ParamLoad(ir::BasicType(ir::ScalarType::eF32, 4u), m_fogFunction, colorParam));
+
+  auto fogColor = builder.add(ir::Op::PushDataLoad(ir::BasicType(ir::ScalarType::eF32, 3u),
+    m_renderState, builder.makeConstant(uint32_t(RenderStateItem::eFogColor))));
+
+  auto fogScale = builder.add(ir::Op::PushDataLoad(ir::ScalarType::eF32,
+    m_renderState, builder.makeConstant(uint32_t(RenderStateItem::eFogScale))));
+
+  auto fogEnd = builder.add(ir::Op::PushDataLoad(ir::ScalarType::eF32,
+    m_renderState, builder.makeConstant(uint32_t(RenderStateItem::eFogEnd))));
+
+  auto fogDensity = builder.add(ir::Op::PushDataLoad(ir::ScalarType::eF32,
+    m_renderState, builder.makeConstant(uint32_t(RenderStateItem::eFogDensity))));
+
+  auto fogMode = m_specConstants.get(builder,
+     isPS ? SpecConstantId::eSpecPixelFogMode : SpecConstantId::eSpecVertexFogMode);
+
+  auto fogEnabledInt = m_specConstants.get(builder, SpecConstantId::eSpecFogEnabled);
+  auto fogDisabled = builder.add(ir::Op::IEq(ir::ScalarType::eBool, fogEnabledInt, builder.makeConstant(0u)));
+
+  /* Check if fog is disabled and return early. */
+  auto fogDisabledIf = builder.add(ir::Op::ScopedIf(ir::SsaDef(), fogDisabled));
+
+  builder.add(ir::Op::Return(returnType, isPS ? color : builder.makeConstant(0.0f)));
+
+  auto fogDisabledIfEnd = builder.add(ir::Op::ScopedEndIf(fogDisabledIf));
+  builder.rewriteOp(fogDisabledIf, ir::Op(builder.getOp(fogDisabledIf)).setOperand(0u, fogDisabledIfEnd));
+
+  /* Actually calculate the fog factor now we have all the vars in-place. */
+  auto z = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, position, builder.makeConstant(2u)));
+
+  ir::SsaDef depth;
+  if (isPS) {
+    auto w = builder.add(ir::Op::CompositeExtract(ir::ScalarType::eF32, position, builder.makeConstant(3u)));
+    depth = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, z, builder.add(ir::Op::FDiv(ir::ScalarType::eF32, builder.makeConstant(1.0f), w))));
+  } else {
+    depth = builder.add(ir::Op::FAbs(ir::ScalarType::eF32, z));
+  }
+
+  /* There are a few different fog formulas for the user to choose. */
+  auto fogFactorTmp = builder.add(ir::Op::DclTmp(ir::ScalarType::eF32, getEntryPoint()));
+
+  auto fogModeSwitch = builder.add(ir::Op::ScopedSwitch(ir::SsaDef(), fogMode));
+  for (uint32_t i = 0u; i <= uint32_t(FogMode::eLinear); i++) {
+    builder.add(ir::Op::ScopedSwitchCase(fogModeSwitch, i));
+
+    ir::SsaDef fogFactor;
+    auto mode = FogMode(i);
+    switch (mode) {
+      default:
+      /* vFog */
+      case FogMode::eNone: {
+        if (isPS)
+          fogFactor = m_ioMap.getFogValue(builder);
+        else
+          fogFactor = builder.makeConstant(1.0f);
+      } break;
+
+      /* (end - d) / (end - start) */
+      case FogMode::eLinear: {
+        fogFactor = builder.add(ir::Op::FSub(ir::ScalarType::eF32, fogEnd, depth));
+        fogFactor = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, fogFactor, fogScale));
+        fogFactor = builder.add(ir::Op::FClamp(ir::ScalarType::eF32, fogFactor, builder.makeConstant(0.0f), builder.makeConstant(1.0f)));
+      } break;
+
+      /* 1 / (e^[d * density])^2 */
+      case FogMode::eExp2:
+      /* 1 / (e^(d * density)) */
+      case FogMode::eExp: {
+        fogFactor = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, depth, fogDensity));
+
+        if (mode == FogMode::eExp2)
+          fogFactor = builder.add(ir::Op::FMulLegacy(ir::ScalarType::eF32, fogFactor, fogFactor));
+
+        /* Provides the rcp. */
+        fogFactor = builder.add(ir::Op::FNeg(ir::ScalarType::eF32, fogFactor));
+        fogFactor = builder.add(ir::Op::FExp2(ir::ScalarType::eF32, fogFactor));
+      } break;
+    }
+    builder.add(ir::Op::TmpStore(fogFactorTmp, fogFactor));
+
+    builder.add(ir::Op::ScopedSwitchBreak(fogModeSwitch));
+  }
+  auto fogModeSwitchEnd = builder.add(ir::Op::ScopedEndSwitch(fogModeSwitch));
+  builder.rewriteOp(fogModeSwitch, ir::Op(builder.getOp(fogModeSwitch)).setOperand(0u, fogModeSwitchEnd));
+
+  auto fogFactor = builder.add(ir::Op::TmpLoad(ir::ScalarType::eF32, fogFactorTmp));
+
+  if (isPS) {
+    /* Calculate the color of the pixel with fog in pixel shaders and return that. */
+    dxbc_spv_assert(color);
+
+    std::array<ir::SsaDef, 3u> colorComponents = {
+      ir::extractFromVector(builder, color, 0u),
+      ir::extractFromVector(builder, color, 1u),
+      ir::extractFromVector(builder, color, 2u)
+    };
+    auto color3 = ir::buildVector(builder, ir::ScalarType::eF32, colorComponents.size(),
+      colorComponents.data());
+
+    std::array<ir::SsaDef, 3u> fogFactComponents = { fogFactor, fogFactor, fogFactor };
+    auto fogFact3 = ir::buildVector(builder, ir::ScalarType::eF32, fogFactComponents.size(),
+      fogFactComponents.data());
+
+    auto invFogFactor = builder.add(ir::Op::FSub(ir::ScalarType::eF32, builder.makeConstant(1.0f), fogFactor));
+    std::array<ir::SsaDef, 3u> invFogFactComponents = { invFogFactor, invFogFactor, invFogFactor };
+    auto invFogFact3 = ir::buildVector(builder, ir::ScalarType::eF32, invFogFactComponents.size(),
+      invFogFactComponents.data());
+
+    auto vec3Type = ir::BasicType(ir::ScalarType::eF32, 3u);
+    auto scaledColor = builder.add(emitFMul(vec3Type, color3, fogFact3));
+    auto scaledFogColor = builder.add(emitFMul(vec3Type, fogColor, invFogFact3));
+    auto finalColor = builder.add(ir::Op::FAdd(vec3Type, scaledColor, scaledFogColor));
+
+    std::array<ir::SsaDef, 4u> finalColorComponents = {
+      ir::extractFromVector(builder, finalColor, 0u),
+      ir::extractFromVector(builder, finalColor, 1u),
+      ir::extractFromVector(builder, finalColor, 2u),
+      ir::extractFromVector(builder, color, 3u)
+    };
+    auto finalColor4 = ir::buildVector(builder, ir::ScalarType::eF32, finalColorComponents.size(),
+      finalColorComponents.data());
+
+    builder.add(ir::Op::Return(ir::BasicType(ir::ScalarType::eF32, 4u), finalColor4));
+  } else {
+    /* Just return the fog factor in vertex shaders. */
+    builder.add(ir::Op::Return(ir::ScalarType::eF32, fogFactor));
+  }
 
   builder.add(ir::Op::FunctionEnd());
 }
