@@ -2383,15 +2383,11 @@ void Converter::emitFog(ir::Builder& builder) {
   auto fogFact3 = ir::buildVector(builder, ir::ScalarType::eF32, fogFactComponents.size(),
     fogFactComponents.data());
 
-  auto invFogFactor = builder.add(ir::Op::FSub(ir::ScalarType::eF32, builder.makeConstant(1.0f), fogFactor));
-  std::array<ir::SsaDef, 3u> invFogFactComponents = { invFogFactor, invFogFactor, invFogFactor };
-  auto invFogFact3 = ir::buildVector(builder, ir::ScalarType::eF32, invFogFactComponents.size(),
-    invFogFactComponents.data());
-
   auto vec3Type = ir::BasicType(ir::ScalarType::eF32, 3u);
-  auto scaledColor = builder.add(emitFMul(vec3Type, color3, fogFact3));
-  auto scaledFogColor = builder.add(emitFMul(vec3Type, fogColor, invFogFact3));
-  auto finalColor = builder.add(ir::Op::FAdd(vec3Type, scaledColor, scaledFogColor));
+
+  auto diff = builder.add(ir::Op::FSub(vec3Type, color3, fogColor));
+  auto scaledDiff = builder.add(ir::Op::FMul(vec3Type, diff, fogFact3));
+  auto finalColor = builder.add(ir::Op::FAdd(vec3Type, fogColor, scaledDiff));
 
   std::array<ir::SsaDef, 4u> finalColorComponents = {
     ir::extractFromVector(builder, finalColor, 0u),
