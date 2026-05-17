@@ -2356,7 +2356,10 @@ void Converter::emitFog(ir::Builder& builder) {
 
         /* Provides the rcp. */
         fogFactor = builder.add(ir::Op::FNeg(ir::ScalarType::eF32, fogFactor));
-        fogFactor = builder.add(ir::Op::FExp(ir::ScalarType::eF32, fogFactor));
+        /* e^x = 2^((1 / ln(2)) * x) = 2^(1.442695041 * x) */
+        constexpr float Ln2Rcp = 1.442695041f;
+        fogFactor = builder.add(ir::Op::FMul(ir::ScalarType::eF32, fogColor, builder.makeConstant(Ln2Rcp)));
+        fogFactor = builder.add(ir::Op::FExp2(ir::ScalarType::eF32, fogFactor));
       } break;
     }
     builder.add(ir::Op::TmpStore(fogFactorTmp, fogFactor));
