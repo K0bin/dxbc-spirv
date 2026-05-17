@@ -1076,6 +1076,7 @@ enum class OpCode : uint16_t {
   eFPow                         = 695u,
   eFPowLegacy                   = 696u,
   eFSgn                         = 697u,
+  eFExp                         = 698u,
 
   eIAnd                         = 704u,
   eIOr                          = 705u,
@@ -2446,6 +2447,11 @@ public:
 
   static Op FRsq(Type type, SsaDef a) {
     return Op(OpCode::eFRsq, type)
+      .addOperand(a);
+  }
+
+  static Op FExp(Type type, SsaDef a) {
+    return Op(OpCode::eFExp, type)
       .addOperand(a);
   }
 
