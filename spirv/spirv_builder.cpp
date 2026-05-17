@@ -510,6 +510,7 @@ void SpirvBuilder::emitInstruction(const ir::Op& op) {
     case ir::OpCode::eFPow:
     case ir::OpCode::eFSgn:
     case ir::OpCode::eFExp2:
+    case ir::OpCode::eFExp:
     case ir::OpCode::eFLog2:
     case ir::OpCode::eFSqrt:
     case ir::OpCode::eFRsq:
@@ -2912,7 +2913,8 @@ bool SpirvBuilder::opSupportsFpMode(const ir::Op& op) {
          opCode == ir::OpCode::eFGt ||
          opCode == ir::OpCode::eFGe ||
          opCode == ir::OpCode::eFLt ||
-         opCode == ir::OpCode::eFLe;
+         opCode == ir::OpCode::eFLe ||
+         opCode == ir::OpCode::eFExp;
 }
 
 
@@ -3693,6 +3695,7 @@ void SpirvBuilder::emitExtendedGlslArithmetic(const ir::Op& op) {
       case ir::OpCode::eFPow: return GLSLstd450Pow;
       case ir::OpCode::eFSgn: return GLSLstd450FSign;
       case ir::OpCode::eFExp2: return GLSLstd450Exp2;
+      case ir::OpCode::eFExp: return GLSLstd450Exp;
       case ir::OpCode::eFLog2: return GLSLstd450Log2;
       case ir::OpCode::eFSqrt: return GLSLstd450Sqrt;
       case ir::OpCode::eFRsq: return GLSLstd450InverseSqrt;
