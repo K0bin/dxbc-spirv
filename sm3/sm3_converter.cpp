@@ -1628,7 +1628,14 @@ bool Converter::handlePow(ir::Builder& builder, const Instruction& op) {
 
   auto absSrc0 = builder.add(ir::Op::FAbs(scalarType, src0));
   auto val = builder.add(emitFPow(scalarType, absSrc0, src1));
+
+  if (m_options.fastFloatEmulation) {
+    auto isZero = builder.add(ir::Op::FEq(ir::ScalarType::eBool, src1, ir::makeTypedConstant(builder, scalarType, 0.0f)));
+    val = builder.add(ir::Op::Select(scalarType, isZero, ir::makeTypedConstant(builder, scalarType, 1.0f), val));
+  }
+
   auto vec = broadcastScalar(builder, val, writeMask);
+
   return storeDstModifiedPredicated(builder, op, dst, vec);
 }
 
