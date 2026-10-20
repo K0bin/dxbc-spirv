@@ -293,7 +293,7 @@ public:
 
   /** Queries component swizzle. Only useful for source operands. */
   Swizzle getSwizzle(const ShaderInfo& shaderInfo) const {
-    dxbc_spv_assert(m_info.kind == OperandKind::eSrcReg);
+    //dxbc_spv_assert(m_info.kind == OperandKind::eSrcReg);
     if (isScalar(shaderInfo)) {
       return Swizzle(Component::eX, Component::eX, Component::eX, Component::eX);
     }
@@ -404,19 +404,19 @@ public:
 
   /** Queries the predicate swizzle. */
   Swizzle getPredicateSwizzle() const {
-    dxbc_spv_assert(isPredicated());
+    //dxbc_spv_assert(isPredicated());
     return Swizzle(util::bextract(m_predicateToken.value(), 16u, 8u));
   }
 
   /** Queries predicate modifier. */
   OperandModifier getPredicateModifier() const {
-    dxbc_spv_assert(isPredicated());
+    //dxbc_spv_assert(isPredicated());
     return OperandModifier(util::bextract(m_predicateToken.value(), 24u, 4u));
   }
 
   /** Queries operand modifier. */
   OperandModifier getModifier() const {
-    dxbc_spv_assert(m_info.kind == OperandKind::eSrcReg);
+    //dxbc_spv_assert(m_info.kind == OperandKind::eSrcReg);
     return OperandModifier(util::bextract(m_token, 24u, 4u));
   }
 

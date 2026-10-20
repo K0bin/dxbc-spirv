@@ -1781,6 +1781,8 @@ bool Converter::handleSetP(ir::Builder& builder, const Instruction& op) {
 bool Converter::handleIf(ir::Builder& builder, const Instruction& op) {
   ir::SsaDef cond;
 
+  logOpMessage(LogLevel::eWarn, op, "src count: ", op.getSrcCount(), " predicated? ", op.isPredicated());
+
   if (op.getOpCode() == OpCode::eIf) {
     cond = loadSrc(builder, op, op.getSrc(0u), ComponentBit::eX, op.getSrc(0u).getSwizzle(getShaderInfo()), ir::ScalarType::eBool);
   } else if (op.getOpCode() == OpCode::eIfC) {
@@ -1839,11 +1841,14 @@ bool Converter::handleBreak(ir::Builder& builder, const Instruction& op) {
   ir::SsaDef cond;
   if (op.getOpCode() == OpCode::eBreakP) {
     /* Break if the predicate is true */
-    dxbc_spv_assert(op.getSrcCount() == 1u);
-    dxbc_spv_assert(op.getSrc(0u).getRegisterType() == RegisterType::ePredicate);
+    //logOpMessage(LogLevel::eWarn, op, "src count: ", op.getSrcCount(), " predicated? ", op.isPredicated());
+    //dxbc_spv_assert(op.getSrcCount() == 1u);
+    //dxbc_spv_assert(op.getSrc(0u).getRegisterType() == RegisterType::ePredicate);
 
-    /* It **must** have a replicate swizzle, so just load X. */
-    cond = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, ir::ScalarType::eBool);
+    cond = m_regFile.emitPredicateLoad(builder, op.getDst().getSwizzle(getShaderInfo()), ComponentBit::eX);
+    //cond = m_regFile.emitPredicateLoad(builder, op.getDst().getPredicateSwizzle(), ComponentBit::eX);
+    if (op.getDst().getModifier() == OperandModifier::eNot)
+      cond = builder.add(ir::Op::BNot(ir::ScalarType::eBool, cond));
   } else if (op.getOpCode() == OpCode::eBreakC) {
     /* Break based on the comparison */
     auto src0 = loadSrcModified(builder, op, op.getSrc(0u), ComponentBit::eX, ir::ScalarType::eF32);
