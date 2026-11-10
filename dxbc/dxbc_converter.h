@@ -52,6 +52,8 @@ public:
     uint8_t classInstanceRegisterIndex = 0u;
     /** Whether to externally limit tessellation factors */
     bool limitTessFactor = false;
+    /** Bias outputs for games that require specific rounding behavior. */
+    bool biasOutputs = false;
   };
 
   Converter(Container container, const Options& options);

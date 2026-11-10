@@ -1287,6 +1287,21 @@ bool IoMap::storeIoRegister(
      * over all matching vars and duplicate the stores as necessary. */
     const auto& list = regIndexRelative ? m_indexRanges : m_variables;
 
+    const auto& valueOp = builder.getOp(value);
+    if (regType == RegisterType::eOutput
+      && m_converter.m_options.biasOutputs
+      && valueOp.getType().getBaseType(0u).isFloatType()) {
+      constexpr float OutputBias = 1.0f / 127500.0f;
+
+      auto vectorType = valueOp.getType().getBaseType(0u);
+      std::array<ir::SsaDef, 4u> components;
+      for (uint32_t i = 0u; i < vectorType.getVectorSize(); i++) {
+        components[i] = builder.add(ir::Op::FSub(vectorType.getBaseType(), ir::extractFromVector(builder, value, i), builder.makeConstant(OutputBias)));
+      }
+
+      value = ir::buildVector(builder, vectorType.getBaseType(), vectorType.getVectorSize(), components.data());
+    }
+
     for (const auto& var : list) {
       if (!var.matches(regType, regIndexAbsolute, stream, c))
         continue;
