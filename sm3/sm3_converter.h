@@ -46,6 +46,8 @@ public:
      *  texture type rather than the shader declaration in Shader Model 2
      *  and 3 content. Must only be enabled for pixel shaders. */
     bool forceDynamicTextureType = false;
+    /** Bias outputs for games that require specific rounding behavior. */
+    bool biasOutputs = false;
   };
 
   Converter(util::ByteReader code, const Options& options);

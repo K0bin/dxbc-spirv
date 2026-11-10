@@ -710,12 +710,24 @@ bool IoMap::emitStore(
   auto srcBaseType = srcType.getBaseType(0);
   auto srcScalarType = srcBaseType.getBaseType();
 
+  if (operand.getRegisterType() == RegisterType::eOutput
+    && m_converter.m_options.biasOutputs
+    && srcBaseType.isFloatType()) {
+    constexpr float OutputBias = 1.0f / 127500.0f;
+
+    std::array<ir::SsaDef, 4u> components;
+    for (uint32_t i = 0u; i < srcBaseType.getVectorSize(); i++) {
+      components[i] = builder.add(ir::Op::FSub(srcBaseType.getBaseType(), ir::extractFromVector(builder, value, i), builder.makeConstant(OutputBias)));
+    }
+
+    value = ir::buildVector(builder, srcScalarType, srcBaseType.getVectorSize(), components.data());
+  }
+
   if (!operand.hasRelativeAddressing()) {
     const IoVarInfo* ioVar = findIoVar(operand.getRegisterType(), operand.getIndex());
 
     if (ioVar == nullptr) {
-      std::optional<Semantic> semantic;
-      semantic = determineSemanticForRegister(operand.getRegisterType(), operand.getIndex());
+      std::optional<Semantic> semantic = determineSemanticForRegister(operand.getRegisterType(), operand.getIndex());
 
       if (!semantic.has_value()) {
         m_converter.logOpError(op, "Failed to process I/O store.");
